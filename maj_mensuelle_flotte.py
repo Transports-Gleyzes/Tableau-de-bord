@@ -179,7 +179,17 @@ def ajouter_lignes_table(ws, table_name, nouvelles_lignes, cle_dedup, colonnes_f
     existe ; une cellule déjà remplie n'est en revanche jamais écrasée (pour ne
     pas effacer une correction manuelle ou une saisie antérieure sans confirmation).
 
-    Retourne (lignes_ajoutees, lignes_completees).
+    Bug corrigé le 17/09/2026 : les colonnes de colonnes_formule n'étaient
+    écrites qu'à la création d'une ligne, jamais revérifiées ensuite. Une
+    formule corrompue une seule fois (ex: plage décalée lors d'un ajout
+    manuel, ou par une version antérieure du script) restait donc fausse
+    indéfiniment, avec des montants qui ne "reportaient" plus le même total
+    d'un mois à l'autre. Contrairement aux colonnes de données, une formule
+    n'est jamais une saisie manuelle à préserver : elle est désormais
+    toujours resynchronisée avec colonnes_formule sur les lignes existantes,
+    ce qui corrige aussi automatiquement toute corruption passée.
+
+    Retourne (lignes_ajoutees, lignes_completees, formules_reparees).
     """
     tbl = ws.tables[table_name]
     ref = tbl.ref
@@ -205,7 +215,7 @@ def ajouter_lignes_table(ws, table_name, nouvelles_lignes, cle_dedup, colonnes_f
             ligne_libre = r
             break
 
-    ajoutees, completees = 0, 0
+    ajoutees, completees, formules_reparees = 0, 0, 0
     for ligne in nouvelles_lignes:
         cle = tuple(_cle_normalisee(ligne.get(k)) for k in cle_dedup)
         if cle in existantes:
@@ -220,6 +230,14 @@ def ajouter_lignes_table(ws, table_name, nouvelles_lignes, cle_dedup, colonnes_f
                     a_complete = True
             if a_complete:
                 completees += 1
+            for h, fn in colonnes_formule.items():
+                if h not in col_index:
+                    continue
+                c = min_col + col_index[h]
+                nouvelle_formule = fn(r)
+                if ws.cell(row=r, column=c).value != nouvelle_formule:
+                    ws.cell(row=r, column=c, value=nouvelle_formule)
+                    formules_reparees += 1
             continue
         if ligne_libre is not None and ligne_libre <= max_row:
             r = ligne_libre
@@ -239,7 +257,7 @@ def ajouter_lignes_table(ws, table_name, nouvelles_lignes, cle_dedup, colonnes_f
     if max_row != range_boundaries(ref)[3]:
         new_ref = f"{get_column_letter(min_col)}{min_row}:{get_column_letter(max_col)}{max_row}"
         tbl.ref = new_ref
-    return ajoutees, completees
+    return ajoutees, completees, formules_reparees
 
 
 def get_table_ws(wb, table_name):
@@ -773,7 +791,13 @@ def main():
     actifs = {cid: v for cid, v in referentiel.items() if v.get("Actif") == "O"}
 
     manquants_globaux = []
-    total_maj = 0  # lignes ajoutées + complétées, toutes tables confondues (hors DONNEES_MANQUANTES)
+    total_maj = 0  # lignes ajoutées + complétées + formules réparées, toutes tables (hors DONNEES_MANQUANTES)
+
+    def _rapport(n, maj_c, rep):
+        msg = f"{n} lignes ajoutées, {maj_c} complétées"
+        if rep:
+            msg += f", {rep} formule(s) resynchronisée(s) (corruption passée corrigée)"
+        return msg
 
     # --- KM ---
     km, manq = parse_km(args.sources, mois)
@@ -781,9 +805,9 @@ def main():
     ws = get_table_ws(wb, "T_KM")
     lignes = [{"Mois": mois_date, "Camion_ID": cid, "Société": societe_canonique(v.get("Société")), "KM_Parcourus": km.get(cid)}
               for cid, v in actifs.items()]
-    n, maj_c = ajouter_lignes_table(ws, "T_KM", lignes, cle_dedup=("Mois", "Camion_ID"))
-    total_maj += n + maj_c
-    print(f"KM : {n} lignes ajoutées, {maj_c} complétées")
+    n, maj_c, rep = ajouter_lignes_table(ws, "T_KM", lignes, cle_dedup=("Mois", "Camion_ID"))
+    total_maj += n + maj_c + rep
+    print(f"KM : {_rapport(n, maj_c, rep)}")
 
     # --- CA ---
     ca, manq = parse_ca(args.sources, mois, referentiel)
@@ -797,9 +821,9 @@ def main():
                 lignes.append({"Mois": mois_date, "Camion_ID": cid, "Société": societe, "CA": montant})
         else:
             lignes.append({"Mois": mois_date, "Camion_ID": cid, "Société": societe_canonique(v.get("Société")), "CA": None})
-    n, maj_c = ajouter_lignes_table(ws, "T_CA", lignes, cle_dedup=("Mois", "Camion_ID", "Société"))
-    total_maj += n + maj_c
-    print(f"CA : {n} lignes ajoutées, {maj_c} complétées")
+    n, maj_c, rep = ajouter_lignes_table(ws, "T_CA", lignes, cle_dedup=("Mois", "Camion_ID", "Société"))
+    total_maj += n + maj_c + rep
+    print(f"CA : {_rapport(n, maj_c, rep)}")
 
     # --- Carburant + Péages + Salaires -> Charges_Variables ---
     carb, manq = parse_carburant(args.sources, mois)
@@ -833,11 +857,11 @@ def main():
                                "Carburant": carburant_val, "Peages": peage_val,
                                "Salaire_Chauffeur": salaires.get(cid), "Entretien_Hors_Contrat": None,
                                "Remarque": "" if salaires.get(cid) is not None else "Bulletin de paie non fourni"})
-    n, maj_c = ajouter_lignes_table(ws_cv, "T_ChargesVariables", lignes_cv,
+    n, maj_c, rep = ajouter_lignes_table(ws_cv, "T_ChargesVariables", lignes_cv,
                               cle_dedup=("Mois", "Camion_ID", "Société"),
                               colonnes_formule={"Total": formule_total_cv})
-    total_maj += n + maj_c
-    print(f"Charges_Variables : {n} lignes ajoutées, {maj_c} complétées")
+    total_maj += n + maj_c + rep
+    print(f"Charges_Variables : {_rapport(n, maj_c, rep)}")
 
     # --- Charges_Fixes (loyers + taxe essieu + charge mutualisée, stables -> copiés depuis REF) ---
     ws_cf = get_table_ws(wb, "T_ChargesFixes")
@@ -863,71 +887,87 @@ def main():
                                "Loyer_Tracteur": loyer_t, "Loyer_Remorque": loyer_r,
                                "Taxe_Essieu_Mensuelle": 516 / 12,
                                "Charge_Mutualisee_Chauffeur": CHARGE_MUT.get(societe), "Remarque": ""})
-    n, maj_c = ajouter_lignes_table(ws_cf, "T_ChargesFixes", lignes_cf,
+    n, maj_c, rep = ajouter_lignes_table(ws_cf, "T_ChargesFixes", lignes_cf,
                               cle_dedup=("Mois", "Camion_ID", "Société"),
                               colonnes_formule={"Total": formule_total_cf})
-    total_maj += n + maj_c
-    print(f"Charges_Fixes : {n} lignes ajoutées, {maj_c} complétées")
+    total_maj += n + maj_c + rep
+    print(f"Charges_Fixes : {_rapport(n, maj_c, rep)}")
 
     # --- Synthese_Camion / Societe / Entreprise : ajout des lignes Mois/Camion (le reste = formules) ---
     ws_sc = get_table_ws(wb, "T_SyntheseCamion")
+    # Bug corrigé le 17/09/2026 : Charges_Fixes/Charges_Variables/Charges_Mutualisees/Charges_Totales
+    # n'avaient pas de garde "N/D" comme KM et CA. Un mois sans encore aucune charge importée
+    # affichait donc 0,00 € (résultat naturel d'un SUMIFS sans correspondance), ce qui donne
+    # l'impression trompeuse que le mois a été traité avec un coût nul plutôt que "pas encore de
+    # données". Toutes les colonnes calculées à partir de Charges_Fixes/Charges_Variables
+    # basculent maintenant sur "N/D" tant qu'aucune ligne source n'existe pour ce mois/camion,
+    # et propagent ce N/D en cascade (Cout_au_km, Resultat, Marge_%).
     formules_sc = {
         "Société": lambda r: f'=IFERROR(INDEX(REF_Camions!$B:$B,MATCH(B{r},REF_Camions!$A:$A,0)),"")',
-        "Charges_Fixes": lambda r: f"=SUMIFS(Charges_Fixes!$I:$I,Charges_Fixes!$B:$B,B{r},Charges_Fixes!$A:$A,A{r})-F{r}",
-        "Charges_Variables": lambda r: f"=SUMIFS(Charges_Variables!$I:$I,Charges_Variables!$B:$B,B{r},Charges_Variables!$A:$A,A{r})",
-        "Charges_Mutualisees": lambda r: f"=SUMIFS(Charges_Fixes!$G:$G,Charges_Fixes!$B:$B,B{r},Charges_Fixes!$A:$A,A{r})",
-        "Charges_Totales": lambda r: f"=D{r}+E{r}+F{r}",
+        "Charges_Fixes": lambda r: (f'=IF(COUNTIFS(Charges_Fixes!$B:$B,B{r},Charges_Fixes!$A:$A,A{r})=0,"N/D",'
+                                     f"SUMIFS(Charges_Fixes!$I:$I,Charges_Fixes!$B:$B,B{r},Charges_Fixes!$A:$A,A{r})-F{r})"),
+        "Charges_Variables": lambda r: (f'=IF(COUNTIFS(Charges_Variables!$B:$B,B{r},Charges_Variables!$A:$A,A{r})=0,"N/D",'
+                                         f"SUMIFS(Charges_Variables!$I:$I,Charges_Variables!$B:$B,B{r},Charges_Variables!$A:$A,A{r}))"),
+        "Charges_Mutualisees": lambda r: (f'=IF(COUNTIFS(Charges_Fixes!$B:$B,B{r},Charges_Fixes!$A:$A,A{r})=0,"N/D",'
+                                           f"SUMIFS(Charges_Fixes!$G:$G,Charges_Fixes!$B:$B,B{r},Charges_Fixes!$A:$A,A{r}))"),
+        "Charges_Totales": lambda r: f'=IF(OR(D{r}="N/D",E{r}="N/D",F{r}="N/D"),"N/D",D{r}+E{r}+F{r})',
         "KM": lambda r: (f'=IF(COUNTIFS(KM!$B:$B,B{r},KM!$A:$A,A{r},KM!$D:$D,"<>")=0,"N/D",'
                          f"SUMIFS(KM!$D:$D,KM!$B:$B,B{r},KM!$A:$A,A{r}))"),
-        "Cout_au_km": lambda r: f'=IF(OR(H{r}="N/D",H{r}=0),"N/D",G{r}/H{r})',
+        "Cout_au_km": lambda r: f'=IF(OR(G{r}="N/D",H{r}="N/D",H{r}=0),"N/D",G{r}/H{r})',
         "CA": lambda r: (f'=IF(COUNTIFS(CA!$B:$B,B{r},CA!$A:$A,A{r},CA!$D:$D,"<>")=0,"N/D",'
                          f"SUMIFS(CA!$D:$D,CA!$B:$B,B{r},CA!$A:$A,A{r}))"),
-        "Resultat": lambda r: f'=IF(J{r}="N/D","N/D",J{r}-G{r})',
+        "Resultat": lambda r: f'=IF(OR(J{r}="N/D",G{r}="N/D"),"N/D",J{r}-G{r})',
         "Marge_%": lambda r: f'=IF(OR(K{r}="N/D",J{r}=0),"N/D",K{r}/J{r})',
     }
     lignes_sc = [{"Mois": mois_date, "Camion_ID": cid} for cid in actifs]
-    n, maj_c = ajouter_lignes_table(ws_sc, "T_SyntheseCamion", lignes_sc, cle_dedup=("Mois", "Camion_ID"),
+    n, maj_c, rep = ajouter_lignes_table(ws_sc, "T_SyntheseCamion", lignes_sc, cle_dedup=("Mois", "Camion_ID"),
                               colonnes_formule=formules_sc)
-    total_maj += n + maj_c
-    print(f"Synthese_Camion : {n} lignes ajoutées, {maj_c} complétées")
+    total_maj += n + maj_c + rep
+    print(f"Synthese_Camion : {_rapport(n, maj_c, rep)}")
 
     ws_ss = get_table_ws(wb, "T_SyntheseSociete")
     formules_ss = {
-        "Charges_Fixes": lambda r: f"=SUMIFS(Charges_Fixes!$I:$I,Charges_Fixes!$C:$C,B{r},Charges_Fixes!$A:$A,A{r})-E{r}",
-        "Charges_Variables": lambda r: f"=SUMIFS(Charges_Variables!$I:$I,Charges_Variables!$C:$C,B{r},Charges_Variables!$A:$A,A{r})",
-        "Charges_Mutualisees": lambda r: f"=SUMIFS(Charges_Fixes!$G:$G,Charges_Fixes!$C:$C,B{r},Charges_Fixes!$A:$A,A{r})",
-        "Charges_Totales": lambda r: f"=C{r}+D{r}+E{r}",
+        "Charges_Fixes": lambda r: (f'=IF(COUNTIFS(Charges_Fixes!$C:$C,B{r},Charges_Fixes!$A:$A,A{r})=0,"N/D",'
+                                     f"SUMIFS(Charges_Fixes!$I:$I,Charges_Fixes!$C:$C,B{r},Charges_Fixes!$A:$A,A{r})-E{r})"),
+        "Charges_Variables": lambda r: (f'=IF(COUNTIFS(Charges_Variables!$C:$C,B{r},Charges_Variables!$A:$A,A{r})=0,"N/D",'
+                                         f"SUMIFS(Charges_Variables!$I:$I,Charges_Variables!$C:$C,B{r},Charges_Variables!$A:$A,A{r}))"),
+        "Charges_Mutualisees": lambda r: (f'=IF(COUNTIFS(Charges_Fixes!$C:$C,B{r},Charges_Fixes!$A:$A,A{r})=0,"N/D",'
+                                           f"SUMIFS(Charges_Fixes!$G:$G,Charges_Fixes!$C:$C,B{r},Charges_Fixes!$A:$A,A{r}))"),
+        "Charges_Totales": lambda r: f'=IF(OR(C{r}="N/D",D{r}="N/D",E{r}="N/D"),"N/D",C{r}+D{r}+E{r})',
         "CA": lambda r: (f'=IF(COUNTIFS(CA!$C:$C,B{r},CA!$A:$A,A{r},CA!$D:$D,"<>")=0,"N/D",'
                          f"SUMIFS(CA!$D:$D,CA!$C:$C,B{r},CA!$A:$A,A{r}))"),
-        "Resultat": lambda r: f'=IF(G{r}="N/D","N/D",G{r}-F{r})',
+        "Resultat": lambda r: f'=IF(OR(G{r}="N/D",F{r}="N/D"),"N/D",G{r}-F{r})',
         "Marge_%": lambda r: f'=IF(OR(H{r}="N/D",G{r}=0),"N/D",H{r}/G{r})',
     }
     lignes_ss = [{"Mois": mois_date, "Société": s} for s in ("Gleyzes", "LPB")]
-    n, maj_c = ajouter_lignes_table(ws_ss, "T_SyntheseSociete", lignes_ss, cle_dedup=("Mois", "Société"),
+    n, maj_c, rep = ajouter_lignes_table(ws_ss, "T_SyntheseSociete", lignes_ss, cle_dedup=("Mois", "Société"),
                               colonnes_formule=formules_ss)
-    total_maj += n + maj_c
-    print(f"Synthese_Societe : {n} lignes ajoutées, {maj_c} complétées")
+    total_maj += n + maj_c + rep
+    print(f"Synthese_Societe : {_rapport(n, maj_c, rep)}")
 
     ws_se = get_table_ws(wb, "T_SyntheseEntreprise")
     formules_se = {
         "CA_Global": lambda r: f'=IF(COUNTIFS(CA!$A:$A,A{r},CA!$D:$D,"<>")=0,"N/D",SUMIFS(CA!$D:$D,CA!$A:$A,A{r}))',
-        "Charges_Mutualisees": lambda r: f"=SUMIFS(Charges_Fixes!$G:$G,Charges_Fixes!$A:$A,A{r})",
-        "Charges_Totales_Flotte": lambda r: (f"=SUMIFS(Charges_Fixes!$I:$I,Charges_Fixes!$A:$A,A{r})"
-                                              f"+SUMIFS(Charges_Variables!$I:$I,Charges_Variables!$A:$A,A{r})"),
-        "Resultat": lambda r: f'=IF(B{r}="N/D","N/D",B{r}-D{r})',
+        "Charges_Mutualisees": lambda r: (f'=IF(COUNTIFS(Charges_Fixes!$A:$A,A{r})=0,"N/D",'
+                                           f"SUMIFS(Charges_Fixes!$G:$G,Charges_Fixes!$A:$A,A{r}))"),
+        "Charges_Totales_Flotte": lambda r: (
+            f'=IF(AND(COUNTIFS(Charges_Fixes!$A:$A,A{r})=0,COUNTIFS(Charges_Variables!$A:$A,A{r})=0),"N/D",'
+            f"SUMIFS(Charges_Fixes!$I:$I,Charges_Fixes!$A:$A,A{r})"
+            f"+SUMIFS(Charges_Variables!$I:$I,Charges_Variables!$A:$A,A{r}))"),
+        "Resultat": lambda r: f'=IF(OR(B{r}="N/D",D{r}="N/D"),"N/D",B{r}-D{r})',
         "Marge_%": lambda r: f'=IF(OR(E{r}="N/D",B{r}=0),"N/D",E{r}/B{r})',
     }
-    n, maj_c = ajouter_lignes_table(ws_se, "T_SyntheseEntreprise", [{"Mois": mois_date}], cle_dedup=("Mois",),
+    n, maj_c, rep = ajouter_lignes_table(ws_se, "T_SyntheseEntreprise", [{"Mois": mois_date}], cle_dedup=("Mois",),
                               colonnes_formule=formules_se)
-    total_maj += n + maj_c
-    print(f"Synthese_Entreprise : {n} ligne ajoutée")
+    total_maj += n + maj_c + rep
+    print(f"Synthese_Entreprise : {_rapport(n, maj_c, rep)}")
 
     # --- DONNEES_MANQUANTES : journalisation des trous détectés ce mois-ci ---
     if manquants_globaux:
         ws_dm = get_table_ws(wb, "T_DonneesManquantes")
         lignes_dm = [{"Type de donnée": "Auto-détection script", "Camion(s) concerné(s)": "-",
                       "Période": mois, "Constat": m, "Action recommandée": "À vérifier"} for m in manquants_globaux]
-        n, maj_c = ajouter_lignes_table(ws_dm, "T_DonneesManquantes", lignes_dm,
+        n, maj_c, rep = ajouter_lignes_table(ws_dm, "T_DonneesManquantes", lignes_dm,
                                   cle_dedup=("Constat", "Période"))
         print(f"DONNEES_MANQUANTES : {n} anomalies journalisées")
         for m in manquants_globaux:
