@@ -765,7 +765,11 @@ def parse_salaires(sources_dir, mois, referentiel):
                 continue  # personnel mutualisé, pas un chauffeur de camion : pas une anomalie
             manquants.append(f"PAIES : chauffeur non identifié pour le fichier {os.path.basename(f)}")
             continue
-        res[camion] = val
+        # Bug corrigé le 17/09/2026 : certains chauffeurs ont leur paie scindée en deux
+        # bulletins dans le même mois (ex: "1 AU 23 AOUT" + "24 AU 31 AOUT"). L'ancien code
+        # écrasait la valeur du premier bulletin avec celle du second au lieu de les
+        # additionner, sous-évaluant le salaire de moitié pour ces chauffeurs.
+        res[camion] = res.get(camion, 0) + val
     if not pdfs:
         manquants.append(f"PAIES : aucun bulletin trouvé pour {mois} (ni sous-dossier PAIES/{mois}, "
                           f"ni fichier contenant '{mois_nom_fr or mois}' + '{annee}' dans PAIES/)")
