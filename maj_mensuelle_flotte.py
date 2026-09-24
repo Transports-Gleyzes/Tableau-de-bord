@@ -133,7 +133,13 @@ def lire_texte_pdf(path):
 
 def sauvegarder_avec_secours(wb, chemin):
     """Sauvegarde le classeur ; si le fichier est verrouillé (OneDrive/Excel
-    ouvert), sauvegarde sous un nom de secours plutôt que d'échouer."""
+    ouvert), sauvegarde sous un nom de secours plutôt que d'échouer.
+    Force aussi Excel à recalculer toutes les formules à l'ouverture : openpyxl
+    n'enregistre pas les résultats des formules, et sans ce recalcul les
+    colonnes calculées (Synthese_*) s'affichaient vides."""
+    from openpyxl.workbook.properties import CalcProperties
+    wb.calculation = wb.calculation or CalcProperties()
+    wb.calculation.fullCalcOnLoad = True
     try:
         wb.save(chemin)
         return chemin

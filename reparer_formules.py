@@ -15,7 +15,8 @@ import openpyxl
 from openpyxl.utils.cell import range_boundaries
 
 from maj_mensuelle_flotte import (TABLE_TRIM, ONGLET_TRIM, ajouter_lignes_table, assurer_onglet_trimestriel,
-                                  formules_synthese_trimestrielle, get_table_ws)
+                                  formules_synthese_trimestrielle, get_table_ws,
+                                  sauvegarder_avec_secours)
 
 
 def cles_existantes(ws, table_name, cle_dedup):
@@ -102,7 +103,7 @@ def main():
         print(f"{feuille} : {rep} formule(s) resynchronisée(s)")
         total_repare += rep
 
-    wb.save(chemin)
+    chemin = sauvegarder_avec_secours(wb, chemin)
     print(f"\nTotal : {total_repare} formule(s) corrigée(s). Classeur enregistré : {chemin}")
 
 
