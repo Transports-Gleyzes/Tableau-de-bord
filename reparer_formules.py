@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 reparer_formules.py — resynchronise TOUTES les formules calculées du classeur
-(Charges_Fixes.Total, Charges_Variables.Total, Synthese_Camion/Societe/Entreprise),
+(Charges_Fixes.Total, Charges_Variables.Total, Synthese_Camion/Societe/Entreprise/Trimestrielle),
 sur TOUS les mois déjà présents, sans toucher à la moindre donnée saisie/importée.
 
 À usage ponctuel : corrige d'un coup toute corruption historique (ex: la plage
@@ -14,7 +14,8 @@ import sys
 import openpyxl
 from openpyxl.utils.cell import range_boundaries
 
-from maj_mensuelle_flotte import ajouter_lignes_table, get_table_ws
+from maj_mensuelle_flotte import (TABLE_TRIM, ONGLET_TRIM, ajouter_lignes_table, assurer_onglet_trimestriel,
+                                  formules_synthese_trimestrielle, get_table_ws)
 
 
 def cles_existantes(ws, table_name, cle_dedup):
@@ -87,7 +88,11 @@ def main():
         ("Synthese_Camion", "T_SyntheseCamion", ("Mois", "Camion_ID"), formules_sc),
         ("Synthese_Societe", "T_SyntheseSociete", ("Mois", "Société"), formules_ss),
         ("Synthese_Entreprise", "T_SyntheseEntreprise", ("Mois",), formules_se),
+        (ONGLET_TRIM, TABLE_TRIM, ("Debut_Trimestre", "Société"), formules_synthese_trimestrielle()),
     ]
+
+    if assurer_onglet_trimestriel(wb):
+        print(f"{ONGLET_TRIM} : onglet créé et pré-rempli avec les trimestres déjà présents")
 
     total_repare = 0
     for feuille, table, cle_dedup, colonnes_formule in cibles:

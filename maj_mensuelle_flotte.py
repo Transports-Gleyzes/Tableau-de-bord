@@ -777,6 +777,115 @@ def parse_salaires(sources_dir, mois, referentiel):
 
 
 # ---------------------------------------------------------------------------
+# Synthèse trimestrielle par société (onglet Synthese_Trimestrielle)
+# ---------------------------------------------------------------------------
+ONGLET_TRIM = "Synthese_Trimestrielle"
+TABLE_TRIM = "T_SyntheseTrimestrielle"
+ENTETES_TRIM = ["Debut_Trimestre", "Trimestre", "Société", "Charges_Fixes", "Charges_Variables",
+                "Charges_Mutualisees", "Charges_Totales", "CA", "Resultat", "Marge_%",
+                "Mois_Complets", "Statut"]
+LIGNES_BUFFER_TRIM = 40  # lignes pré-mises en forme (10 ans de trimestres x 2 sociétés)
+
+
+def debut_trimestre(d):
+    """1er jour du trimestre civil contenant la date d (juillet/août/septembre -> 1er juillet)."""
+    return date(d.year, 3 * ((d.month - 1) // 3) + 1, 1)
+
+
+def formules_synthese_trimestrielle():
+    """Formules de T_SyntheseTrimestrielle, agrégées depuis Synthese_Societe (A=Mois, B=Société,
+    C..I = Charges_Fixes..Marge_%).
+
+    Seuls les mois « complets » de la société (Resultat mensuel numérique, donc CA ET charges
+    connus) entrent dans le cumul, pour toutes les colonnes : on garantit ainsi
+    CA - Charges_Totales = Resultat sur le trimestre, au lieu de mélanger un CA de 3 mois avec
+    des charges de 2 mois. Un mois encore « N/D » n'est jamais compté comme 0 : il fait passer
+    le trimestre en statut « Partiel » (colonne Mois_Complets = nombre de mois réellement cumulés).
+    Plages bornées ($5:$2000) plutôt que colonnes entières : SUMPRODUCT sur 1M de lignes est lent."""
+    plage = lambda col: f"Synthese_Societe!${col}$5:${col}$2000"
+    def filtre(r):
+        return (f"({plage('A')}>=$A{r})*({plage('A')}<DATE(YEAR($A{r}),MONTH($A{r})+3,1))"
+                f"*({plage('B')}=$C{r})*ISNUMBER({plage('H')})")
+    def cumul(col):
+        return lambda r: f'=IF($K{r}=0,"N/D",SUMPRODUCT({filtre(r)},{plage(col)}))'
+    return {
+        "Trimestre": lambda r: f'=IF(A{r}="","","T"&INT((MONTH(A{r})+2)/3)&" "&YEAR(A{r}))',
+        "Charges_Fixes": cumul("C"),
+        "Charges_Variables": cumul("D"),
+        "Charges_Mutualisees": cumul("E"),
+        "Charges_Totales": cumul("F"),
+        "CA": cumul("G"),
+        "Resultat": cumul("H"),
+        "Marge_%": lambda r: f'=IF(OR(I{r}="N/D",H{r}=0),"N/D",I{r}/H{r})',
+        "Mois_Complets": lambda r: f"=SUMPRODUCT({filtre(r)})",
+        "Statut": lambda r: (f'=IF(K{r}=3,"Complet",IF(K{r}=0,"N/D (aucun mois complet)",'
+                             f'"Partiel ("&K{r}&"/3 mois)"))'),
+    }
+
+
+def assurer_onglet_trimestriel(wb):
+    """Crée l'onglet Synthese_Trimestrielle (vraie Table Excel, même présentation que
+    Synthese_Societe) s'il n'existe pas encore, et le pré-remplit avec tous les trimestres
+    déjà présents dans Synthese_Societe. Sans effet si l'onglet existe déjà."""
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils.cell import range_boundaries
+    from openpyxl.worksheet.table import TableStyleInfo
+
+    if any(TABLE_TRIM in ws.tables for ws in wb.worksheets):
+        return False
+    ws_ss = get_table_ws(wb, "T_SyntheseSociete")
+    ws = wb.create_sheet(ONGLET_TRIM, index=wb.sheetnames.index(ws_ss.title) + 1)
+
+    ws["A1"] = "Synthèse trimestrielle par société — rentabilité Transports Gleyzes / LPB Transports"
+    ws["A1"].font = Font(name="Calibri", size=13, bold=True)
+    ws["A2"] = ("Cumul par trimestre civil des mois de Synthese_Societe. Seuls les mois COMPLETS (CA et charges "
+                "connus) sont cumulés : un mois encore 'N/D' n'est jamais compté comme 0 et rend le trimestre "
+                "'Partiel' (voir Mois_Complets / Statut). Debut_Trimestre + Société à saisir (ou ajoutés par le "
+                "script mensuel) ; tout le reste se calcule automatiquement.")
+    ws["A2"].font = Font(name="Calibri", size=9, italic=True, color="FF666666")
+
+    entete_font = Font(name="Calibri", size=11, bold=True, color="FFFFFFFF")
+    entete_fill = PatternFill("solid", fgColor="FF1F4E78")
+    for i, h in enumerate(ENTETES_TRIM, start=1):
+        c = ws.cell(row=4, column=i, value=h)
+        c.font, c.fill = entete_font, entete_fill
+        c.alignment = Alignment(horizontal="center")
+
+    saisie_fill, calcul_fill = PatternFill("solid", fgColor="FFFFF2CC"), PatternFill("solid", fgColor="FFF2F2F2")
+    saisie_font, calcul_font = Font(name="Calibri", size=11, color="FF1F4E78"), Font(name="Calibri", size=11, color="FF000000")
+    formats = {"Debut_Trimestre": "mmm-yy", "Marge_%": "0.0%", "Mois_Complets": "0",
+               "Trimestre": "General", "Société": "General", "Statut": "General"}
+    derniere = 4 + LIGNES_BUFFER_TRIM
+    for r in range(5, derniere + 1):
+        for i, h in enumerate(ENTETES_TRIM, start=1):
+            c = ws.cell(row=r, column=i)
+            saisie = h in ("Debut_Trimestre", "Société")
+            c.fill = saisie_fill if saisie else calcul_fill
+            c.font = saisie_font if saisie else calcul_font
+            c.number_format = formats.get(h, "#,##0.00\\ \\€")
+
+    for col, largeur in zip("ABCDEFGHIJKL", (16, 11, 11, 17, 19, 21, 18, 16, 16, 10, 15, 24)):
+        ws.column_dimensions[col].width = largeur
+    ws.freeze_panes = "A5"
+
+    tbl = Table(displayName=TABLE_TRIM, ref=f"A4:{get_column_letter(len(ENTETES_TRIM))}{derniere}")
+    tbl.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+    ws.add_table(tbl)
+
+    # Pré-remplissage avec tous les trimestres déjà couverts par Synthese_Societe
+    min_col, min_row, max_col, max_row = range_boundaries(ws_ss.tables["T_SyntheseSociete"].ref)
+    trimestres = set()
+    for r in range(min_row + 1, max_row + 1):
+        m, s = ws_ss.cell(row=r, column=min_col).value, ws_ss.cell(row=r, column=min_col + 1).value
+        if isinstance(m, (datetime, date)) and s:
+            trimestres.add(debut_trimestre(m))
+    lignes = [{"Debut_Trimestre": t, "Société": s} for t in sorted(trimestres) for s in ("Gleyzes", "LPB")]
+    ajouter_lignes_table(ws, TABLE_TRIM, lignes, cle_dedup=("Debut_Trimestre", "Société"),
+                         colonnes_formule=formules_synthese_trimestrielle())
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Programme principal
 # ---------------------------------------------------------------------------
 def main():
@@ -965,6 +1074,15 @@ def main():
                               colonnes_formule=formules_se)
     total_maj += n + maj_c + rep
     print(f"Synthese_Entreprise : {_rapport(n, maj_c, rep)}")
+
+    if assurer_onglet_trimestriel(wb):
+        print(f"{ONGLET_TRIM} : onglet créé et pré-rempli avec les trimestres déjà présents")
+    ws_st = get_table_ws(wb, TABLE_TRIM)
+    lignes_st = [{"Debut_Trimestre": debut_trimestre(mois_date), "Société": s} for s in ("Gleyzes", "LPB")]
+    n, maj_c, rep = ajouter_lignes_table(ws_st, TABLE_TRIM, lignes_st, cle_dedup=("Debut_Trimestre", "Société"),
+                              colonnes_formule=formules_synthese_trimestrielle())
+    total_maj += n + maj_c + rep
+    print(f"{ONGLET_TRIM} : {_rapport(n, maj_c, rep)}")
 
     # --- DONNEES_MANQUANTES : journalisation des trous détectés ce mois-ci ---
     if manquants_globaux:
