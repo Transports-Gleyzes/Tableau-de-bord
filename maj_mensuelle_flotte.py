@@ -894,12 +894,47 @@ def assurer_onglet_trimestriel(wb):
 # ---------------------------------------------------------------------------
 # Programme principal
 # ---------------------------------------------------------------------------
+def _trouver_chemin(demande, candidats, est_dossier):
+    """Retourne le premier chemin existant parmi `demande` puis `candidats`, chacun essayé
+    depuis le dossier courant, le dossier du script et leurs dossiers parents.
+    Bug corrigé le 24/09/2026 : lancé par double-clic (dossier courant = dossier du
+    script), le script ne trouvait ni le classeur ni SOURCES (dont le chemin par défaut
+    'TABLEAUX DE BORD' ne correspondait pas au vrai dossier 'TABLEAU DE BORD'), s'arrêtait
+    sur une erreur avant toute sauvegarde, et la fenêtre se refermait sans rien montrer."""
+    bases = []
+    for b in (os.getcwd(), os.path.dirname(os.path.abspath(__file__))):
+        for _ in range(3):
+            if b not in bases:
+                bases.append(b)
+            b = os.path.dirname(b)
+    for nom in [demande] + candidats:
+        for base in bases:
+            chemin = os.path.join(base, nom)
+            if (os.path.isdir(chemin) if est_dossier else os.path.isfile(chemin)):
+                return chemin
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(description="Mise à jour mensuelle du tableau de bord flotte Gleyzes/LPB")
     ap.add_argument("--classeur", default="TABLEAU_DE_BORD_FLOTTE.xlsx")
-    ap.add_argument("--sources", default="TABLEAUX DE BORD/SOURCES")
+    ap.add_argument("--sources", default="TABLEAU DE BORD/SOURCES")
     ap.add_argument("--mois", default=None, help="Format AAAA-MM, ex: 2026-08. Auto-détecté si omis.")
     args = ap.parse_args()
+
+    classeur = _trouver_chemin(args.classeur, ["TABLEAU DE BORD/TABLEAU_DE_BORD_FLOTTE.xlsx",
+                                               "TABLEAUX DE BORD/TABLEAU_DE_BORD_FLOTTE.xlsx"], est_dossier=False)
+    if not classeur:
+        raise RuntimeError(f"Classeur introuvable : '{args.classeur}' (cherché depuis {os.getcwd()} et le dossier "
+                           f"du script). Placez le script à côté du classeur, ou indiquez --classeur \"chemin\".")
+    sources = _trouver_chemin(args.sources, ["TABLEAU DE BORD/SOURCES", "TABLEAUX DE BORD/SOURCES", "SOURCES"],
+                              est_dossier=True)
+    if not sources:
+        raise RuntimeError(f"Dossier SOURCES introuvable : '{args.sources}' (cherché depuis {os.getcwd()} et le "
+                           f"dossier du script). Indiquez --sources \"chemin du dossier SOURCES\".")
+    print(f"Classeur : {os.path.abspath(classeur)}")
+    print(f"Sources  : {os.path.abspath(sources)}")
+    args.classeur, args.sources = classeur, sources
 
     mois = detecter_mois(args.sources, args.mois)
     mois_date = date(int(mois.split("-")[0]), int(mois.split("-")[1]), 1)
@@ -1113,4 +1148,15 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"\n[ERREUR] Le classeur N'A PAS été modifié : {e}")
+    finally:
+        if len(sys.argv) == 1:  # lancé par double-clic : garder la fenêtre ouverte pour lire le résultat
+            try:
+                input("\nAppuyez sur Entrée pour fermer cette fenêtre...")
+            except EOFError:
+                pass
