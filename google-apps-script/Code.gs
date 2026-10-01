@@ -39,6 +39,7 @@ var FEUILLES = {
   FACTURES: ['N_Facture', 'Client', 'Date_Facture', 'Echeance', 'Montant_TTC', 'Statut', 'Date_Paiement',
              'Derniere_Relance', 'Remarque'],
   HEURES: ['Date', 'Salarié', 'Heures', 'Remarque'],
+  CAMIONS_HABITUELS: ['Chauffeur', 'Camion_Habituel', 'Depuis_Le', 'Activite', 'Remarque'],
   JOURNAL_ALERTES: ['Date_Envoi', 'Clé', 'Niveau', 'Message']
 };
 
@@ -56,7 +57,7 @@ var COLONNES_DATE = {
   FLOTTE: ['Prochain_CT', 'Prochain_Entretien', 'Echeance_Assurance', 'Controle_Tachygraphe', 'Indisponible_Jusqu_Au'],
   SALARIES: ['Fin_Validite_Permis', 'Fin_FIMO_FCO', 'Prochaine_Visite_Medicale', 'Fin_Carte_Conducteur', 'Date_Formation'],
   FACTURES: ['Date_Facture', 'Echeance', 'Date_Paiement', 'Derniere_Relance'],
-  HEURES: ['Date'], LIVRAISONS: ['Date'], CARBURANT: ['Date'], ABSENCES: ['Début', 'Fin']
+  HEURES: ['Date'], LIVRAISONS: ['Date'], CARBURANT: ['Date'], ABSENCES: ['Début', 'Fin'], CAMIONS_HABITUELS: ['Depuis_Le']
 };
 
 var PARAMETRES_DEFAUT = [
@@ -158,7 +159,7 @@ function installer() {
   });
   var synchro = '';
   try {
-    synchro = synchroniserReferentiels_(ss);
+    synchro = synchroniserReferentiels_(ss) + completerCamionsHabituels_(ss);
   } catch (e) {
     synchro = '\n\nTableau « Échéances flotte » illisible : ' + e.message;
   }
@@ -711,6 +712,7 @@ function plannings_(ss) {
         client: col(function (h) { return h === 'CLIENT'; }),
         lieu: col(function (h) { return h === 'LIEU DE LIVRAISON' || h === 'LIVRAISON'; }),
         contrat: col(function (h) { return h.indexOf('CONTRAT MANQUANT') === 0; }),
+        camion: col(function (h) { return /^(CAMION|VEHICULE|IMMAT|TRACTEUR)/.test(h); }),
         attente: col(function (h) { return h.indexOf('HEURES ATTENTE') === 0; })
       };
       var val = function (l, k) { return k >= 0 ? l[k] : ''; };
@@ -731,13 +733,70 @@ function plannings_(ss) {
           date: dt, activite: src[1], societe: soc.indexOf('LPB') >= 0 ? 'LPB' : (soc.indexOf('GLEYZES') >= 0 ? 'Gleyzes' : soc),
           chauffeur: chauffeur, client: String(val(l, c.client) || '').trim(), lieu: String(val(l, c.lieu) || '').trim(),
           ca: ca, km: nombre_(val(l, c.km), null), litres: nombre_(val(l, c.litres), null),
-          attente: nombre_(val(l, c.attente), null), contratManquant: String(val(l, c.contrat) || '').trim()
+          attente: nombre_(val(l, c.attente), null), contratManquant: String(val(l, c.contrat) || '').trim(),
+          camionSaisi: plaque_(val(l, c.camion))
         });
       });
     });
   });
+  attribuerCamions_(ss, res);
   CACHE_PLANNINGS_ = res;
   return res;
+}
+
+/**
+ * Camion de chaque ligne de planning : celui tapé dans la colonne CAMION du planning s'il y en a un (changement
+ * ponctuel), sinon le camion habituel du chauffeur (onglet CAMIONS_HABITUELS, ligne « Depuis_Le » la plus récente
+ * antérieure à la date ; une Activite renseignée limite la règle à Inter ou Carburant).
+ */
+function attribuerCamions_(ss, lignes) {
+  var sh = ss.getSheetByName('CAMIONS_HABITUELS');
+  var regles = (sh ? lireTable_(sh) : []).filter(function (r) { return r.Chauffeur && r.Camion_Habituel; }).map(function (r) {
+    var d = r.Depuis_Le instanceof Date ? r.Depuis_Le : dateDepuisTexte_(r.Depuis_Le);
+    return { chauffeur: String(r.Chauffeur), camion: plaque_(r.Camion_Habituel), depuis: d, activite: cle_(r.Activite) };
+  });
+  lignes.forEach(function (l) {
+    if (l.camionSaisi) { l.camion = l.camionSaisi; l.camionSource = 'planning'; return; }
+    var meilleure = null;
+    regles.forEach(function (r) {
+      if (!memePersonne_(r.chauffeur, l.chauffeur)) return;
+      if (r.activite && cle_(l.activite).indexOf(r.activite) !== 0 && r.activite.indexOf(cle_(l.activite)) !== 0) return;
+      if (r.depuis && r.depuis > l.date) return;
+      if (!meilleure || (r.depuis || 0) >= (meilleure.depuis || 0)) meilleure = r;
+    });
+    l.camion = meilleure ? meilleure.camion : '';
+    l.camionSource = meilleure ? 'habituel' : '';
+  });
+}
+
+/** Ajoute dans CAMIONS_HABITUELS chaque chauffeur des plannings qui n'y figure pas encore (camion à remplir). */
+function completerCamionsHabituels_(ss) {
+  var sh = ss.getSheetByName('CAMIONS_HABITUELS');
+  if (!sh) return '';
+  CACHE_PLANNINGS_ = null;
+  var lignes = plannings_(ss);
+  var connus = lireTable_(sh).map(function (r) { return String(r.Chauffeur || ''); });
+  var nouveaux = {};
+  lignes.forEach(function (l) {
+    var n = cle_(l.chauffeur);
+    if (!n || connus.some(function (c) { return memePersonne_(c, n); })) return;
+    var k = Object.keys(nouveaux).filter(function (x) { return memePersonne_(x, n); })[0] || n;
+    var x = nouveaux[k] = nouveaux[k] || { act: {}, nb: 0 };
+    x.act[l.activite] = 1; x.nb++;
+  });
+  var noms = Object.keys(nouveaux).sort();
+  if (noms.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, noms.length, 5).setValues(noms.map(function (n) {
+      return [n, '', '', Object.keys(nouveaux[n].act).length === 1 ? Object.keys(nouveaux[n].act)[0] : '', nouveaux[n].nb + ' ligne(s) de planning'];
+    }));
+  }
+  // Liste déroulante des immatriculations de FLOTTE dans la colonne Camion_Habituel
+  var shF = ss.getSheetByName('FLOTTE');
+  if (shF && shF.getLastRow() > 1) {
+    sh.getRange(2, 2, sh.getMaxRows() - 1, 1).setDataValidation(SpreadsheetApp.newDataValidation()
+      .requireValueInRange(shF.getRange(2, 1, shF.getLastRow() - 1, 1), true).setAllowInvalid(true).build());
+  }
+  return noms.length ? '\n\n' + noms.length + ' chauffeur(s) des plannings ajouté(s) dans CAMIONS_HABITUELS : indiquez leur camion habituel.' : '';
 }
 
 /** Contrats manquants (Inter) et livraisons sans prix (Carburant) des 60 derniers jours. */
@@ -756,6 +815,13 @@ function alertesPlannings_(lignes, jour0) {
       (sansPrix[k] = sansPrix[k] || []).push(dateTxt);
     }
   });
+  var sansCamion = {};
+  lignes.forEach(function (l) { if (l.date >= depuis && l.date <= jour0 && !l.camion && l.chauffeur) sansCamion[cle_(l.chauffeur)] = 1; });
+  if (Object.keys(sansCamion).length) {
+    res.push({ niveau: 'a_prevoir', categorie: 'donnees', domaine: 'Plannings', objet: '', sujet: 'Camion habituel manquant',
+      message: Object.keys(sansCamion).length + ' chauffeur(s) du planning sans camion habituel (' + Object.keys(sansCamion).sort().join(', ') + ') : à remplir dans CAMIONS_HABITUELS',
+      cle: 'SANSCAMION|' + Object.keys(sansCamion).sort().join(',') });
+  }
   Object.keys(sansPrix).forEach(function (k) {
     res.push({ niveau: 'a_prevoir', categorie: 'donnees', domaine: 'Carburant', objet: k, sujet: 'Prix manquant',
       message: 'Livraison(s) carburant sans prix pour ' + k + ' (' + sansPrix[k].join(', ') + ') : prix à saisir dans l\'onglet TARIFS',

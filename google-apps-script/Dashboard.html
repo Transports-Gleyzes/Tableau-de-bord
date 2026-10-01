@@ -258,6 +258,11 @@ button.petit { padding: 2px 8px; font-size: 12px; }
         <div class="graph"><canvas id="gMoisAct" aria-label="CA par mois et par activité"></canvas></div>
       </div>
     </div>
+    <div class="carte">
+      <h2>CA par camion</h2>
+      <p class="note">Camion habituel du chauffeur (onglet CAMIONS_HABITUELS), sauf si un autre camion est tapé dans la colonne CAMION du planning</p>
+      <div class="tableau"><table id="tabCamions"></table></div>
+    </div>
     <div class="carte carbu">
       <h2>Clients carburant du mois</h2>
       <div class="tableau"><table id="tabClients"></table></div>
@@ -980,6 +985,24 @@ function rendreActivite() {
     parChauffeur(inter, 'km'), function (o, k) { return o[k]; });
   tableTriable('tabCarbu', [['Chauffeur', 'nom', 'txt'], ['Société', 'societe', 'txt'], ['Livraisons', 'n', 'nb'], ['m³', 'm3', 'nb'], ['CA', 'ca', 'eur']],
     parChauffeur(carbu, 'litres').map(function (x) { x.m3 = x.q / 1000; return x; }), function (o, k) { return o[k]; });
+  var cam = {};
+  duMois.forEach(function (l) {
+    var k = l.camion || '(sans camion)';
+    var x = cam[k] = cam[k] || { id: k, act: {}, ch: {}, n: 0, km: 0, ca: 0, changes: 0 };
+    x.act[l.activite] = 1; x.ch[String(l.chauffeur).trim().toUpperCase()] = 1; x.n++; x.km += num(l.km) || 0; x.ca += num(l.ca) || 0;
+    if (l.camionSource === 'planning') x.changes++;
+  });
+  var litMois = (D.LITRAGES || []).filter(function (w) { return w.valide && String(w.fin).slice(0, 7) === mois; });
+  var lignesCam = Object.keys(cam).map(function (k) {
+    var x = cam[k], w = litMois.filter(function (y) { return y.immat === k; });
+    var litres = w.reduce(function (t, y) { return t + y.litres; }, 0), kmL = w.reduce(function (t, y) { return t + y.km; }, 0);
+    return { id: k, activite: Object.keys(x.act).join(' + '), chauffeurs: Object.keys(x.ch).sort().join(', '), n: x.n, km: x.km || null, ca: x.ca,
+      litres: litres || null, conso: kmL ? litres / kmL * 100 : null, changes: x.changes ? x.changes + ' ligne(s)' : '' };
+  }).sort(function (a, b) { return b.ca - a.ca; });
+  tableTriable('tabCamions', [['Camion', 'id', 'txt'], ['Activité', 'activite', 'txt'], ['Chauffeur(s)', 'chauffeurs', 'txt'], ['Tournées / livr.', 'n', 'nb'],
+    ['Km (Inter)', 'km', 'nb'], ['CA', 'ca', 'eur'], ['Litres consommés', 'litres', 'nb'], ['L/100 km', 'conso', 'nb'], ['Camion changé à la main', 'changes', 'txt']],
+    lignesCam, function (o, k) { return o[k]; });
+
   var cl = {};
   carbu.forEach(function (l) { var k = (l.client || '?') + ' — ' + (l.lieu || '?'); var x = cl[k] = cl[k] || { nom: k, n: 0, m3: 0, ca: 0 }; x.n++; x.m3 += (num(l.litres) || 0) / 1000; x.ca += num(l.ca) || 0; });
   tableTriable('tabClients', [['Client — lieu', 'nom', 'txt'], ['Livraisons', 'n', 'nb'], ['m³', 'm3', 'nb'], ['CA', 'ca', 'eur']],
