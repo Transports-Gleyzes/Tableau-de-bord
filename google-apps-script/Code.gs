@@ -13,6 +13,8 @@
  *
  * Si PARAMETRES > ID_CLASSEUR_ECHEANCES contient le lien du Google Sheet « Échéances flotte », ses onglets
  * « Toutes les échéances », « CONGES… » et « Pense-bête mensuel » sont lus directement (rien n'est recopié).
+ * De même pour ID_PLANNING_INTER, ID_PLANNING_CARBURANT (un onglet par mois, une ligne par tournée/livraison)
+ * et ID_LITRAGES (un onglet par véhicule, km début / km fin / litres par semaine).
  *
  * Principe repris de maj_mensuelle_flotte.py : ne jamais inventer un 0.
  * Une cellule vide reste vide et s'affiche « N/D » sur le site.
@@ -60,6 +62,11 @@ var COLONNES_DATE = {
 var PARAMETRES_DEFAUT = [
   ['EMAIL_ALERTES', '', 'Adresse(s) qui reçoivent les alertes, séparées par des virgules'],
   ['ID_CLASSEUR_ECHEANCES', '', 'Lien du Google Sheet « Échéances flotte » : échéances, congés et pense-bête y sont lus directement'],
+  ['ID_PLANNING_INTER', '', 'Lien du Google Sheet « Planning Inter (ITM) » : CA et tournées lus directement'],
+  ['ID_PLANNING_CARBURANT', '', 'Lien du Google Sheet « Planning Carburant » : CA et livraisons lus directement'],
+  ['ID_LITRAGES', '', 'Lien du Google Sheet « Litrages véhicules » : consommation par semaine lue directement'],
+  ['SEUIL_HAUSSE_CONSO_PCT', 15, 'Alerte si la consommation récente dépasse de ce % la moyenne habituelle du camion'],
+  ['NB_SEMAINES_CONSO', 2, 'Nombre de dernières semaines regroupées pour juger la consommation (1 = très réactif mais beaucoup de fausses alertes)'],
   ['JOURS_PREAVIS', 30, 'Une échéance passe « à prévoir » ce nombre de jours avant la date'],
   ['JOURS_URGENT', 7, 'Une échéance passe « urgente » ce nombre de jours avant la date'],
   ['SEUIL_MARGE_PCT', 5, 'Alerte si la marge d\'un camion sur le dernier mois est sous ce % (négatif = urgent)'],
@@ -207,6 +214,21 @@ function getDonnees() {
     d.ECHEANCES = d.ECHEANCES || [];
     d.erreurEcheances = 'Tableau « Échéances flotte » illisible : ' + e.message;
   }
+  d.erreurs = [];
+  try {
+    d.PLANNING = plannings_(ss).map(function (l) {
+      var o = serialiser_(l);
+      o.date = Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM-dd');
+      return o;
+    });
+  } catch (e) { d.PLANNING = []; d.erreurs.push('Plannings illisibles : ' + e.message); }
+  try {
+    d.LITRAGES = litrages_(ss).map(function (l) {
+      var o = serialiser_(l);
+      o.fin = l.fin ? Utilities.formatDate(l.fin, FUSEAU, 'yyyy-MM-dd') : '';
+      return o;
+    });
+  } catch (e) { d.LITRAGES = []; d.erreurs.push('Litrages illisibles : ' + e.message); }
   var params = lireParametres_();
   d.parametres = {
     JOURS_PREAVIS: nombre_(params.JOURS_PREAVIS, 30),
@@ -215,7 +237,12 @@ function getDonnees() {
     SEUIL_CONSO_L100: nombre_(params.SEUIL_CONSO_L100, 38),
     JOURS_RELANCE: nombre_(params.JOURS_RELANCE, 15),
     SEUIL_RETARDS_PCT: nombre_(params.SEUIL_RETARDS_PCT, 5),
-    sourceEcheances: !!String(params.ID_CLASSEUR_ECHEANCES || '').trim()
+    sourceEcheances: !!String(params.ID_CLASSEUR_ECHEANCES || '').trim(),
+    sourceInter: !!String(params.ID_PLANNING_INTER || '').trim(),
+    sourceCarburant: !!String(params.ID_PLANNING_CARBURANT || '').trim(),
+    sourceLitrages: !!String(params.ID_LITRAGES || '').trim(),
+    SEUIL_HAUSSE_CONSO_PCT: nombre_(params.SEUIL_HAUSSE_CONSO_PCT, 15),
+    NB_SEMAINES_CONSO: Math.max(1, nombre_(params.NB_SEMAINES_CONSO, 2))
   };
   d.alertes = calculerAlertes_(ss, new Date());
   d.genereLe = Utilities.formatDate(new Date(), FUSEAU, "dd/MM/yyyy 'à' HH:mm");
@@ -464,6 +491,13 @@ function calculerAlertes_(ss, aujourdhui) {
     }
   }
 
+  // 8. Plannings et litrages (Google Sheets reliés) : une erreur de lecture ne bloque pas les autres alertes
+  try { alertes = alertes.concat(alertesPlannings_(plannings_(ss), jour0)); } catch (e) { console.warn('Plannings : ' + e); }
+  try {
+    alertes = alertes.concat(alertesConsoHebdo_(litrages_(ss), jour0, nombre_(p.SEUIL_CONSO_L100, 38), nombre_(p.SEUIL_HAUSSE_CONSO_PCT, 15),
+      Math.max(1, nombre_(p.NB_SEMAINES_CONSO, 2))));
+  } catch (e) { console.warn('Litrages : ' + e); }
+
   var ordre = { depasse: 0, urgent: 1, a_prevoir: 2 };
   alertes.sort(function (a, b) {
     return (ordre[a.niveau] - ordre[b.niveau]) || ((a.jours === undefined ? 999 : a.jours) - (b.jours === undefined ? 999 : b.jours));
@@ -522,8 +556,11 @@ function factureEnAttente_(statut) {
 // ---------------------------------------------------------------------------
 var CACHE_EXTERNE_ = {};
 
-function classeurEcheances_(ss) {
-  var v = String(lireParametres_(ss).ID_CLASSEUR_ECHEANCES || '').trim();
+function classeurEcheances_(ss) { return classeurParam_(ss, 'ID_CLASSEUR_ECHEANCES'); }
+
+/** Ouvre le Google Sheet dont le lien (ou l'identifiant) est dans PARAMETRES > nomParam ; null si vide. */
+function classeurParam_(ss, nomParam) {
+  var v = String(lireParametres_(ss)[nomParam] || '').trim();
   if (!v) return null;
   var m = v.match(/\/d\/([a-zA-Z0-9_-]{20,})/);
   var id = m ? m[1] : v;
@@ -627,6 +664,175 @@ function taches_(ss, jour0) {
     res.push({ niveau: j <= 2 ? 'urgent' : 'a_prevoir', categorie: 'taches', domaine: 'Pense-bête', objet: tache, sujet: tache, jours: j,
       message: tache + ' : pour le ' + dateTxt + ' (' + (j === 0 ? 'aujourd\'hui' : 'dans ' + j + ' j') + ')' + (note ? ' — ' + note : ''),
       cle: 'TACHE|' + tache + '|' + Utilities.formatDate(due, FUSEAU, 'yyyy-MM-dd') });
+  });
+  return res;
+}
+
+// ---------------------------------------------------------------------------
+// Plannings Inter (ITM) et Carburant : deux activités distinctes, jamais mélangées
+// ---------------------------------------------------------------------------
+var MOIS_ONGLETS = { JANVIER: 1, FEVRIER: 2, MARS: 3, AVRIL: 4, MAI: 5, JUIN: 6, JUILLET: 7, AOUT: 8, SEPTEMBRE: 9,
+                     OCTOBRE: 10, NOVEMBRE: 11, DECEMBRE: 12 };
+var CACHE_PLANNINGS_ = null, CACHE_LITRAGES_ = null;
+
+/**
+ * Une ligne par tournée (Inter) ou par livraison (Carburant), lue dans les onglets mensuels des deux plannings.
+ * Les onglets « CA … », TARIFS, COMPARATIF… sont ignorés : le CA est recalculé ligne par ligne.
+ */
+function plannings_(ss) {
+  if (CACHE_PLANNINGS_) return CACHE_PLANNINGS_;
+  var res = [];
+  [['ID_PLANNING_INTER', 'Inter'], ['ID_PLANNING_CARBURANT', 'Carburant']].forEach(function (src) {
+    var ext = classeurParam_(ss, src[0]);
+    if (!ext) return;
+    ext.getSheets().forEach(function (sh) {
+      var nom = cle_(sh.getName());
+      if (/^CA\b|TARIF|COMPARATIF|RECAP/.test(nom)) return;
+      if (!Object.keys(MOIS_ONGLETS).some(function (m) { return nom.indexOf(m) >= 0; })) return;
+      if (sh.getLastRow() < 2) return;
+      var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+      // En-tête : la ligne qui contient « SOCIETE… » et « CHAUFFEUR… » (la case DATE est parfois écrasée par un n° de contrat)
+      var ligneEntete = -1;
+      for (var i = 0; i < Math.min(6, v.length); i++) {
+        var h = v[i].map(cle_);
+        if (h.some(function (x) { return x.indexOf('SOCIETE') === 0; }) && h.some(function (x) { return x.indexOf('CHAUFFEUR') === 0; })) { ligneEntete = i; break; }
+      }
+      if (ligneEntete < 0) return;
+      var e = v[ligneEntete].map(cle_);
+      // Mois et année de l'onglet : corrigent les fautes de frappe sur l'année (« 2025 » ou « 2029 » dans l'onglet JUIN 2026)
+      var moisOnglet = MOIS_ONGLETS[Object.keys(MOIS_ONGLETS).filter(function (m) { return nom.indexOf(m) >= 0; })[0]];
+      var an = (nom.match(/(20\d\d)/) || [])[1];
+      var col = function (test) { for (var k = 0; k < e.length; k++) if (test(e[k])) return k; return -1; };
+      var dernier = function (test) { for (var k = e.length - 1; k >= 0; k--) if (test(e[k])) return k; return -1; };
+      var c = {
+        date: Math.max(0, col(function (h) { return h === 'DATE' || h === 'DATES'; })), ca: e.indexOf('CA'), km: e.indexOf('KM'), litres: e.indexOf('LITRAGE'),
+        societe: dernier(function (h) { return h.indexOf('SOCIETE') === 0; }),
+        chauffeur: col(function (h) { return h.indexOf('CHAUFFEUR') === 0; }),
+        client: col(function (h) { return h === 'CLIENT'; }),
+        lieu: col(function (h) { return h === 'LIEU DE LIVRAISON' || h === 'LIVRAISON'; }),
+        contrat: col(function (h) { return h.indexOf('CONTRAT MANQUANT') === 0; }),
+        attente: col(function (h) { return h.indexOf('HEURES ATTENTE') === 0; })
+      };
+      var val = function (l, k) { return k >= 0 ? l[k] : ''; };
+      if (!an) {   // onglet sans année (« AOUT ») : année la plus fréquente parmi ses dates
+        var compte = {};
+        v.forEach(function (l) { if (l[c.date] instanceof Date) compte[l[c.date].getFullYear()] = (compte[l[c.date].getFullYear()] || 0) + 1; });
+        an = Object.keys(compte).sort(function (a, b) { return compte[b] - compte[a]; })[0];
+      }
+      v.slice(ligneEntete + 1).forEach(function (l) {
+        var dt = l[c.date] instanceof Date ? l[c.date] : dateDepuisTexte_(l[c.date]);
+        if (dt && an && dt.getMonth() + 1 === moisOnglet && dt.getFullYear() !== +an) dt = new Date(+an, dt.getMonth(), dt.getDate());
+        var chauffeur = String(val(l, c.chauffeur) || '').trim();
+        var ca = nombre_(val(l, c.ca), null);
+        if (!dt || (!chauffeur && !ca)) return;
+        if (!ca && !nombre_(val(l, c.km), null) && !nombre_(val(l, c.litres), null)) return;   // ligne préparée mais pas encore remplie
+        var soc = cle_(val(l, c.societe));
+        res.push({
+          date: dt, activite: src[1], societe: soc.indexOf('LPB') >= 0 ? 'LPB' : (soc.indexOf('GLEYZES') >= 0 ? 'Gleyzes' : soc),
+          chauffeur: chauffeur, client: String(val(l, c.client) || '').trim(), lieu: String(val(l, c.lieu) || '').trim(),
+          ca: ca, km: nombre_(val(l, c.km), null), litres: nombre_(val(l, c.litres), null),
+          attente: nombre_(val(l, c.attente), null), contratManquant: String(val(l, c.contrat) || '').trim()
+        });
+      });
+    });
+  });
+  CACHE_PLANNINGS_ = res;
+  return res;
+}
+
+/** Contrats manquants (Inter) et livraisons sans prix (Carburant) des 60 derniers jours. */
+function alertesPlannings_(lignes, jour0) {
+  var depuis = new Date(jour0.getTime() - 60 * 86400000), res = [], sansPrix = {};
+  lignes.forEach(function (l) {
+    if (l.date < depuis || l.date > jour0) return;
+    var dateTxt = Utilities.formatDate(l.date, FUSEAU, 'dd/MM/yyyy');
+    if (l.activite === 'Inter' && l.contratManquant) {
+      res.push({ niveau: 'a_prevoir', categorie: 'contrats', domaine: 'Inter', objet: l.chauffeur, sujet: 'Contrat manquant',
+        message: 'Contrat manquant (Inter) : ' + dateTxt + ', ' + l.chauffeur + ', ' + l.lieu + ' — ' + l.contratManquant,
+        cle: 'CONTRAT|' + Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM-dd') + '|' + l.chauffeur + '|' + l.contratManquant });
+    }
+    if (l.activite === 'Carburant' && l.litres > 0 && !l.ca) {
+      var k = l.client + ' ' + l.lieu;
+      (sansPrix[k] = sansPrix[k] || []).push(dateTxt);
+    }
+  });
+  Object.keys(sansPrix).forEach(function (k) {
+    res.push({ niveau: 'a_prevoir', categorie: 'donnees', domaine: 'Carburant', objet: k, sujet: 'Prix manquant',
+      message: 'Livraison(s) carburant sans prix pour ' + k + ' (' + sansPrix[k].join(', ') + ') : prix à saisir dans l\'onglet TARIFS',
+      cle: 'SANSPRIX|' + k + '|' + sansPrix[k].length });
+  });
+  return res;
+}
+
+// ---------------------------------------------------------------------------
+// Litrages véhicules : un onglet par camion, des blocs mensuels « Km début / Km fin / Litrage » par semaine
+// ---------------------------------------------------------------------------
+/**
+ * Une ligne par semaine et par véhicule : { immat, semaine, fin, approx, km, litres, conso, valide, raison }.
+ * Les semaines incohérentes (km de fin < km de début, plus de 5 000 km, conso hors 10-70 L/100…) sont gardées
+ * mais marquées valide = false, pour ne jamais déclencher d'alerte sur une faute de frappe.
+ */
+function litrages_(ss) {
+  if (CACHE_LITRAGES_) return CACHE_LITRAGES_;
+  var ext = classeurParam_(ss, 'ID_LITRAGES'), res = [];
+  if (!ext) return (CACHE_LITRAGES_ = res);
+  ext.getSheets().forEach(function (sh) {
+    var immat = plaque_(sh.getName());
+    if (!/^[A-Z]{2}\d{3}[A-Z]{2}$/.test(immat) || sh.getLastRow() < 3) return;
+    var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+    for (var r = 0; r < v.length; r++) {
+      for (var c = 0; c < v[r].length; c++) {
+        if (cle_(v[r][c]) !== 'KM DEBUT') continue;
+        // Mois du bloc : la case au-dessus de « Km début » (une date, ou un texte « 01/03/2026-31/03/2026 »)
+        var haut = r > 0 ? v[r - 1][c] : '', mois = null;
+        if (haut instanceof Date) mois = new Date(haut.getFullYear(), haut.getMonth(), 1);
+        else { var m = String(haut).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); if (m) mois = new Date(+m[3], +m[2] - 1, 1); }
+        if (!mois) continue;
+        var finMois = new Date(mois.getFullYear(), mois.getMonth() + 1, 0);
+        for (var i = 1; i <= 6 && r + i < v.length; i++) {
+          var l = v[r + i], libelle = c > 0 ? String(l[c - 1] || '').trim() : '';
+          if (/TOTAL/.test(cle_(libelle)) || cle_(l[c]) === 'KM DEBUT') break;
+          var kmD = nombre_(l[c], null), kmF = nombre_(l[c + 1], null), litres = nombre_(l[c + 2], null);
+          if (kmF === null && !litres) continue;   // ligne vide ou sous-total
+          // Fin de semaine : « du 12 au 17/01 » ; sinon estimée d'après le rang de la ligne dans le mois
+          var fin = null, approx = false, mm = libelle.match(/au\s*(\d{1,2})\s*\/\s*(\d{1,2})/i);
+          if (mm) fin = new Date(mois.getFullYear(), +mm[2] - 1, +mm[1]);
+          if (!fin || isNaN(fin.getTime())) { fin = new Date(Math.min(finMois.getTime(), new Date(mois.getFullYear(), mois.getMonth(), 7 * i).getTime())); approx = true; }
+          var km = kmD !== null && kmF !== null ? kmF - kmD : null;
+          var conso = km > 0 && litres > 0 ? litres / km * 100 : null;
+          var raison = km === null ? 'km manquant' : km <= 0 ? 'km de fin inférieur au km de début' : km > 5000 ? 'plus de 5 000 km (faute de frappe ?)'
+            : !(litres > 0) ? 'litres manquants' : (conso < 10 || conso > 70) ? 'consommation impossible (' + conso.toFixed(0) + ' L/100)' : '';
+          res.push({ immat: immat, semaine: libelle || ('semaine ' + i + ' de ' + Utilities.formatDate(mois, FUSEAU, 'MM/yyyy')),
+            fin: fin, approx: approx, km: km, litres: litres, conso: raison ? null : conso, valide: !raison, raison: raison });
+        }
+      }
+    }
+  });
+  res.sort(function (a, b) { return a.immat < b.immat ? -1 : a.immat > b.immat ? 1 : a.fin - b.fin; });
+  return (CACHE_LITRAGES_ = res);
+}
+
+/**
+ * Consommation des nb dernières semaines saisies de chaque camion (regroupées : un plein qui tombe à cheval sur
+ * deux semaines fausse une semaine isolée), comparée au seuil et à la moyenne des 8 semaines d'avant.
+ */
+function alertesConsoHebdo_(semaines, jour0, seuil, haussePct, nb) {
+  var parImmat = {}, res = [];
+  semaines.forEach(function (s) { if (s.valide) (parImmat[s.immat] = parImmat[s.immat] || []).push(s); });
+  var ratio = function (l) { return l.reduce(function (t, x) { return t + x.litres; }, 0) / l.reduce(function (t, x) { return t + x.km; }, 0) * 100; };
+  Object.keys(parImmat).forEach(function (immat) {
+    var l = parImmat[immat], der = l[l.length - 1];
+    if (l.length < nb || (jour0 - der.fin) / 86400000 > 45) return;   // pas de saisie récente : rien à signaler
+    var recent = l.slice(l.length - nb), prec = l.slice(Math.max(0, l.length - nb - 8), l.length - nb);
+    var conso = ratio(recent), moy = prec.length >= 3 ? ratio(prec) : null;
+    var hausse = moy ? (conso - moy) / moy * 100 : null;
+    if (conso <= seuil && !(hausse !== null && hausse > haussePct)) return;
+    var periode = recent.map(function (x) { return x.semaine; }).join(' + ');
+    res.push({ niveau: 'urgent', categorie: 'conso', domaine: 'Carburant', objet: immat, sujet: 'Consommation récente',
+      message: immat + ' consomme ' + fr1_(conso) + ' L/100 km sur ' + (nb === 1 ? 'la semaine ' : 'les ' + nb + ' dernières semaines ') + '(' + periode + ')' +
+        (moy ? ' contre ' + fr1_(moy) + ' habituellement (' + (hausse >= 0 ? '+' : '') + fr1_(hausse) + ' %)' : '') +
+        (conso > seuil ? ', au-dessus du seuil de ' + seuil : ''),
+      cle: 'CONSO_SEM|' + immat + '|' + Utilities.formatDate(der.fin, FUSEAU, 'yyyy-MM-dd') });
   });
   return res;
 }

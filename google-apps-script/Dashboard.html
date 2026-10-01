@@ -103,6 +103,12 @@ form.saisie .actions { grid-column: 1 / -1; display: flex; gap: 10px; align-item
 .attention .detail { padding: 0 0 10px 30px; color: var(--text-2); font-size: 13px; }
 .attention .detail div { padding: 2px 0; }
 .attention .ico { width: 20px; text-align: center; }
+.carte.inter { border-top: 4px solid var(--s1); }
+.carte.carbu { border-top: 4px solid var(--s2); }
+.pastille-act { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+.mini { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 4px 0 12px; }
+.mini div { font-size: 12px; color: var(--text-2); }
+.mini b { display: block; font-size: 20px; color: var(--text); font-variant-numeric: tabular-nums; }
 button.petit { padding: 2px 8px; font-size: 12px; }
 #chargement { padding: 40px; text-align: center; color: var(--text-2); }
 .legende { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
@@ -125,7 +131,8 @@ button.petit { padding: 2px 8px; font-size: 12px; }
   <button role="tab" data-onglet="finances">Finances</button>
   <button role="tab" data-onglet="flotte">Flotte</button>
   <button role="tab" data-onglet="salaries">Salariés</button>
-  <button role="tab" data-onglet="activite">Carburant &amp; livraisons</button>
+  <button role="tab" data-onglet="activite">Activité</button>
+  <button role="tab" data-onglet="conso">Consommation</button>
   <button role="tab" data-onglet="factures">Factures</button>
   <button role="tab" data-onglet="alertes">Alertes <span class="pastille" id="nbAlertes" hidden></span></button>
   <button role="tab" data-onglet="saisie">Saisie rapide</button>
@@ -221,25 +228,62 @@ button.petit { padding: 2px 8px; font-size: 12px; }
     </div>
   </section>
 
-  <!-- ACTIVITE -->
+  <!-- ACTIVITE : deux plannings distincts -->
   <section id="activite" hidden>
-    <div class="barre"><label for="moisAct">Mois</label><select id="moisAct"></select></div>
+    <div class="barre"><label for="moisAct">Mois</label><select id="moisAct"></select><span class="note" id="noteAct"></span></div>
     <div class="tuiles" id="tuilesAct"></div>
     <div class="grille">
-      <div class="carte">
-        <h2>Livraisons par jour</h2>
-        <p class="note">D'après les saisies de l'onglet LIVRAISONS</p>
-        <div class="graph"><canvas id="gLivraisons" aria-label="Livraisons par jour"></canvas></div>
+      <div class="carte inter">
+        <h2><span class="pastille-act" style="background:var(--s1)"></span>Planning Inter (ITM)</h2>
+        <div class="mini" id="miniInter"></div>
+        <div class="tableau"><table id="tabInter"></table></div>
       </div>
-      <div class="carte">
-        <h2>Consommation par camion (90 derniers jours)</h2>
-        <p class="note" id="noteConso"></p>
-        <div class="tableau"><table id="tabConso"></table></div>
+      <div class="carte carbu">
+        <h2><span class="pastille-act" style="background:var(--s2)"></span>Planning Carburant</h2>
+        <div class="mini" id="miniCarbu"></div>
+        <div class="tableau"><table id="tabCarbu"></table></div>
       </div>
     </div>
     <div class="grille">
-      <div class="carte"><h2>Activité du mois par camion</h2><div class="tableau"><table id="tabActCamion"></table></div></div>
-      <div class="carte"><h2>Derniers pleins</h2><div class="tableau"><table id="tabPleins"></table></div></div>
+      <div class="carte">
+        <h2>CA par jour</h2>
+        <p class="note">Mois sélectionné, Inter et Carburant empilés</p>
+        <div class="legende" id="legJour"></div>
+        <div class="graph"><canvas id="gJour" aria-label="CA par jour"></canvas></div>
+      </div>
+      <div class="carte">
+        <h2>CA par mois</h2>
+        <p class="note">Année en cours, une barre par activité</p>
+        <div class="legende" id="legMoisAct"></div>
+        <div class="graph"><canvas id="gMoisAct" aria-label="CA par mois et par activité"></canvas></div>
+      </div>
+    </div>
+    <div class="carte carbu">
+      <h2>Clients carburant du mois</h2>
+      <div class="tableau"><table id="tabClients"></table></div>
+    </div>
+  </section>
+
+  <!-- CONSOMMATION : fichier Litrages véhicules -->
+  <section id="conso" hidden>
+    <div class="tuiles" id="tuilesConso"></div>
+    <div class="carte">
+      <h2 id="titreConsoS">Dernières semaines saisies par camion</h2>
+      <p class="note" id="noteConsoS"></p>
+      <div class="tableau"><table id="tabConsoS"></table></div>
+    </div>
+    <div class="grille">
+      <div class="carte">
+        <h2>Évolution semaine par semaine</h2>
+        <div class="barre"><label for="choixCamion">Camion</label><select id="choixCamion"></select></div>
+        <div class="legende" id="legConso"></div>
+        <div class="graph"><canvas id="gConso" aria-label="Consommation par semaine"></canvas></div>
+      </div>
+      <div class="carte">
+        <h2>Semaines ignorées</h2>
+        <p class="note">Lignes incohérentes du fichier Litrages (faute de frappe probable) : elles ne déclenchent aucune alerte</p>
+        <div class="tableau"><table id="tabDouteux"></table></div>
+      </div>
     </div>
   </section>
 
@@ -412,7 +456,7 @@ function remplirSelectMois() {
 
   var selA = document.getElementById('moisAct'), ancienA = selA.value, ma = {};
   ma[aujourdhui().slice(0, 7)] = 1;
-  D.LIVRAISONS.concat(D.CARBURANT).forEach(function (l) { if (l.Date) ma[String(l.Date).slice(0, 7)] = 1; });
+  (D.PLANNING || []).forEach(function (l) { if (l.date <= aujourdhui()) ma[l.date.slice(0, 7)] = 1; });
   var listeA = Object.keys(ma).sort().reverse();
   selA.innerHTML = listeA.map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
   if (listeA.indexOf(ancienA) >= 0) selA.value = ancienA;
@@ -514,7 +558,7 @@ function afficherOnglet(nom) {
   try { localStorage.setItem('ongletTDB', nom); } catch (e) {}
   if (!D) return;
   ({ accueil: rendreAccueil, finances: rendreFinances, flotte: rendreFlotte, salaries: rendreSalaries,
-     activite: rendreActivite, factures: rendreFactures, alertes: rendreAlertes, saisie: function () {} })[nom]();
+     activite: rendreActivite, conso: rendreConso, factures: rendreFactures, alertes: rendreAlertes, saisie: function () {} })[nom]();
 }
 
 function alertesFiltrees() {
@@ -534,8 +578,9 @@ function listeAlertesHtml(liste) {
 }
 
 // ---------- indicateurs du mois (du 1er à aujourd'hui, comparés à la même période du mois précédent) ----------
-function periodes() {
-  var a = aujourdhui(), m = a.slice(0, 7), jour = +a.slice(8, 10);
+function periodes(ref) {
+  var a = ref ? ref.getFullYear() + '-' + ('0' + (ref.getMonth() + 1)).slice(-2) + '-' + ('0' + ref.getDate()).slice(-2) : aujourdhui();
+  var m = a.slice(0, 7), jour = +a.slice(8, 10);
   var d = new Date(+m.slice(0, 4), +m.slice(5, 7) - 2, 1);
   var mp = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
   var jMax = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
@@ -581,8 +626,23 @@ function rendreAccueil() {
   var tD = dernier ? totauxFinances(fin.filter(function (l) { return l.Mois === dernier; })) : null;
   var tA = avant ? totauxFinances(fin.filter(function (l) { return l.Mois === avant; })) : null;
 
-  // CA : en temps réel d'après les livraisons ; à défaut, dernier mois importé
-  var caTuile = liv.length
+  // CA : en temps réel d'après les plannings Inter + Carburant (à défaut les livraisons saisies, puis le dernier mois importé)
+  var pl = planning();
+  var plC = pl.filter(function (l) { return dansPeriode(l.date, P.mois, P.finCourant); });
+  var plP = pl.filter(function (l) { return dansPeriode(l.date, P.precedent, P.finPrecedent); });
+  if (!caListe(plC) && pl.length) {
+    // Début de mois, planning pas encore rempli : on montre le mois précédent complet, comparé à celui d'avant
+    var avantP = periodes(new Date(+P.precedent.slice(0, 4), +P.precedent.slice(5, 7) - 1, 28));
+    plC = pl.filter(function (l) { return l.date.slice(0, 7) === P.precedent; });
+    plP = pl.filter(function (l) { return l.date.slice(0, 7) === avantP.precedent; });
+    pref = ' vs ' + nomMois(avantP.precedent).split(' ')[0];
+    P = { mois: P.precedent, precedent: avantP.precedent, finCourant: P.finCourant, finPrecedent: P.finPrecedent, complet: true };
+  }
+  var parAct = function (l, a) { return l.filter(function (x) { return x.activite === a; }); };
+  var detail = function (l) { return 'Inter ' + fmtEur.format(caListe(parAct(l, 'Inter'))) + ' · Carburant ' + fmtEur.format(caListe(parAct(l, 'Carburant'))); };
+  var caTuile = plC.length
+    ? tuile('CA ' + nomMois(P.mois) + (P.complet ? ' (mois complet)' : ''), fmtEur.format(caListe(plC)), (delta(caListe(plC), caListe(plP), 1, '%', pref) ? delta(caListe(plC), caListe(plP), 1, '%', pref) + '<br>' : '') + detail(plC))
+    : liv.length
     ? tuile('CA ' + nomMois(P.mois), fmtEur.format(somme(liv, 'CA_HT')), delta(somme(liv, 'CA_HT'), somme(livP, 'CA_HT'), 1, '%', pref) || 'd\'après les livraisons saisies')
     : tuile('CA ' + (dernier ? nomMois(dernier) : ''), tD ? eur(tD.ca) : '<span class="nd">N/D</span>', tD && tA ? delta(tD.ca, tA.ca, 1, '%', 'vs ' + nomMois(avant)) : 'aucune livraison saisie ce mois');
 
@@ -598,7 +658,10 @@ function rendreAccueil() {
     caTuile +
     tuile('Marge ' + (dernier ? nomMois(dernier) : ''), tD ? pct(tD.marge) : '<span class="nd">N/D</span>',
           tD && tD.manquants.length ? incomplet(tD) : (tD && tA ? delta(tD.marge, tA.marge, 1, 'pts', 'vs ' + nomMois(avant)) : 'dernier mois importé')) +
-    tuile('Livraisons', liv.length ? fmtNb.format(nbLiv) : '<span class="nd">0</span>', delta(nbLiv, nbLivP, 1, '%', pref) || nomMois(P.mois)) +
+    (plC.length || plP.length
+      ? tuile('Tournées & livraisons', fmtNb.format(plC.length), (delta(plC.length, plP.length, 1, '%', pref) ? delta(plC.length, plP.length, 1, '%', pref) + '<br>' : '') +
+          parAct(plC, 'Inter').length + ' tournées Inter · ' + parAct(plC, 'Carburant').length + ' livraisons carburant')
+      : tuile('Livraisons', liv.length ? fmtNb.format(nbLiv) : '<span class="nd">0</span>', delta(nbLiv, nbLivP, 1, '%', pref) || nomMois(P.mois))) +
     tuile('Retards', tauxR === null ? '<span class="nd">N/D</span>' : fmtNb.format(tauxR) + ' %',
           delta(tauxR, tauxRP, -1, 'pts', pref) || (nbLiv ? somme(liv, 'Nb_Retards') + ' sur ' + nbLiv + ' livraisons' : '')) +
     tuile('Véhicules indisponibles', '<span class="' + (nbIndispo.length ? 'neg' : '') + '">' + nbIndispo.length + '</span>',
@@ -653,7 +716,9 @@ function rendreAttention(al) {
   var camions = (par.marge || []).filter(function (a) { return a.sujet !== 'Marge en baisse'; });
   ajouter(camions, pl(camions.length, 'camion est en perte ou à marge faible', 'camions sont en perte ou à marge faible'));
   ajouter(par.retards, (par.retards || [{}])[0].message);
-  ajouter(par.conso, pl((par.conso || []).length, 'camion consomme trop de carburant', 'camions consomment trop de carburant'));
+  ajouter(par.contrats, pl((par.contrats || []).length, 'contrat manquant', 'contrats manquants') + ' dans le planning Inter');
+  ajouter(par.conso, (par.conso || []).length === 1 ? 'Le camion ' + par.conso[0].objet + ' consomme trop ces derniers temps'
+    : pl((par.conso || []).length, 'camion consomme', 'camions consomment') + ' trop ces derniers temps (' + (par.conso || []).map(function (a) { return a.objet; }).join(', ') + ')');
   ajouter(par.taches, pl((par.taches || []).length, 'tâche du pense-bête arrive', 'tâches du pense-bête arrivent') + ' à échéance (' +
     (par.taches || []).map(function (a) { return a.objet; }).join(', ') + ')');
   ajouter(par.donnees, pl((par.donnees || []).length, 'donnée manque dans les finances', 'données manquent dans les finances'));
@@ -873,71 +938,128 @@ function rendreSalaries() {
   document.getElementById('absAVenir').innerHTML = liste(aVenir);
 }
 
-function consommations(pleins) {
-  var depuis = new Date(); depuis.setDate(depuis.getDate() - 90);
-  var lim = depuis.toISOString().slice(0, 10), par = {};
-  pleins.forEach(function (l) {
-    var km = num(l.KM_Compteur), li = num(l.Litres);
-    if (!l.Date || l.Date < lim || km === null || li === null) return;
-    (par[l.Camion_ID] = par[l.Camion_ID] || []).push({ km: km, litres: li });
-  });
-  return Object.keys(par).sort().map(function (id) {
-    var p = par[id].sort(function (a, b) { return a.km - b.km; });
-    var dist = p.length > 1 ? p[p.length - 1].km - p[0].km : 0;
-    var litres = p.slice(1).reduce(function (s, x) { return s + x.litres; }, 0);
-    return { id: id, pleins: p.length, km: dist || null, litres: litres, conso: dist > 0 ? litres / dist * 100 : null };
-  });
-}
+// ---------- plannings ----------
+var ACT = [['Inter', 'Inter (ITM)', '--s1'], ['Carburant', 'Carburant', '--s2']];
+function planning() { return (D.PLANNING || []).filter(function (l) { return garderSociete(l.societe); }); }
+function caListe(l) { return l.reduce(function (t, x) { return t + (num(x.ca) || 0); }, 0); }
 
 function rendreActivite() {
-  var mois = document.getElementById('moisAct').value;
-  var liv = D.LIVRAISONS.filter(function (l) { return String(l.Date).slice(0, 7) === mois && garderSociete(societeCamion(l.Camion_ID)); });
-  var carb = D.CARBURANT.filter(function (l) { return garderSociete(l['Société'] || societeCamion(l.Camion_ID)); });
-  var carbMois = carb.filter(function (l) { return String(l.Date).slice(0, 7) === mois; });
-  var somme = function (l, k) { return l.reduce(function (s, x) { return s + (num(x[k]) || 0); }, 0); };
-  var conso = consommations(carb);
-  var totL = conso.reduce(function (s, c) { return s + (c.conso !== null ? c.litres : 0); }, 0);
-  var totKm = conso.reduce(function (s, c) { return s + (c.conso !== null ? c.km : 0); }, 0);
+  var mois = document.getElementById('moisAct').value, pl = planning();
+  var duMois = pl.filter(function (l) { return l.date.slice(0, 7) === mois; });
+  var inter = duMois.filter(function (l) { return l.activite === 'Inter'; }), carbu = duMois.filter(function (l) { return l.activite === 'Carburant'; });
+  var p = D.parametres;
+  document.getElementById('noteAct').textContent = (D.erreurs || []).join(' · ') ||
+    (!p.sourceInter || !p.sourceCarburant ? 'Renseignez ID_PLANNING_INTER et ID_PLANNING_CARBURANT dans PARAMETRES.' : 'Lu en direct dans vos deux plannings.');
   document.getElementById('tuilesAct').innerHTML =
-    tuile('Livraisons', fmtNb.format(somme(liv, 'Nb_Livraisons')), nomMois(mois)) +
-    tuile('CA des livraisons', fmtEur.format(somme(liv, 'CA_HT'))) +
-    tuile('Carburant', fmtNb.format(somme(carbMois, 'Litres')) + ' L', fmtEur.format(somme(carbMois, 'Montant_TTC')) + ' TTC') +
-    tuile('Consommation moyenne', totKm ? fmtNb.format(totL / totKm * 100) + ' L/100' : '<span class="nd">N/D</span>', '90 derniers jours, tous camions');
+    tuile('CA total ' + nomMois(mois), fmtEur.format(caListe(duMois))) +
+    tuile('<span class="pastille-act" style="background:var(--s1)"></span>CA Inter', fmtEur.format(caListe(inter)), inter.length + ' tournée(s)') +
+    tuile('<span class="pastille-act" style="background:var(--s2)"></span>CA Carburant', fmtEur.format(caListe(carbu)), carbu.length + ' livraison(s)');
 
-  // Livraisons par jour du mois
-  var p = mois.split('-'), nbJ = new Date(+p[0], +p[1], 0).getDate(), jours = [], vals = [];
-  for (var j = 1; j <= nbJ; j++) {
-    var d = mois + '-' + ('0' + j).slice(-2);
-    jours.push(String(j));
-    vals.push(liv.filter(function (l) { return l.Date === d; }).reduce(function (s, l) { return s + (num(l.Nb_Livraisons) || 0); }, 0));
-  }
+  var km = inter.reduce(function (t, l) { return t + (num(l.km) || 0); }, 0);
+  var manquants = inter.filter(function (l) { return l.contratManquant; }).length;
+  document.getElementById('miniInter').innerHTML = '<div><b>' + inter.length + '</b>tournées</div><div><b>' + fmtNb.format(km) + '</b>km</div>' +
+    '<div><b>' + (inter.length ? fmtEur.format(caListe(inter) / inter.length) : '—') + '</b>CA moyen / tournée</div>' +
+    '<div><b class="' + (manquants ? 'neg' : '') + '">' + manquants + '</b>contrat(s) manquant(s)</div>';
+  var m3 = carbu.reduce(function (t, l) { return t + (num(l.litres) || 0); }, 0) / 1000;
+  var attente = carbu.reduce(function (t, l) { return t + (num(l.attente) || 0); }, 0);
+  var sansPrix = carbu.filter(function (l) { return num(l.litres) > 0 && !num(l.ca); }).length;
+  document.getElementById('miniCarbu').innerHTML = '<div><b>' + carbu.length + '</b>livraisons</div><div><b>' + fmtNb.format(m3) + '</b>m³ livrés</div>' +
+    '<div><b>' + fmtNb.format(attente) + ' h</b>d\'attente</div>' +
+    '<div><b class="' + (sansPrix ? 'neg' : '') + '">' + sansPrix + '</b>livraison(s) sans prix</div>';
+
+  var parChauffeur = function (lignes, colQ, libQ, fmtQ) {
+    var g = {};
+    lignes.forEach(function (l) {
+      var k = String(l.chauffeur).trim().toUpperCase() || '?';
+      var x = g[k] = g[k] || { nom: k, soc: {}, n: 0, q: 0, ca: 0 };
+      x.n++; x.q += num(l[colQ]) || 0; x.ca += num(l.ca) || 0; x.soc[l.societe] = 1;
+    });
+    return Object.keys(g).map(function (k) { var x = g[k]; x.societe = Object.keys(x.soc).join(' + '); return x; });
+  };
+  tableTriable('tabInter', [['Chauffeur', 'nom', 'txt'], ['Société', 'societe', 'txt'], ['Tournées', 'n', 'nb'], ['Km', 'q', 'nb'], ['CA', 'ca', 'eur']],
+    parChauffeur(inter, 'km'), function (o, k) { return o[k]; });
+  tableTriable('tabCarbu', [['Chauffeur', 'nom', 'txt'], ['Société', 'societe', 'txt'], ['Livraisons', 'n', 'nb'], ['m³', 'm3', 'nb'], ['CA', 'ca', 'eur']],
+    parChauffeur(carbu, 'litres').map(function (x) { x.m3 = x.q / 1000; return x; }), function (o, k) { return o[k]; });
+  var cl = {};
+  carbu.forEach(function (l) { var k = (l.client || '?') + ' — ' + (l.lieu || '?'); var x = cl[k] = cl[k] || { nom: k, n: 0, m3: 0, ca: 0 }; x.n++; x.m3 += (num(l.litres) || 0) / 1000; x.ca += num(l.ca) || 0; });
+  tableTriable('tabClients', [['Client — lieu', 'nom', 'txt'], ['Livraisons', 'n', 'nb'], ['m³', 'm3', 'nb'], ['CA', 'ca', 'eur']],
+    Object.keys(cl).map(function (k) { return cl[k]; }).sort(function (a, b) { return b.ca - a.ca; }), function (o, k) { return o[k]; });
+
+  // CA par jour (empilé) et CA par mois (groupé) : bleu = Inter, orange = Carburant, partout
+  var pm = mois.split('-'), nbJ = new Date(+pm[0], +pm[1], 0).getDate(), jours = [];
+  for (var j = 1; j <= nbJ; j++) jours.push(mois + '-' + ('0' + j).slice(-2));
+  legende('legJour', ACT.map(function (a) { return [a[1], css(a[2])]; }));
+  var optJ = optionsCommunes(true);
+  optJ.plugins.tooltip.callbacks.title = function (c) { return dateFr(jours[c[0].dataIndex]); };
+  dessiner('gJour', { type: 'bar', data: { labels: jours.map(function (d) { return String(+d.slice(8)); }), datasets: ACT.map(function (a) {
+    return Object.assign(barre(a[1], jours.map(function (d) { return caListe(duMois.filter(function (l) { return l.date === d && l.activite === a[0]; })) || null; }), css(a[2])),
+      { borderColor: css('--surface'), borderWidth: { top: 2 }, borderRadius: 0 });
+  }) }, options: optJ });
+  var an = mois.slice(0, 4), moisAn = [];
+  for (var m = 1; m <= 12; m++) moisAn.push(an + '-' + ('0' + m).slice(-2));
+  moisAn = moisAn.filter(function (x) { return x <= aujourdhui().slice(0, 7); });
+  legende('legMoisAct', ACT.map(function (a) { return [a[1], css(a[2])]; }));
+  dessiner('gMoisAct', { type: 'bar', data: { labels: moisAn.map(nomMois), datasets: ACT.map(function (a) {
+    return barre(a[1], moisAn.map(function (x) { return caListe(pl.filter(function (l) { return l.date.slice(0, 7) === x && l.activite === a[0]; })) || null; }), css(a[2]));
+  }) }, options: optionsCommunes(false) });
+}
+
+// ---------- consommation (fichier Litrages) ----------
+function rendreConso() {
+  var lit = (D.LITRAGES || []).filter(function (l) { return garderSociete(societeCamion(l.immat)); });
+  var p = D.parametres, seuil = p.SEUIL_CONSO_L100, hausse = p.SEUIL_HAUSSE_CONSO_PCT;
+  var par = {};
+  lit.filter(function (l) { return l.valide; }).forEach(function (l) { (par[l.immat] = par[l.immat] || []).push(l); });
+  // Même calcul que les alertes : les nb dernières semaines regroupées, comparées aux 8 semaines d'avant
+  var nb = p.NB_SEMAINES_CONSO || 2;
+  var somme2 = function (l, k) { return l.reduce(function (t, x) { return t + x[k]; }, 0); };
+  var lignes = Object.keys(par).sort().map(function (immat) {
+    var l = par[immat], recent = l.slice(-nb), prec = l.slice(Math.max(0, l.length - nb - 8), l.length - nb);
+    var km = somme2(recent, 'km'), litres = somme2(recent, 'litres'), conso = litres / km * 100;
+    var moy = prec.length >= 3 ? somme2(prec, 'litres') / somme2(prec, 'km') * 100 : null;
+    var ecart = moy ? (conso - moy) / moy * 100 : null;
+    var alerte = conso > seuil || (ecart !== null && ecart > hausse);
+    return { immat: immat, semaine: recent.map(function (x) { return x.semaine; }).join(' + '), km: km, litres: litres, conso: conso, moy: moy, ecart: ecart, alerte: alerte };
+  });
+  var douteux = lit.filter(function (l) { return !l.valide; });
+  var recentes = lit.filter(function (l) { return l.valide && (new Date(aujourdhui()) - new Date(l.fin)) / 86400000 <= 35; });
+  var moyFlotte = recentes.length ? recentes.reduce(function (t, x) { return t + x.litres; }, 0) / recentes.reduce(function (t, x) { return t + x.km; }, 0) * 100 : null;
+  document.getElementById('tuilesConso').innerHTML =
+    tuile('Consommation moyenne', moyFlotte === null ? '<span class="nd">N/D</span>' : fmtNb.format(moyFlotte) + ' L/100', '5 dernières semaines, tous camions') +
+    tuile('Camions en alerte', '<span class="' + (lignes.some(function (x) { return x.alerte; }) ? 'neg' : '') + '">' + lignes.filter(function (x) { return x.alerte; }).length + '</span>',
+          'au-dessus de ' + seuil + ' L/100 ou +' + hausse + ' % sur leur moyenne') +
+    tuile('Semaines ignorées', douteux.length, 'données incohérentes à vérifier');
+  document.getElementById('titreConsoS').textContent = nb === 1 ? 'Dernière semaine saisie par camion' : 'Les ' + nb + ' dernières semaines saisies, par camion';
+  document.getElementById('noteConsoS').textContent = (D.erreurs || []).join(' · ') ||
+    (p.sourceLitrages ? 'Lu en direct dans votre fichier Litrages véhicules. ' + nb + ' semaine(s) regroupée(s) pour lisser les pleins à cheval sur deux semaines ; moyenne habituelle = 8 semaines d\'avant.'
+      : 'Renseignez ID_LITRAGES dans PARAMETRES.');
+  document.getElementById('tabConsoS').innerHTML = '<thead><tr><th>Camion</th><th>Semaine</th><th class="n">Km</th><th class="n">Litres</th><th class="n">L/100 km</th><th class="n">Moyenne habituelle</th><th class="n">Écart</th><th>État</th></tr></thead><tbody>' +
+    (lignes.length ? lignes.map(function (x) {
+      return '<tr><td>' + txt(x.immat) + '</td><td>' + txt(x.semaine) + '</td><td class="n">' + fmtNb.format(x.km) + '</td><td class="n">' + fmtNb.format(x.litres) +
+        '</td><td class="n"><b>' + fmtNb.format(x.conso) + '</b></td><td class="n">' + (x.moy ? fmtNb.format(x.moy) : '<span class="nd">—</span>') +
+        '</td><td class="n">' + (x.ecart === null ? '' : '<span class="' + (x.ecart > hausse ? 'neg' : '') + '">' + (x.ecart > 0 ? '+' : '') + fmtNb.format(x.ecart) + ' %</span>') +
+        '</td><td>' + (x.alerte ? badge('urgent', 'Consomme trop') : badge('ok', 'Normal')) + '</td></tr>';
+    }).join('') : '<tr><td colspan="8" class="vide">Aucune semaine exploitable</td></tr>') + '</tbody>';
+  document.getElementById('tabDouteux').innerHTML = '<thead><tr><th>Camion</th><th>Semaine</th><th>Problème</th></tr></thead><tbody>' +
+    (douteux.length ? douteux.slice().reverse().map(function (x) { return '<tr><td>' + txt(x.immat) + '</td><td>' + txt(x.semaine) + '</td><td>' + txt(x.raison) + '</td></tr>'; }).join('')
+      : '<tr><td colspan="3" class="vide">Aucune</td></tr>') + '</tbody>';
+
+  var sel = document.getElementById('choixCamion'), ancien = sel.value, ids = Object.keys(par).sort();
+  sel.innerHTML = ids.map(function (i) { return '<option>' + txt(i) + '</option>'; }).join('');
+  var alerteFirst = lignes.filter(function (x) { return x.alerte; })[0];
+  sel.value = ids.indexOf(ancien) >= 0 ? ancien : (alerteFirst ? alerteFirst.immat : ids[0] || '');
+  var serie = (par[sel.value] || []).slice(-26);
+  legende('legConso', [[sel.value + ' (L/100 km)', css('--s1')], ['Seuil d\'alerte', css('--text-3')]]);
   var opt = optionsCommunes(false);
+  opt.scales.y.beginAtZero = false;
   opt.scales.y.ticks.callback = function (v) { return fmtNb.format(v); };
-  opt.scales.y.ticks.precision = 0;
-  opt.plugins.tooltip.callbacks = { title: function (c) { return c[0].label + ' ' + nomMois(mois); }, label: function (c) { return ' ' + c.parsed.y + ' livraison(s)'; } };
-  dessiner('gLivraisons', { type: 'bar', data: { labels: jours, datasets: [barre('Livraisons', vals, css('--s1'))] }, options: opt });
-
-  var seuil = D.parametres.SEUIL_CONSO_L100;
-  document.getElementById('noteConso').textContent = 'Méthode plein à plein (compteur obligatoire). Seuil d\'alerte : ' + seuil + ' L/100 km.';
-  document.getElementById('tabConso').innerHTML = '<thead><tr><th>Camion</th><th class="n">Pleins</th><th class="n">Km</th><th class="n">Litres</th><th class="n">L/100 km</th><th>État</th></tr></thead><tbody>' +
-    (conso.length ? conso.map(function (c) {
-      return '<tr><td>' + txt(c.id) + '</td><td class="n">' + c.pleins + '</td><td class="n">' + (c.km ? fmtNb.format(c.km) : '<span class="nd">N/D</span>') +
-        '</td><td class="n">' + fmtNb.format(c.litres) + '</td><td class="n">' + (c.conso === null ? '<span class="nd">N/D</span>' : fmtNb.format(c.conso)) + '</td><td>' +
-        (c.conso === null ? '<span class="nd">2 pleins minimum</span>' : c.conso > seuil ? badge('urgent', 'Élevée') : badge('ok', 'Normale')) + '</td></tr>';
-    }).join('') : '<tr><td colspan="6" class="vide">Aucun plein avec compteur sur 90 jours</td></tr>') + '</tbody>';
-
-  var parC = {};
-  liv.forEach(function (l) { var c = parC[l.Camion_ID] = parC[l.Camion_ID] || { liv: 0, ca: 0 }; c.liv += num(l.Nb_Livraisons) || 0; c.ca += num(l.CA_HT) || 0; });
-  carbMois.forEach(function (l) { var c = parC[l.Camion_ID] = parC[l.Camion_ID] || { liv: 0, ca: 0 }; c.l = (c.l || 0) + (num(l.Litres) || 0); c.e = (c.e || 0) + (num(l.Montant_TTC) || 0); });
-  var lignes = Object.keys(parC).sort().map(function (id) { var c = parC[id]; return { id: id, liv: c.liv, ca: c.ca, litres: c.l || 0, carb: c.e || 0 }; });
-  tableTriable('tabActCamion', [['Camion', 'id', 'txt'], ['Livraisons', 'liv', 'nb'], ['CA HT', 'ca', 'eur'], ['Litres', 'litres', 'nb'], ['Carburant TTC', 'carb', 'eur']], lignes, function (o, k) { return o[k]; });
-
-  var derniers = carb.slice().sort(function (a, b) { return a.Date < b.Date ? 1 : -1; }).slice(0, 10);
-  document.getElementById('tabPleins').innerHTML = '<thead><tr><th>Date</th><th>Camion</th><th class="n">Litres</th><th class="n">TTC</th><th class="n">Compteur</th></tr></thead><tbody>' +
-    (derniers.length ? derniers.map(function (l) {
-      return '<tr><td>' + dateFr(l.Date) + '</td><td>' + txt(l.Camion_ID) + '</td><td class="n">' + fmtNb.format(num(l.Litres) || 0) + '</td><td class="n">' +
-        eur(num(l.Montant_TTC)) + '</td><td class="n">' + (num(l.KM_Compteur) === null ? '<span class="nd">—</span>' : fmtNb.format(num(l.KM_Compteur))) + '</td></tr>';
-    }).join('') : '<tr><td colspan="5" class="vide">Aucun plein saisi</td></tr>') + '</tbody>';
+  opt.plugins.tooltip.callbacks = { title: function (c) { return serie[c[0].dataIndex] ? serie[c[0].dataIndex].semaine : ''; },
+    label: function (c) { return ' ' + c.dataset.label + ' : ' + fmtNb.format(c.parsed.y) + ' L/100'; } };
+  dessiner('gConso', { type: 'line', data: { labels: serie.map(function (x) { return dateFr(x.fin).slice(0, 5); }), datasets: [
+    { label: sel.value, data: serie.map(function (x) { return Math.round(x.conso * 10) / 10; }), borderColor: css('--s1'), backgroundColor: css('--s1'),
+      borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, pointBorderColor: css('--surface'), pointBorderWidth: 2, tension: 0 },
+    { label: 'Seuil', data: serie.map(function () { return seuil; }), borderColor: css('--text-3'), borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0 }
+  ] }, options: opt });
 }
 
 function rendreAlertes() {
@@ -969,6 +1091,7 @@ document.querySelectorAll('nav button').forEach(function (b) { b.addEventListene
 document.getElementById('filtreSociete').addEventListener('change', function () { try { localStorage.setItem('societeTDB', societe()); } catch (e) {} afficherOnglet(ongletActif()); });
 document.getElementById('moisFin').addEventListener('change', rendreFinances);
 document.getElementById('moisAct').addEventListener('change', rendreActivite);
+document.getElementById('choixCamion').addEventListener('change', rendreConso);
 document.getElementById('filtreNiveau').addEventListener('change', rendreAlertes);
 ['filtreCatV', 'filtreEtatV'].forEach(function (id) { document.getElementById(id).addEventListener('change', rendreFlotte); });
 document.getElementById('filtreEtatS').addEventListener('change', rendreSalaries);
