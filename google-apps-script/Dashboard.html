@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tableau de bord Gleyzes / LPB</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f4f4f1; --surface: #fcfcfb; --surface-2: #f0efec; --border: #e1e0d9;
+  --text: #0b0b0b; --text-2: #52514e; --text-3: #8a8983;
+  --accent: #2a78d6; --accent-text: #ffffff;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #4a3aa7;
+  --neg: #e34948; --grid: #e9e8e3;
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --good-text: #006300; --warning-text: #8a5d00; --serious-text: #b44a1f; --critical-text: #b42828;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #121211; --surface: #1a1a19; --surface-2: #242422; --border: #383835;
+    --text: #ffffff; --text-2: #c3c2b7; --text-3: #8f8e86;
+    --accent: #3987e5; --accent-text: #ffffff;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #9085e9;
+    --neg: #e66767; --grid: #2c2c2a;
+    --good-text: #4fd14f; --warning-text: #fab219; --serious-text: #f0a081; --critical-text: #f08080;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #121211; --surface: #1a1a19; --surface-2: #242422; --border: #383835;
+  --text: #ffffff; --text-2: #c3c2b7; --text-3: #8f8e86;
+  --accent: #3987e5; --accent-text: #ffffff;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #9085e9;
+  --neg: #e66767; --grid: #2c2c2a;
+  --good-text: #4fd14f; --warning-text: #fab219; --serious-text: #f0a081; --critical-text: #f08080;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+header h1 { font-size: 18px; margin: 0; flex: 1 1 auto; }
+header .maj { color: var(--text-3); font-size: 12px; }
+select, input, button, textarea { font: inherit; color: var(--text); }
+select, input, textarea { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+button { cursor: pointer; border-radius: 6px; padding: 6px 12px; border: 1px solid var(--border); background: var(--surface); }
+button.primaire { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+nav { display: flex; gap: 4px; overflow-x: auto; padding: 8px 16px 0; background: var(--surface); border-bottom: 1px solid var(--border); }
+nav button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 10px; color: var(--text-2); white-space: nowrap; }
+nav button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+nav .pastille { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--critical); color: #fff; font-size: 11px; margin-left: 4px; }
+main { max-width: 1280px; margin: 0 auto; padding: 16px; }
+section[hidden] { display: none; }
+.barre { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 12px; }
+.barre label { color: var(--text-2); font-size: 13px; }
+.tuiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tuile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.tuile .lib { color: var(--text-2); font-size: 12px; }
+.tuile .val { font-size: 24px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.tuile .sous { color: var(--text-3); font-size: 12px; margin-top: 2px; }
+.grille { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 16px; }
+.carte { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; min-width: 0; margin-bottom: 16px; }
+.carte h2 { font-size: 15px; margin: 0 0 2px; }
+.carte .note { color: var(--text-3); font-size: 12px; margin: 0 0 10px; }
+.graph { position: relative; height: 280px; }
+.tableau { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+th { color: var(--text-2); font-weight: 600; font-size: 12px; position: sticky; top: 0; background: var(--surface); }
+th[data-tri] { cursor: pointer; }
+td.n, th.n { text-align: right; }
+.nd { color: var(--text-3); }
+.neg { color: var(--critical-text); }
+.badge { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; border: 1px solid; }
+.badge.depasse { color: var(--critical-text); border-color: var(--critical); }
+.badge.urgent { color: var(--serious-text); border-color: var(--serious); }
+.badge.a_prevoir { color: var(--warning-text); border-color: var(--warning); }
+.badge.ok { color: var(--good-text); border-color: var(--good); }
+.alerte { display: flex; gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.alerte:last-child { border-bottom: 0; }
+.alerte .dom { color: var(--text-3); font-size: 12px; min-width: 70px; }
+.vide { color: var(--text-3); padding: 12px 0; }
+form.saisie { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+form.saisie label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }
+form.saisie .actions { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; }
+.msg { font-size: 13px; }
+.msg.ok { color: var(--good-text); } .msg.err { color: var(--critical-text); }
+#chargement { padding: 40px; text-align: center; color: var(--text-2); }
+.legende { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
+.legende i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+@media (max-width: 600px) { header h1 { font-size: 16px; } .tuile .val { font-size: 20px; } .graph { height: 240px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tableau de bord Gleyzes / LPB</h1>
+  <label class="maj" for="filtreSociete">Société</label>
+  <select id="filtreSociete">
+    <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
+  </select>
+  <button id="actualiser" title="Recharger les données du Google Sheet">↻ Actualiser</button>
+  <span class="maj" id="maj"></span>
+</header>
+<nav role="tablist" id="onglets">
+  <button role="tab" data-onglet="accueil" aria-selected="true">Accueil</button>
+  <button role="tab" data-onglet="finances">Finances</button>
+  <button role="tab" data-onglet="flotte">Flotte</button>
+  <button role="tab" data-onglet="salaries">Salariés</button>
+  <button role="tab" data-onglet="activite">Carburant &amp; livraisons</button>
+  <button role="tab" data-onglet="alertes">Alertes <span class="pastille" id="nbAlertes" hidden></span></button>
+  <button role="tab" data-onglet="saisie">Saisie rapide</button>
+</nav>
+<main>
+  <div id="chargement">Chargement des données…</div>
+
+  <!-- ACCUEIL -->
+  <section id="accueil" hidden>
+    <div class="tuiles" id="tuilesAccueil"></div>
+    <div class="grille">
+      <div class="carte">
+        <h2>À traiter en priorité</h2>
+        <p class="note">Échéances dépassées ou proches, marges faibles, consommations anormales</p>
+        <div id="prioritaires"></div>
+      </div>
+      <div class="carte">
+        <h2>CA et charges par mois</h2>
+        <p class="note">12 derniers mois importés depuis le classeur Excel (onglet FINANCES)</p>
+        <div class="legende" id="legCaCharges"></div>
+        <div class="graph"><canvas id="gCaCharges" aria-label="CA et charges par mois"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FINANCES -->
+  <section id="finances" hidden>
+    <div class="barre"><label for="moisFin">Mois</label><select id="moisFin"></select></div>
+    <div class="tuiles" id="tuilesFin"></div>
+    <div class="grille">
+      <div class="carte">
+        <h2>Résultat par camion</h2>
+        <p class="note">CA − toutes les charges du mois. En rouge : camion en perte.</p>
+        <div class="graph"><canvas id="gResultat" aria-label="Résultat par camion"></canvas></div>
+      </div>
+      <div class="carte">
+        <h2>Charges par poste et par mois</h2>
+        <p class="note">12 derniers mois</p>
+        <div class="legende" id="legPostes"></div>
+        <div class="graph"><canvas id="gPostes" aria-label="Charges par poste"></canvas></div>
+      </div>
+    </div>
+    <div class="carte">
+      <h2>Détail par camion</h2>
+      <p class="note">N/D = donnée pas encore disponible (jamais remplacée par 0). Cliquez un titre de colonne pour trier.</p>
+      <div class="tableau"><table id="tabFin"></table></div>
+    </div>
+  </section>
+
+  <!-- FLOTTE -->
+  <section id="flotte" hidden>
+    <div class="tuiles" id="tuilesFlotte"></div>
+    <div class="carte">
+      <h2>Échéances des véhicules</h2>
+      <p class="note">À compléter dans l'onglet FLOTTE du Google Sheet</p>
+      <div class="tableau"><table id="tabFlotte"></table></div>
+    </div>
+  </section>
+
+  <!-- SALARIES -->
+  <section id="salaries" hidden>
+    <div class="tuiles" id="tuilesSal"></div>
+    <div class="carte">
+      <h2>Permis, formations et visites</h2>
+      <p class="note">À compléter dans l'onglet SALARIES du Google Sheet</p>
+      <div class="tableau"><table id="tabSal"></table></div>
+    </div>
+    <div class="grille">
+      <div class="carte"><h2>Absents aujourd'hui</h2><div id="absAujourdhui"></div></div>
+      <div class="carte"><h2>Absences des 30 prochains jours</h2><div id="absAVenir"></div></div>
+    </div>
+  </section>
+
+  <!-- ACTIVITE -->
+  <section id="activite" hidden>
+    <div class="barre"><label for="moisAct">Mois</label><select id="moisAct"></select></div>
+    <div class="tuiles" id="tuilesAct"></div>
+    <div class="grille">
+      <div class="carte">
+        <h2>Livraisons par jour</h2>
+        <p class="note">D'après les saisies de l'onglet LIVRAISONS</p>
+        <div class="graph"><canvas id="gLivraisons" aria-label="Livraisons par jour"></canvas></div>
+      </div>
+      <div class="carte">
+        <h2>Consommation par camion (90 derniers jours)</h2>
+        <p class="note" id="noteConso"></p>
+        <div class="tableau"><table id="tabConso"></table></div>
+      </div>
+    </div>
+    <div class="grille">
+      <div class="carte"><h2>Activité du mois par camion</h2><div class="tableau"><table id="tabActCamion"></table></div></div>
+      <div class="carte"><h2>Derniers pleins</h2><div class="tableau"><table id="tabPleins"></table></div></div>
+    </div>
+  </section>
+
+  <!-- ALERTES -->
+  <section id="alertes" hidden>
+    <div class="barre">
+      <label for="filtreNiveau">Afficher</label>
+      <select id="filtreNiveau">
+        <option value="">Toutes les alertes</option>
+        <option value="depasse">Dépassées</option>
+        <option value="urgent">Urgentes</option>
+        <option value="a_prevoir">À prévoir</option>
+      </select>
+    </div>
+    <div class="carte"><div id="listeAlertes"></div></div>
+  </section>
+
+  <!-- SAISIE -->
+  <section id="saisie" hidden>
+    <div class="carte">
+      <h2>Livraison / tournée</h2>
+      <p class="note">Alimente en temps réel le CA et le nombre de livraisons du mois</p>
+      <form class="saisie" data-type="LIVRAISONS">
+        <label>Date<input type="date" name="Date" required></label>
+        <label>Camion<select name="Camion_ID" required class="listeCamions"></select></label>
+        <label>Chauffeur<select name="Chauffeur" class="listeSalaries"></select></label>
+        <label>Client<input name="Client"></label>
+        <label>Nb de livraisons<input type="number" name="Nb_Livraisons" min="0" step="1" required></label>
+        <label>CA HT (€)<input type="number" name="CA_HT" min="0" step="0.01"></label>
+        <label>Remarque<input name="Remarque"></label>
+        <div class="actions"><button class="primaire">Enregistrer</button><span class="msg"></span></div>
+      </form>
+    </div>
+    <div class="carte">
+      <h2>Plein de carburant</h2>
+      <p class="note">Renseignez le compteur : il sert à calculer la consommation aux 100 km</p>
+      <form class="saisie" data-type="CARBURANT">
+        <label>Date<input type="date" name="Date" required></label>
+        <label>Camion<select name="Camion_ID" required class="listeCamions"></select></label>
+        <label>Litres<input type="number" name="Litres" min="0" step="0.01" required></label>
+        <label>Montant TTC (€)<input type="number" name="Montant_TTC" min="0" step="0.01"></label>
+        <label>Compteur (km)<input type="number" name="KM_Compteur" min="0" step="1"></label>
+        <label>Lieu<input name="Lieu"></label>
+        <div class="actions"><button class="primaire">Enregistrer</button><span class="msg"></span></div>
+      </form>
+    </div>
+    <div class="carte">
+      <h2>Absence</h2>
+      <form class="saisie" data-type="ABSENCES">
+        <label>Salarié<select name="Salarié" required class="listeSalaries"></select></label>
+        <label>Type<select name="Type" required>
+          <option>Congés payés</option><option>Maladie</option><option>Accident du travail</option>
+          <option>Formation</option><option>Absence injustifiée</option><option>Autre</option></select></label>
+        <label>Début<input type="date" name="Début" required></label>
+        <label>Fin<input type="date" name="Fin"></label>
+        <label>Remarque<input name="Remarque"></label>
+        <div class="actions"><button class="primaire">Enregistrer</button><span class="msg"></span></div>
+      </form>
+    </div>
+  </section>
+</main>
+
+<script>
+var D = null;               // données reçues du Google Sheet
+var graphiques = {};        // instances Chart.js
+var POSTES = [['Carburant', 'Carburant'], ['Peages', 'Péages'], ['Salaires', 'Salaires'],
+              ['Entretien', 'Entretien'], ['Charges_Fixes', 'Loyers & taxes'], ['Charges_Mutualisees', 'Mutualisées']];
+var NIVEAUX = { depasse: ['⛔', 'Dépassé'], urgent: ['⚠', 'Urgent'], a_prevoir: ['🕒', 'À prévoir'], ok: ['✓', 'OK'] };
+var MOIS_NOMS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+
+// ---------- formatage ----------
+var fmtEur = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
+var fmtEur2 = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+var fmtNb = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 });
+function num(v) {
+  if (typeof v === 'number') return isNaN(v) ? null : v;
+  if (v === null || v === undefined || String(v).trim() === '') return null;
+  var n = Number(String(v).replace(/[\s €]/g, '').replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
+function eur(v) { return v === null ? '<span class="nd">N/D</span>' : '<span class="' + (v < 0 ? 'neg' : '') + '">' + fmtEur.format(v) + '</span>'; }
+function pct(v) { return v === null ? '<span class="nd">N/D</span>' : '<span class="' + (v < 0 ? 'neg' : '') + '">' + fmtNb.format(v) + ' %</span>'; }
+function txt(s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function nomMois(m) { var p = String(m).split('-'); return p.length === 2 ? MOIS_NOMS[+p[1] - 1] + ' ' + p[0] : m; }
+function dateFr(s) { if (!s) return ''; var p = String(s).split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : s; }
+function aujourdhui() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function badge(niveau, texte) { var n = NIVEAUX[niveau]; return '<span class="badge ' + niveau + '">' + n[0] + ' ' + txt(texte || n[1]) + '</span>'; }
+function incomplet(t) {
+  return t.manquants.length ? '<span class="badge a_prevoir" title="' + txt(t.manquants.join(' · ')) + '">🕒 Incomplet</span> manque : ' + txt(t.manquants.join(', ')) : '';
+}
+function tuile(lib, val, sous) { return '<div class="tuile"><div class="lib">' + lib + '</div><div class="val">' + val + '</div>' + (sous ? '<div class="sous">' + sous + '</div>' : '') + '</div>'; }
+
+// ---------- filtres ----------
+function societe() { return document.getElementById('filtreSociete').value; }
+function societeCamion(id) {
+  var c = D.FLOTTE.filter(function (f) { return f.Camion_ID === id; })[0];
+  return c ? c['Société'] : '';
+}
+function garderSociete(s) { return !societe() || String(s || '').split('(')[0].trim().toUpperCase() === societe().toUpperCase(); }
+
+// ---------- chargement ----------
+function charger() {
+  document.getElementById('maj').textContent = 'Chargement…';
+  if (window.google && google.script && google.script.run) {
+    google.script.run.withSuccessHandler(recevoir).withFailureHandler(function (e) {
+      document.getElementById('chargement').hidden = false;
+      document.getElementById('chargement').textContent = 'Erreur de chargement : ' + e.message;
+    }).getDonnees();
+  } else if (window.donneesDemo) {
+    recevoir(window.donneesDemo());
+  }
+}
+function recevoir(d) {
+  D = d;
+  document.getElementById('chargement').hidden = true;
+  document.getElementById('maj').textContent = 'Mis à jour le ' + d.genereLe + (d.derniereImport ? ' · finances importées le ' + d.derniereImport : '');
+  remplirSelectMois();
+  remplirListes();
+  afficherOnglet(ongletActif());
+  var graves = d.alertes.filter(function (a) { return a.niveau !== 'a_prevoir'; }).length;
+  var p = document.getElementById('nbAlertes');
+  p.textContent = graves; p.hidden = !graves;
+}
+
+function moisFinances() {
+  var m = {}; D.FINANCES.forEach(function (l) { if (l.Mois) m[l.Mois] = 1; });
+  return Object.keys(m).sort();
+}
+function remplirSelectMois() {
+  var sel = document.getElementById('moisFin'), ancien = sel.value, mois = moisFinances();
+  sel.innerHTML = mois.slice().reverse().map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
+  if (mois.indexOf(ancien) >= 0) sel.value = ancien;
+
+  var selA = document.getElementById('moisAct'), ancienA = selA.value, ma = {};
+  ma[aujourdhui().slice(0, 7)] = 1;
+  D.LIVRAISONS.concat(D.CARBURANT).forEach(function (l) { if (l.Date) ma[String(l.Date).slice(0, 7)] = 1; });
+  var listeA = Object.keys(ma).sort().reverse();
+  selA.innerHTML = listeA.map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
+  if (listeA.indexOf(ancienA) >= 0) selA.value = ancienA;
+}
+function remplirListes() {
+  var camions = D.FLOTTE.map(function (c) { return c.Camion_ID; }).filter(Boolean);
+  var salaries = D.SALARIES.map(function (s) { return ((s['Prénom'] || '') + ' ' + (s.Nom || '')).trim(); }).filter(Boolean);
+  document.querySelectorAll('.listeCamions').forEach(function (s) {
+    s.innerHTML = '<option value="">—</option>' + camions.map(function (c) { return '<option>' + txt(c) + '</option>'; }).join('');
+  });
+  document.querySelectorAll('.listeSalaries').forEach(function (s) {
+    s.innerHTML = '<option value="">—</option>' + salaries.map(function (c) { return '<option>' + txt(c) + '</option>'; }).join('');
+  });
+  document.querySelectorAll('form.saisie input[type=date]').forEach(function (i) { if (!i.value && i.required) i.value = aujourdhui(); });
+}
+
+// ---------- calculs finances ----------
+function totauxFinances(lignes) {
+  var t = { ca: null, charges: null, km: null, postes: {} };
+  POSTES.forEach(function (p) { t.postes[p[0]] = null; });
+  lignes.forEach(function (l) {
+    var ca = num(l.CA), km = num(l.KM);
+    if (ca !== null) t.ca = (t.ca || 0) + ca;
+    if (km !== null) t.km = (t.km || 0) + km;
+    POSTES.forEach(function (p) {
+      var v = num(l[p[0]]);
+      if (v !== null) { t.postes[p[0]] = (t.postes[p[0]] || 0) + v; t.charges = (t.charges || 0) + v; }
+    });
+  });
+  // Trous de données par camion (le CA ou un poste clé manque) : le total reste affiché mais signalé
+  var parId = {};
+  lignes.forEach(function (l) {
+    var c = parId[l.Camion_ID] = parId[l.Camion_ID] || { CA: false, Carburant: false, Salaires: false };
+    ['CA', 'Carburant', 'Salaires'].forEach(function (k) { if (num(l[k]) !== null) c[k] = true; });
+  });
+  t.manquants = [];
+  Object.keys(parId).sort().forEach(function (id) {
+    var m = ['CA', 'Carburant', 'Salaires'].filter(function (k) { return !parId[id][k]; });
+    if (m.length) t.manquants.push(id + ' (' + m.join(', ').replace('Salaires', 'salaire').replace('Carburant', 'carburant') + ')');
+  });
+  t.resultat = t.ca !== null && t.charges !== null ? t.ca - t.charges : null;
+  t.marge = t.resultat !== null && t.ca ? t.resultat / t.ca * 100 : null;
+  t.coutKm = t.charges !== null && t.km ? t.charges / t.km : null;
+  return t;
+}
+function financesFiltrees() { return D.FINANCES.filter(function (l) { return garderSociete(l['Société']); }); }
+
+// ---------- graphiques ----------
+function optionsCommunes(empile, horizontal) {
+  var axeVal = {
+    stacked: empile, beginAtZero: true, grid: { color: css('--grid') }, border: { display: false },
+    ticks: { color: css('--text-2'), callback: function (v) { return fmtEur.format(v).replace(/\s?€/, ' €'); } }
+  };
+  var axeCat = { stacked: empile, grid: { display: false }, border: { color: css('--border') }, ticks: { color: css('--text-2') } };
+  return {
+    responsive: true, maintainAspectRatio: false, indexAxis: horizontal ? 'y' : 'x',
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: css('--surface'), titleColor: css('--text'), bodyColor: css('--text-2'),
+        borderColor: css('--border'), borderWidth: 1, padding: 10, boxPadding: 4,
+        callbacks: { label: function (c) { return ' ' + c.dataset.label + ' : ' + fmtEur.format(c.parsed[horizontal ? 'x' : 'y']); } }
+      }
+    },
+    scales: horizontal ? { x: axeVal, y: axeCat } : { x: axeCat, y: axeVal }
+  };
+}
+function dessiner(id, config) {
+  if (graphiques[id]) graphiques[id].destroy();
+  if (!window.Chart) return;
+  graphiques[id] = new Chart(document.getElementById(id), config);
+}
+function legende(id, series) {
+  document.getElementById(id).innerHTML = series.map(function (s) { return '<span><i style="background:' + s[1] + '"></i>' + s[0] + '</span>'; }).join('');
+}
+var styleBarre = { borderRadius: 4, borderSkipped: 'start', maxBarThickness: 28, borderColor: 'transparent', borderWidth: 1 };
+function barre(label, data, couleur) { return Object.assign({ label: label, data: data, backgroundColor: couleur }, styleBarre); }
+
+// ---------- onglets ----------
+function ongletActif() { var b = document.querySelector('nav button[aria-selected="true"]'); return b ? b.dataset.onglet : 'accueil'; }
+function afficherOnglet(nom) {
+  document.querySelectorAll('nav button').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.onglet === nom); });
+  document.querySelectorAll('main section').forEach(function (s) { s.hidden = s.id !== nom; });
+  try { localStorage.setItem('ongletTDB', nom); } catch (e) {}
+  if (!D) return;
+  ({ accueil: rendreAccueil, finances: rendreFinances, flotte: rendreFlotte, salaries: rendreSalaries,
+     activite: rendreActivite, alertes: rendreAlertes, saisie: function () {} })[nom]();
+}
+
+function alertesFiltrees() {
+  return D.alertes.filter(function (a) {
+    if (!societe()) return true;
+    if (a.domaine === 'Salariés') {
+      var s = D.SALARIES.filter(function (x) { return ((x['Prénom'] || '') + ' ' + (x.Nom || '')).trim() === a.objet; })[0];
+      return !s || garderSociete(s['Société']);
+    }
+    var id = String(a.objet).split(' ')[0];
+    var soc = societeCamion(id);
+    return !soc || garderSociete(soc);
+  });
+}
+function listeAlertesHtml(liste) {
+  if (!liste.length) return '<div class="vide">✓ Rien à signaler.</div>';
+  return liste.map(function (a) {
+    return '<div class="alerte">' + badge(a.niveau) + '<span class="dom">' + txt(a.domaine) + '</span><span>' + txt(a.message) + '</span></div>';
+  }).join('');
+}
+
+function rendreAccueil() {
+  var mois = aujourdhui().slice(0, 7);
+  var liv = D.LIVRAISONS.filter(function (l) { return String(l.Date).slice(0, 7) === mois && garderSociete(societeCamion(l.Camion_ID)); });
+  var caLiv = liv.reduce(function (s, l) { return s + (num(l.CA_HT) || 0); }, 0);
+  var nbLiv = liv.reduce(function (s, l) { return s + (num(l.Nb_Livraisons) || 0); }, 0);
+  var mf = moisFinances(), dernier = mf[mf.length - 1];
+  var fin = financesFiltrees();
+  var tDernier = dernier ? totauxFinances(fin.filter(function (l) { return l.Mois === dernier; })) : null;
+  var al = alertesFiltrees();
+  var nbDep = al.filter(function (a) { return a.niveau === 'depasse'; }).length;
+  var nbUrg = al.filter(function (a) { return a.niveau === 'urgent'; }).length;
+
+  document.getElementById('tuilesAccueil').innerHTML =
+    tuile('CA du mois en cours', liv.length ? fmtEur.format(caLiv) : '<span class="nd">N/D</span>', nomMois(mois) + ' · d\'après les livraisons saisies') +
+    tuile('Livraisons ce mois', liv.length ? fmtNb.format(nbLiv) : '<span class="nd">0</span>', liv.length + ' saisie(s)') +
+    tuile('Résultat ' + (dernier ? nomMois(dernier) : ''), tDernier ? eur(tDernier.resultat) : '<span class="nd">N/D</span>',
+          tDernier && tDernier.manquants.length ? incomplet(tDernier) :
+          (tDernier && tDernier.marge !== null ? 'Marge ' + fmtNb.format(tDernier.marge) + ' % · dernier mois importé' : 'Dernier mois importé')) +
+    tuile('Alertes', '<span class="' + (nbDep ? 'neg' : '') + '">' + (nbDep + nbUrg) + '</span>', nbDep + ' dépassée(s) · ' + nbUrg + ' urgente(s)');
+
+  document.getElementById('prioritaires').innerHTML = listeAlertesHtml(al.slice(0, 8)) +
+    (al.length > 8 ? '<p class="note"><a href="#" onclick="afficherOnglet(\'alertes\');return false">Voir les ' + al.length + ' alertes</a></p>' : '');
+
+  var derniers = mf.slice(-12);
+  var ca = [], ch = [];
+  derniers.forEach(function (m) {
+    var t = totauxFinances(fin.filter(function (l) { return l.Mois === m; }));
+    ca.push(t.ca); ch.push(t.charges);
+  });
+  legende('legCaCharges', [['CA', css('--s1')], ['Charges', css('--s2')]]);
+  dessiner('gCaCharges', { type: 'bar', data: { labels: derniers.map(nomMois), datasets: [
+    barre('CA', ca, css('--s1')), barre('Charges', ch, css('--s2'))] }, options: optionsCommunes(false) });
+}
+
+function rendreFinances() {
+  var mois = document.getElementById('moisFin').value;
+  var fin = financesFiltrees();
+  var lignes = fin.filter(function (l) { return l.Mois === mois; });
+  var t = totauxFinances(lignes);
+  document.getElementById('tuilesFin').innerHTML = !mois ? '<div class="vide">Aucune donnée financière : importez FINANCES_EXPORT.csv (voir le guide).</div>' :
+    tuile('Chiffre d\'affaires', eur(t.ca), nomMois(mois)) + tuile('Charges totales', eur(t.charges)) +
+    tuile('Résultat', eur(t.resultat), incomplet(t)) + tuile('Marge', pct(t.marge), incomplet(t)) +
+    tuile('Coût au km', t.coutKm === null ? '<span class="nd">N/D</span>' : fmtEur2.format(t.coutKm), t.km ? fmtNb.format(t.km) + ' km' : '');
+
+  // Par camion
+  var ids = {}; lignes.forEach(function (l) { (ids[l.Camion_ID] = ids[l.Camion_ID] || []).push(l); });
+  var parCamion = Object.keys(ids).sort().map(function (id) {
+    var tc = totauxFinances(ids[id]);
+    tc.id = id; tc.societe = ids[id].map(function (l) { return l['Société']; }).filter(function (v, i, a) { return v && a.indexOf(v) === i; }).join(' + ');
+    return tc;
+  });
+  var colonnes = [['Camion', 'id', 'txt'], ['Société', 'societe', 'txt'], ['CA', 'ca', 'eur']]
+    .concat(POSTES.map(function (p) { return [p[1], 'p:' + p[0], 'eur']; }))
+    .concat([['Total charges', 'charges', 'eur'], ['Résultat', 'resultat', 'eur'], ['Marge', 'marge', 'pct'], ['€ / km', 'coutKm', 'eur2']]);
+  tableTriable('tabFin', colonnes, parCamion, function (o, k) { return k.indexOf('p:') === 0 ? o.postes[k.slice(2)] : o[k]; });
+
+  var trie = parCamion.filter(function (c) { return c.resultat !== null; }).sort(function (a, b) { return b.resultat - a.resultat; });
+  dessiner('gResultat', { type: 'bar', data: { labels: trie.map(function (c) { return c.id; }), datasets: [Object.assign(
+    barre('Résultat', trie.map(function (c) { return c.resultat; }), trie.map(function (c) { return c.resultat < 0 ? css('--neg') : css('--s1'); })),
+    { borderSkipped: false })] }, options: optionsCommunes(false, true) });
+
+  var derniers = moisFinances().slice(-12), couleurs = ['--s1', '--s2', '--s3', '--s4', '--s5', '--s6'].map(css);
+  legende('legPostes', POSTES.map(function (p, i) { return [p[1], couleurs[i]]; }));
+  dessiner('gPostes', { type: 'bar', data: { labels: derniers.map(nomMois), datasets: POSTES.map(function (p, i) {
+    return Object.assign(barre(p[1], derniers.map(function (m) { return totauxFinances(fin.filter(function (l) { return l.Mois === m; })).postes[p[0]]; }), couleurs[i]),
+      { borderColor: css('--surface'), borderWidth: { top: 2 }, borderRadius: 0 });
+  }) }, options: optionsCommunes(true) });
+}
+
+function tableTriable(id, colonnes, lignes, valeur) {
+  var table = document.getElementById(id);
+  var etat = table._tri || { k: colonnes[0][1], sens: 1 };
+  var rendre = function () {
+    var tri = lignes.slice().sort(function (a, b) {
+      var x = valeur(a, etat.k), y = valeur(b, etat.k);
+      if (x === null || x === undefined) return 1; if (y === null || y === undefined) return -1;
+      return (x < y ? -1 : x > y ? 1 : 0) * etat.sens;
+    });
+    table.innerHTML = '<thead><tr>' + colonnes.map(function (c) {
+      return '<th data-tri="' + c[1] + '" class="' + (c[2] === 'txt' ? '' : 'n') + '">' + c[0] + (etat.k === c[1] ? (etat.sens > 0 ? ' ▲' : ' ▼') : '') + '</th>';
+    }).join('') + '</tr></thead><tbody>' + (tri.length ? tri.map(function (l) {
+      return '<tr>' + colonnes.map(function (c) {
+        var v = valeur(l, c[1]);
+        var h = c[2] === 'eur2' ? (v === null ? '<span class="nd">N/D</span>' : fmtEur2.format(v)) : c[2] === 'eur' ? eur(v) : c[2] === 'pct' ? pct(v) : c[2] === 'nb' ? (v === null ? '<span class="nd">N/D</span>' : fmtNb.format(v)) : txt(v);
+        return '<td class="' + (c[2] === 'txt' ? '' : 'n') + '">' + h + '</td>';
+      }).join('') + '</tr>';
+    }).join('') : '<tr><td colspan="' + colonnes.length + '" class="vide">Aucune donnée</td></tr>') + '</tbody>';
+    table.querySelectorAll('th').forEach(function (th) {
+      th.onclick = function () { etat.sens = etat.k === th.dataset.tri ? -etat.sens : 1; etat.k = th.dataset.tri; table._tri = etat; rendre(); };
+    });
+  };
+  rendre();
+}
+
+function statutEcheance(dateStr) {
+  if (!dateStr) return null;
+  var p = D.parametres, j = Math.round((new Date(dateStr + 'T00:00:00') - new Date(aujourdhui() + 'T00:00:00')) / 86400000);
+  var niveau = j < 0 ? 'depasse' : j <= p.JOURS_URGENT ? 'urgent' : j <= p.JOURS_PREAVIS ? 'a_prevoir' : 'ok';
+  return { niveau: niveau, jours: j };
+}
+function celluleEcheance(dateStr) {
+  var s = statutEcheance(dateStr);
+  if (!s) return '<td><span class="nd">non renseigné</span></td>';
+  var quand = s.jours < 0 ? 'dépassé de ' + (-s.jours) + ' j' : s.jours === 0 ? 'aujourd\'hui' : 'dans ' + s.jours + ' j';
+  return '<td>' + dateFr(dateStr) + ' ' + badge(s.niveau, quand) + '</td>';
+}
+function tableEcheances(id, lignes, colonnes, entete) {
+  var table = document.getElementById(id);
+  if (!lignes.length) { table.innerHTML = '<tr><td class="vide">Aucune ligne : complétez l\'onglet dans le Google Sheet.</td></tr>'; return; }
+  table.innerHTML = '<thead><tr>' + entete.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
+    colonnes.map(function (c) { return '<th>' + c[1] + '</th>'; }).join('') + '</tr></thead><tbody>' +
+    lignes.map(function (l) { return '<tr>' + l._entete.map(function (v) { return '<td>' + txt(v) + '</td>'; }).join('') +
+      colonnes.map(function (c) { return celluleEcheance(l[c[0]]); }).join('') + '</tr>'; }).join('') + '</tbody>';
+}
+function compteStatuts(lignes, colonnes) {
+  var c = { depasse: 0, urgent: 0, a_prevoir: 0, manquant: 0 };
+  lignes.forEach(function (l) { colonnes.forEach(function (k) { var s = statutEcheance(l[k[0]]); if (!s) c.manquant++; else if (c[s.niveau] !== undefined) c[s.niveau]++; }); });
+  return c;
+}
+
+var COL_FLOTTE = [['Prochain_CT', 'Contrôle technique'], ['Prochain_Entretien', 'Entretien'], ['Echeance_Assurance', 'Assurance'], ['Controle_Tachygraphe', 'Chronotachygraphe']];
+var COL_SAL = [['Fin_Validite_Permis', 'Permis'], ['Fin_FIMO_FCO', 'FIMO / FCO'], ['Prochaine_Visite_Medicale', 'Visite médicale'], ['Fin_Carte_Conducteur', 'Carte conducteur'], ['Date_Formation', 'Formation']];
+
+function rendreFlotte() {
+  var lignes = D.FLOTTE.filter(function (c) { return garderSociete(c['Société']); }).map(function (c) {
+    return Object.assign({ _entete: [c.Camion_ID, c['Société'], c.Marque_Modele, c.Chauffeur_Attitre] }, c);
+  });
+  var c = compteStatuts(lignes, COL_FLOTTE);
+  document.getElementById('tuilesFlotte').innerHTML = tuile('Véhicules actifs', lignes.length) +
+    tuile('Échéances dépassées', '<span class="' + (c.depasse ? 'neg' : '') + '">' + c.depasse + '</span>') +
+    tuile('Sous ' + D.parametres.JOURS_PREAVIS + ' jours', c.urgent + c.a_prevoir) + tuile('Dates non renseignées', c.manquant);
+  tableEcheances('tabFlotte', lignes, COL_FLOTTE, ['Camion', 'Société', 'Modèle', 'Chauffeur']);
+}
+
+function nomComplet(s) { return ((s['Prénom'] || '') + ' ' + (s.Nom || '')).trim(); }
+function rendreSalaries() {
+  var sal = D.SALARIES.filter(function (s) { return garderSociete(s['Société']); });
+  var lignes = sal.map(function (s) { return Object.assign({ _entete: [nomComplet(s), s['Société'], s.Poste] }, s); });
+  var c = compteStatuts(lignes, COL_SAL);
+  var noms = sal.map(nomComplet), auj = aujourdhui();
+  var dans30 = new Date(); dans30.setDate(dans30.getDate() + 30);
+  var lim = dans30.toISOString().slice(0, 10);
+  var abs = D.ABSENCES.filter(function (a) { return !societe() || noms.indexOf(a['Salarié']) >= 0; });
+  var enCours = abs.filter(function (a) { return a['Début'] <= auj && (!a.Fin || a.Fin >= auj); });
+  var aVenir = abs.filter(function (a) { return a['Début'] > auj && a['Début'] <= lim; }).sort(function (a, b) { return a['Début'] < b['Début'] ? -1 : 1; });
+  document.getElementById('tuilesSal').innerHTML = tuile('Salariés actifs', sal.length) +
+    tuile('Absents aujourd\'hui', enCours.length) +
+    tuile('Échéances dépassées', '<span class="' + (c.depasse ? 'neg' : '') + '">' + c.depasse + '</span>') +
+    tuile('Sous ' + D.parametres.JOURS_PREAVIS + ' jours', c.urgent + c.a_prevoir);
+  tableEcheances('tabSal', lignes, COL_SAL, ['Salarié', 'Société', 'Poste']);
+  var liste = function (l) {
+    return l.length ? '<table><tbody>' + l.map(function (a) {
+      return '<tr><td>' + txt(a['Salarié']) + '</td><td>' + txt(a.Type) + '</td><td>' + dateFr(a['Début']) + (a.Fin ? ' → ' + dateFr(a.Fin) : ' → ?') + '</td></tr>';
+    }).join('') + '</tbody></table>' : '<div class="vide">Aucune</div>';
+  };
+  document.getElementById('absAujourdhui').innerHTML = liste(enCours);
+  document.getElementById('absAVenir').innerHTML = liste(aVenir);
+}
+
+function consommations(pleins) {
+  var depuis = new Date(); depuis.setDate(depuis.getDate() - 90);
+  var lim = depuis.toISOString().slice(0, 10), par = {};
+  pleins.forEach(function (l) {
+    var km = num(l.KM_Compteur), li = num(l.Litres);
+    if (!l.Date || l.Date < lim || km === null || li === null) return;
+    (par[l.Camion_ID] = par[l.Camion_ID] || []).push({ km: km, litres: li });
+  });
+  return Object.keys(par).sort().map(function (id) {
+    var p = par[id].sort(function (a, b) { return a.km - b.km; });
+    var dist = p.length > 1 ? p[p.length - 1].km - p[0].km : 0;
+    var litres = p.slice(1).reduce(function (s, x) { return s + x.litres; }, 0);
+    return { id: id, pleins: p.length, km: dist || null, litres: litres, conso: dist > 0 ? litres / dist * 100 : null };
+  });
+}
+
+function rendreActivite() {
+  var mois = document.getElementById('moisAct').value;
+  var liv = D.LIVRAISONS.filter(function (l) { return String(l.Date).slice(0, 7) === mois && garderSociete(societeCamion(l.Camion_ID)); });
+  var carb = D.CARBURANT.filter(function (l) { return garderSociete(l['Société'] || societeCamion(l.Camion_ID)); });
+  var carbMois = carb.filter(function (l) { return String(l.Date).slice(0, 7) === mois; });
+  var somme = function (l, k) { return l.reduce(function (s, x) { return s + (num(x[k]) || 0); }, 0); };
+  var conso = consommations(carb);
+  var totL = conso.reduce(function (s, c) { return s + (c.conso !== null ? c.litres : 0); }, 0);
+  var totKm = conso.reduce(function (s, c) { return s + (c.conso !== null ? c.km : 0); }, 0);
+  document.getElementById('tuilesAct').innerHTML =
+    tuile('Livraisons', fmtNb.format(somme(liv, 'Nb_Livraisons')), nomMois(mois)) +
+    tuile('CA des livraisons', fmtEur.format(somme(liv, 'CA_HT'))) +
+    tuile('Carburant', fmtNb.format(somme(carbMois, 'Litres')) + ' L', fmtEur.format(somme(carbMois, 'Montant_TTC')) + ' TTC') +
+    tuile('Consommation moyenne', totKm ? fmtNb.format(totL / totKm * 100) + ' L/100' : '<span class="nd">N/D</span>', '90 derniers jours, tous camions');
+
+  // Livraisons par jour du mois
+  var p = mois.split('-'), nbJ = new Date(+p[0], +p[1], 0).getDate(), jours = [], vals = [];
+  for (var j = 1; j <= nbJ; j++) {
+    var d = mois + '-' + ('0' + j).slice(-2);
+    jours.push(String(j));
+    vals.push(liv.filter(function (l) { return l.Date === d; }).reduce(function (s, l) { return s + (num(l.Nb_Livraisons) || 0); }, 0));
+  }
+  var opt = optionsCommunes(false);
+  opt.scales.y.ticks.callback = function (v) { return fmtNb.format(v); };
+  opt.scales.y.ticks.precision = 0;
+  opt.plugins.tooltip.callbacks = { title: function (c) { return c[0].label + ' ' + nomMois(mois); }, label: function (c) { return ' ' + c.parsed.y + ' livraison(s)'; } };
+  dessiner('gLivraisons', { type: 'bar', data: { labels: jours, datasets: [barre('Livraisons', vals, css('--s1'))] }, options: opt });
+
+  var seuil = D.parametres.SEUIL_CONSO_L100;
+  document.getElementById('noteConso').textContent = 'Méthode plein à plein (compteur obligatoire). Seuil d\'alerte : ' + seuil + ' L/100 km.';
+  document.getElementById('tabConso').innerHTML = '<thead><tr><th>Camion</th><th class="n">Pleins</th><th class="n">Km</th><th class="n">Litres</th><th class="n">L/100 km</th><th>État</th></tr></thead><tbody>' +
+    (conso.length ? conso.map(function (c) {
+      return '<tr><td>' + txt(c.id) + '</td><td class="n">' + c.pleins + '</td><td class="n">' + (c.km ? fmtNb.format(c.km) : '<span class="nd">N/D</span>') +
+        '</td><td class="n">' + fmtNb.format(c.litres) + '</td><td class="n">' + (c.conso === null ? '<span class="nd">N/D</span>' : fmtNb.format(c.conso)) + '</td><td>' +
+        (c.conso === null ? '<span class="nd">2 pleins minimum</span>' : c.conso > seuil ? badge('urgent', 'Élevée') : badge('ok', 'Normale')) + '</td></tr>';
+    }).join('') : '<tr><td colspan="6" class="vide">Aucun plein avec compteur sur 90 jours</td></tr>') + '</tbody>';
+
+  var parC = {};
+  liv.forEach(function (l) { var c = parC[l.Camion_ID] = parC[l.Camion_ID] || { liv: 0, ca: 0 }; c.liv += num(l.Nb_Livraisons) || 0; c.ca += num(l.CA_HT) || 0; });
+  carbMois.forEach(function (l) { var c = parC[l.Camion_ID] = parC[l.Camion_ID] || { liv: 0, ca: 0 }; c.l = (c.l || 0) + (num(l.Litres) || 0); c.e = (c.e || 0) + (num(l.Montant_TTC) || 0); });
+  var lignes = Object.keys(parC).sort().map(function (id) { var c = parC[id]; return { id: id, liv: c.liv, ca: c.ca, litres: c.l || 0, carb: c.e || 0 }; });
+  tableTriable('tabActCamion', [['Camion', 'id', 'txt'], ['Livraisons', 'liv', 'nb'], ['CA HT', 'ca', 'eur'], ['Litres', 'litres', 'nb'], ['Carburant TTC', 'carb', 'eur']], lignes, function (o, k) { return o[k]; });
+
+  var derniers = carb.slice().sort(function (a, b) { return a.Date < b.Date ? 1 : -1; }).slice(0, 10);
+  document.getElementById('tabPleins').innerHTML = '<thead><tr><th>Date</th><th>Camion</th><th class="n">Litres</th><th class="n">TTC</th><th class="n">Compteur</th></tr></thead><tbody>' +
+    (derniers.length ? derniers.map(function (l) {
+      return '<tr><td>' + dateFr(l.Date) + '</td><td>' + txt(l.Camion_ID) + '</td><td class="n">' + fmtNb.format(num(l.Litres) || 0) + '</td><td class="n">' +
+        eur(num(l.Montant_TTC)) + '</td><td class="n">' + (num(l.KM_Compteur) === null ? '<span class="nd">—</span>' : fmtNb.format(num(l.KM_Compteur))) + '</td></tr>';
+    }).join('') : '<tr><td colspan="5" class="vide">Aucun plein saisi</td></tr>') + '</tbody>';
+}
+
+function rendreAlertes() {
+  var n = document.getElementById('filtreNiveau').value;
+  document.getElementById('listeAlertes').innerHTML = listeAlertesHtml(alertesFiltrees().filter(function (a) { return !n || a.niveau === n; }));
+}
+
+// ---------- saisie ----------
+document.querySelectorAll('form.saisie').forEach(function (f) {
+  f.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var msg = f.querySelector('.msg'), bouton = f.querySelector('button');
+    var obj = {};
+    new FormData(f).forEach(function (v, k) { obj[k] = v; });
+    if (!(window.google && google.script && google.script.run)) { msg.className = 'msg err'; msg.textContent = 'Mode démonstration : rien n\'est enregistré.'; return; }
+    bouton.disabled = true; msg.className = 'msg'; msg.textContent = 'Enregistrement…';
+    google.script.run.withSuccessHandler(function () {
+      bouton.disabled = false; msg.className = 'msg ok'; msg.textContent = '✓ Enregistré';
+      f.querySelectorAll('input:not([type=date])').forEach(function (i) { i.value = ''; });
+      charger();
+    }).withFailureHandler(function (err) {
+      bouton.disabled = false; msg.className = 'msg err'; msg.textContent = err.message;
+    }).ajouterSaisie(f.dataset.type, obj);
+  });
+});
+
+// ---------- événements ----------
+document.querySelectorAll('nav button').forEach(function (b) { b.addEventListener('click', function () { afficherOnglet(b.dataset.onglet); }); });
+document.getElementById('filtreSociete').addEventListener('change', function () { try { localStorage.setItem('societeTDB', societe()); } catch (e) {} afficherOnglet(ongletActif()); });
+document.getElementById('moisFin').addEventListener('change', rendreFinances);
+document.getElementById('moisAct').addEventListener('change', rendreActivite);
+document.getElementById('filtreNiveau').addEventListener('change', rendreAlertes);
+document.getElementById('actualiser').addEventListener('click', charger);
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { if (D) afficherOnglet(ongletActif()); });
+try {
+  var o = localStorage.getItem('ongletTDB'); if (o && document.getElementById(o)) afficherOnglet(o);
+  var s = localStorage.getItem('societeTDB'); if (s !== null) document.getElementById('filtreSociete').value = s;
+} catch (e) {}
+setInterval(charger, 5 * 60 * 1000);   // actualisation automatique toutes les 5 minutes
+charger();
+</script>
+</body>
+</html>
