@@ -4,13 +4,14 @@ Site privé pour suivre la santé de l'entreprise en temps réel, construit sur 
 
 | Onglet du site | Ce qu'il montre | D'où viennent les données |
 |---|---|---|
-| **Accueil** | CA et livraisons du mois en cours, résultat du dernier mois, alertes prioritaires | tout ce qui suit |
+| **Accueil** | CA, marge, livraisons, retards, véhicules indisponibles, factures en attente, heures chauffeurs, puis le bloc **🔴 ATTENTION** (documents qui expirent, clients à relancer, marge d'une activité en baisse…) | tout ce qui suit |
 | **Finances** | CA, charges par poste, résultat, marge et coût au km, par camion et par société | onglet `FINANCES` (importé depuis `TABLEAU_DE_BORD_FLOTTE.xlsx`) |
 | **Flotte** | Contrôle technique, entretien, assurance, chronotachygraphe | onglet `FLOTTE` (saisie manuelle) |
 | **Salariés** | Permis, FIMO/FCO, visite médicale, carte conducteur, formations, absences | onglets `SALARIES` et `ABSENCES` |
 | **Carburant & livraisons** | Livraisons par jour, CA des tournées, litres, consommation L/100 km | onglets `LIVRAISONS` et `CARBURANT` |
+| **Factures** | Factures en attente, échues, clients à relancer ; boutons « Relancé » et « Payée » | onglet `FACTURES` |
 | **Alertes** | Toutes les alertes, filtrables par gravité | calculées automatiquement |
-| **Saisie rapide** | Formulaires (aussi sur téléphone) : livraison, plein, absence | écrit dans le Google Sheet |
+| **Saisie rapide** | Formulaires (aussi sur téléphone) : livraison (avec retards), plein, heures chauffeur, facture, absence | écrit dans le Google Sheet |
 
 Chaque matin vers 7h, un **mail d'alerte** part si une échéance approche (30 j / 7 j / dépassée), si un camion est en perte ou sous la marge minimale, ou si un camion consomme trop. Le même mail n'est jamais envoyé deux fois. Le lundi, un récapitulatif complet est envoyé.
 
@@ -38,7 +39,7 @@ Il faut un compte Google (une adresse Gmail ou Google Workspace).
 
 ### 3. Remplir les données de base
 - **PARAMETRES** : vérifiez `EMAIL_ALERTES` (plusieurs adresses possibles, séparées par des virgules, par exemple `transports-gleyzes@orange.fr`) et ajustez les seuils.
-- **FLOTTE** : une ligne par camion. `Camion_ID` = l'immatriculation **sans tirets**, comme dans REF_Camions (ex : `GD042ZC`). Mettez `Actif` à `N` pour un camion sorti du parc.
+- **FLOTTE** : une ligne par camion. `Activite` (ex : Frigo, Benne, Plateau) sert à suivre la marge par activité ; `Statut` (Disponible, Atelier, Immobilisé…) compte les véhicules indisponibles. `Camion_ID` = l'immatriculation **sans tirets**, comme dans REF_Camions (ex : `GD042ZC`). Mettez `Actif` à `N` pour un camion sorti du parc.
 - **SALARIES** : une ligne par salarié, avec les dates de fin de validité.
 
 Dates au format `jj/mm/aaaa`.
@@ -54,6 +55,14 @@ Dates au format `jj/mm/aaaa`.
 Après une modification du code : **Déployer > Gérer les déploiements > crayon > Version : Nouvelle version**. L'URL ne change pas.
 
 > **Donner accès à un collègue (ex : Adeline)** : partagez le Google Sheet avec son compte Google (droits *Éditeur* si elle doit saisir), puis créez le déploiement avec *Exécuter en tant que* : **Utilisateur qui accède à l'application Web** et *Qui a accès* : **Tous les utilisateurs disposant d'un compte Google**. Seules les personnes qui ont accès au Sheet verront les données.
+
+---
+
+## Mettre à jour le code
+
+Quand une nouvelle version arrive sur GitHub : recollez `Code.gs` et `Dashboard.html` dans Apps Script, enregistrez, puis
+1. dans le Google Sheet : **Tableau de bord > 1. Installer / compléter les onglets** (ajoute les nouveaux onglets et colonnes sans rien effacer) ;
+2. dans Apps Script : **Déployer > Gérer les déploiements > crayon > Version : Nouvelle version > Déployer**.
 
 ---
 

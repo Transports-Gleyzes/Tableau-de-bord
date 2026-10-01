@@ -6,7 +6,8 @@
  *  - installer()                : crée/complète les onglets et les paramètres (sans rien effacer).
  *  - doGet()                    : sert le site interactif (Dashboard.html).
  *  - getDonnees()               : renvoie toutes les données au site.
- *  - ajouterSaisie(type, objet) : ajoute une livraison / un plein / une absence depuis le site.
+ *  - ajouterSaisie(type, objet) : ajoute une livraison / un plein / une absence / des heures / une facture.
+ *  - majFacture(numero, action) : marque une facture « payée » ou « relancée » depuis le site.
  *  - verifierAlertes()          : calcule les alertes et envoie le mail (déclencheur quotidien).
  *  - importerFinances()         : importe FINANCES_EXPORT.csv (produit par exporter_finances_csv.py).
  *
@@ -22,13 +23,17 @@ var FEUILLES = {
   FINANCES: ['Mois', 'Camion_ID', 'Société', 'CA', 'KM', 'Carburant', 'Peages', 'Salaires',
              'Entretien', 'Charges_Fixes', 'Charges_Mutualisees'],
   FLOTTE: ['Camion_ID', 'Société', 'Marque_Modele', 'Chauffeur_Attitre', 'Prochain_CT',
-           'Prochain_Entretien', 'Echeance_Assurance', 'Controle_Tachygraphe', 'Actif', 'Remarques'],
+           'Prochain_Entretien', 'Echeance_Assurance', 'Controle_Tachygraphe', 'Actif', 'Remarques',
+           'Activite', 'Statut', 'Indisponible_Jusqu_Au'],
   SALARIES: ['Nom', 'Prénom', 'Société', 'Poste', 'Fin_Validite_Permis', 'Fin_FIMO_FCO',
              'Prochaine_Visite_Medicale', 'Fin_Carte_Conducteur', 'Formation_A_Prevoir',
              'Date_Formation', 'Actif', 'Remarques'],
   ABSENCES: ['Salarié', 'Type', 'Début', 'Fin', 'Remarque'],
   CARBURANT: ['Date', 'Camion_ID', 'Société', 'Litres', 'Montant_TTC', 'KM_Compteur', 'Lieu'],
-  LIVRAISONS: ['Date', 'Camion_ID', 'Chauffeur', 'Client', 'Nb_Livraisons', 'CA_HT', 'Remarque'],
+  LIVRAISONS: ['Date', 'Camion_ID', 'Chauffeur', 'Client', 'Nb_Livraisons', 'CA_HT', 'Remarque', 'Nb_Retards'],
+  FACTURES: ['N_Facture', 'Client', 'Date_Facture', 'Echeance', 'Montant_TTC', 'Statut', 'Date_Paiement',
+             'Derniere_Relance', 'Remarque'],
+  HEURES: ['Date', 'Salarié', 'Heures', 'Remarque'],
   JOURNAL_ALERTES: ['Date_Envoi', 'Clé', 'Niveau', 'Message']
 };
 
@@ -41,6 +46,14 @@ var ECHEANCES = {
              ['Date_Formation', 'Formation']]
 };
 
+// Colonnes mises au format jj/mm/aaaa par installer()
+var COLONNES_DATE = {
+  FLOTTE: ['Prochain_CT', 'Prochain_Entretien', 'Echeance_Assurance', 'Controle_Tachygraphe', 'Indisponible_Jusqu_Au'],
+  SALARIES: ['Fin_Validite_Permis', 'Fin_FIMO_FCO', 'Prochaine_Visite_Medicale', 'Fin_Carte_Conducteur', 'Date_Formation'],
+  FACTURES: ['Date_Facture', 'Echeance', 'Date_Paiement', 'Derniere_Relance'],
+  HEURES: ['Date'], LIVRAISONS: ['Date'], CARBURANT: ['Date'], ABSENCES: ['Début', 'Fin']
+};
+
 var PARAMETRES_DEFAUT = [
   ['EMAIL_ALERTES', '', 'Adresse(s) qui reçoivent les alertes, séparées par des virgules'],
   ['JOURS_PREAVIS', 30, 'Une échéance passe « à prévoir » ce nombre de jours avant la date'],
@@ -48,12 +61,17 @@ var PARAMETRES_DEFAUT = [
   ['SEUIL_MARGE_PCT', 5, 'Alerte si la marge d\'un camion sur le dernier mois est sous ce % (négatif = urgent)'],
   ['SEUIL_CONSO_L100', 38, 'Alerte si la consommation d\'un camion dépasse ce nombre de L/100 km (90 derniers jours)'],
   ['NOM_FICHIER_FINANCES', 'FINANCES_EXPORT.csv', 'Nom du fichier déposé dans Google Drive par exporter_finances_csv.py'],
-  ['RECAP_HEBDO', 'OUI', 'OUI = un mail récapitulatif complet chaque lundi, même sans nouvelle alerte']
+  ['RECAP_HEBDO', 'OUI', 'OUI = un mail récapitulatif complet chaque lundi, même sans nouvelle alerte'],
+  ['JOURS_RELANCE', 15, 'Une facture échue est « à relancer » si aucune relance depuis ce nombre de jours'],
+  ['SEUIL_BAISSE_MARGE_PTS', 5, 'Alerte si la marge d\'une activité perd ce nombre de points par rapport aux 3 mois précédents'],
+  ['SEUIL_RETARDS_PCT', 5, 'Alerte si le taux de livraisons en retard du mois dépasse ce % (à partir de 20 livraisons)']
 ];
 
 // Saisies autorisées depuis le site (rien d'autre ne peut être écrit par le site)
 var SAISIES = {
-  LIVRAISONS: { obligatoires: ['Date', 'Camion_ID', 'Nb_Livraisons'], nombres: ['Nb_Livraisons', 'CA_HT'], dates: ['Date'] },
+  LIVRAISONS: { obligatoires: ['Date', 'Camion_ID', 'Nb_Livraisons'], nombres: ['Nb_Livraisons', 'CA_HT', 'Nb_Retards'], dates: ['Date'] },
+  HEURES: { obligatoires: ['Date', 'Salarié', 'Heures'], nombres: ['Heures'], dates: ['Date'] },
+  FACTURES: { obligatoires: ['N_Facture', 'Client', 'Montant_TTC', 'Echeance'], nombres: ['Montant_TTC'], dates: ['Date_Facture', 'Echeance'] },
   CARBURANT: { obligatoires: ['Date', 'Camion_ID', 'Litres'], nombres: ['Litres', 'Montant_TTC', 'KM_Compteur'], dates: ['Date'] },
   ABSENCES: { obligatoires: ['Salarié', 'Type', 'Début'], nombres: [], dates: ['Début', 'Fin'] }
 };
@@ -106,13 +124,25 @@ function installer() {
     var moi = Session.getEffectiveUser().getEmail();
     if (moi) majParametre_('EMAIL_ALERTES', moi);
   }
-  // Formats de date lisibles sur les colonnes surveillées
-  ['FLOTTE', 'SALARIES'].forEach(function (nom) {
+  // Formats de date lisibles
+  Object.keys(COLONNES_DATE).forEach(function (nom) {
     var sh = ss.getSheetByName(nom);
     var entetes = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-    ECHEANCES[nom].forEach(function (e) {
-      var c = entetes.indexOf(e[0]) + 1;
+    COLONNES_DATE[nom].forEach(function (col) {
+      var c = entetes.indexOf(col) + 1;
       if (c) sh.getRange(2, c, sh.getMaxRows() - 1, 1).setNumberFormat('dd/mm/yyyy');
+    });
+  });
+  // Listes déroulantes pour limiter les fautes de frappe
+  var listes = { FLOTTE: { Statut: ['Disponible', 'Atelier', 'Immobilisé', 'En attente de pièce'] },
+                 FACTURES: { Statut: ['En attente', 'Payée', 'Litige'] } };
+  Object.keys(listes).forEach(function (nom) {
+    var sh = ss.getSheetByName(nom);
+    var entetes = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    Object.keys(listes[nom]).forEach(function (col) {
+      var c = entetes.indexOf(col) + 1;
+      if (c) sh.getRange(2, c, sh.getMaxRows() - 1, 1).setDataValidation(
+        SpreadsheetApp.newDataValidation().requireValueInList(listes[nom][col], true).setAllowInvalid(true).build());
     });
   });
   try {
@@ -150,7 +180,7 @@ function doGet() {
 function getDonnees() {
   var ss = classeur_();
   var d = {};
-  ['FINANCES', 'FLOTTE', 'SALARIES', 'ABSENCES', 'CARBURANT', 'LIVRAISONS'].forEach(function (nom) {
+  ['FINANCES', 'FLOTTE', 'SALARIES', 'ABSENCES', 'CARBURANT', 'LIVRAISONS', 'FACTURES', 'HEURES'].forEach(function (nom) {
     var sh = ss.getSheetByName(nom);
     d[nom] = sh ? lireTable_(sh).map(serialiser_) : [];
   });
@@ -162,7 +192,9 @@ function getDonnees() {
     JOURS_PREAVIS: nombre_(params.JOURS_PREAVIS, 30),
     JOURS_URGENT: nombre_(params.JOURS_URGENT, 7),
     SEUIL_MARGE_PCT: nombre_(params.SEUIL_MARGE_PCT, 5),
-    SEUIL_CONSO_L100: nombre_(params.SEUIL_CONSO_L100, 38)
+    SEUIL_CONSO_L100: nombre_(params.SEUIL_CONSO_L100, 38),
+    JOURS_RELANCE: nombre_(params.JOURS_RELANCE, 15),
+    SEUIL_RETARDS_PCT: nombre_(params.SEUIL_RETARDS_PCT, 5)
   };
   d.alertes = calculerAlertes_(ss, new Date());
   d.genereLe = Utilities.formatDate(new Date(), FUSEAU, "dd/MM/yyyy 'à' HH:mm");
@@ -197,6 +229,14 @@ function ajouterSaisie(type, objet) {
     }
   });
   var ss = classeur_();
+  if (type === 'LIVRAISONS' && ligneObj.Nb_Retards !== '' && ligneObj.Nb_Retards > ligneObj.Nb_Livraisons) {
+    throw new Error('Plus de retards que de livraisons');
+  }
+  if (type === 'FACTURES') {
+    if (!ligneObj.Statut) ligneObj.Statut = 'En attente';
+    var existe = lireTable_(ss.getSheetByName('FACTURES')).some(function (l) { return String(l.N_Facture) === String(ligneObj.N_Facture); });
+    if (existe) throw new Error('La facture ' + ligneObj.N_Facture + ' existe déjà');
+  }
   if (type === 'CARBURANT' && !ligneObj['Société']) {
     var camion = lireTable_(ss.getSheetByName('FLOTTE')).filter(function (l) { return l.Camion_ID === ligneObj.Camion_ID; })[0];
     if (camion) ligneObj['Société'] = camion['Société'];
@@ -213,12 +253,40 @@ function ajouterSaisie(type, objet) {
   return true;
 }
 
+/** Depuis le site : action 'payee' (Statut + Date_Paiement) ou 'relancee' (Derniere_Relance = aujourd'hui). */
+function majFacture(numero, action) {
+  if (action !== 'payee' && action !== 'relancee') throw new Error('Action inconnue : ' + action);
+  var sh = classeur_().getSheetByName('FACTURES');
+  var verrou = LockService.getScriptLock();
+  verrou.waitLock(10000);
+  try {
+    var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+    var e = v[0].map(String);
+    for (var i = 1; i < v.length; i++) {
+      if (String(v[i][e.indexOf('N_Facture')]) !== String(numero)) continue;
+      var auj = minuit_(new Date());
+      if (action === 'payee') {
+        sh.getRange(i + 1, e.indexOf('Statut') + 1).setValue('Payée');
+        sh.getRange(i + 1, e.indexOf('Date_Paiement') + 1).setValue(auj);
+      } else {
+        sh.getRange(i + 1, e.indexOf('Derniere_Relance') + 1).setValue(auj);
+      }
+      return true;
+    }
+  } finally {
+    verrou.releaseLock();
+  }
+  throw new Error('Facture introuvable : ' + numero);
+}
+
 // ---------------------------------------------------------------------------
 // Alertes
 // ---------------------------------------------------------------------------
 /**
  * Renvoie la liste des alertes, de la plus grave à la moins grave.
  * Niveaux : 'depasse' (date passée / résultat négatif), 'urgent', 'a_prevoir'.
+ * Catégories (regroupement du bloc ATTENTION du site) : documents, relances, marge, vehicules,
+ * retards, conso, donnees.
  */
 function calculerAlertes_(ss, aujourdhui) {
   var p = lireParametres_(ss);
@@ -245,7 +313,7 @@ function calculerAlertes_(ss, aujourdhui) {
           : (jours === 0 ? 'aujourd\'hui' : 'dans ' + jours + ' j');
         var libelle = e[1] + (e[0] === 'Date_Formation' && l.Formation_A_Prevoir ? ' (' + l.Formation_A_Prevoir + ')' : '');
         alertes.push({
-          niveau: niveau, domaine: f[1], objet: objet, sujet: libelle, jours: jours,
+          niveau: niveau, categorie: 'documents', domaine: f[1], objet: objet, sujet: libelle, jours: jours,
           date: Utilities.formatDate(dt, FUSEAU, 'dd/MM/yyyy'),
           message: libelle + ' — ' + objet + ' : ' + Utilities.formatDate(dt, FUSEAU, 'dd/MM/yyyy') + ' (' + quand + ')',
           cle: f[0] + '|' + objet + '|' + e[0] + '|' + Utilities.formatDate(dt, FUSEAU, 'yyyy-MM-dd')
@@ -276,7 +344,7 @@ function calculerAlertes_(ss, aujourdhui) {
       Object.keys(parCamion).forEach(function (id) {
         var c = parCamion[id];
         if (c.ca === null) {
-          alertes.push({ niveau: 'a_prevoir', domaine: 'Finances', objet: id, sujet: 'CA manquant',
+          alertes.push({ niveau: 'a_prevoir', categorie: 'donnees', domaine: 'Finances', objet: id, sujet: 'CA manquant',
             message: 'CA non renseigné pour ' + id + ' en ' + dernier, cle: 'CA_MANQUANT|' + id + '|' + dernier });
           return;
         }
@@ -284,11 +352,11 @@ function calculerAlertes_(ss, aujourdhui) {
         var res = c.ca - c.charges, marge = res / c.ca * 100;
         var note = c.incomplet ? ' (charges incomplètes : carburant ou salaire manquant)' : '';
         if (res < 0) {
-          alertes.push({ niveau: 'depasse', domaine: 'Finances', objet: id, sujet: 'Résultat négatif',
+          alertes.push({ niveau: 'depasse', categorie: 'marge', domaine: 'Finances', objet: id, sujet: 'Résultat négatif',
             message: id + ' perd ' + euros_(-res) + ' en ' + dernier + note, cle: 'RESULTAT|' + id + '|' + dernier });
         } else if (marge < seuil) {
-          alertes.push({ niveau: 'urgent', domaine: 'Finances', objet: id, sujet: 'Marge faible',
-            message: id + ' : marge de ' + marge.toFixed(1) + ' % en ' + dernier + note, cle: 'MARGE|' + id + '|' + dernier });
+          alertes.push({ niveau: 'urgent', categorie: 'marge', domaine: 'Finances', objet: id, sujet: 'Marge faible',
+            message: id + ' : marge de ' + fr1_(marge) + ' % en ' + dernier + note, cle: 'MARGE|' + id + '|' + dernier });
         }
       });
     }
@@ -301,11 +369,75 @@ function calculerAlertes_(ss, aujourdhui) {
     var conso = consommations_(lireTable_(shC), jour0, 90);
     Object.keys(conso).forEach(function (id) {
       if (conso[id] > seuilConso) {
-        alertes.push({ niveau: 'urgent', domaine: 'Carburant', objet: id, sujet: 'Consommation élevée',
-          message: id + ' consomme ' + conso[id].toFixed(1) + ' L/100 km sur 90 jours (seuil ' + seuilConso + ')',
+        alertes.push({ niveau: 'urgent', categorie: 'conso', domaine: 'Carburant', objet: id, sujet: 'Consommation élevée',
+          message: id + ' consomme ' + fr1_(conso[id]) + ' L/100 km sur 90 jours (seuil ' + seuilConso + ')',
           cle: 'CONSO|' + id + '|' + Utilities.formatDate(jour0, FUSEAU, 'yyyy-ww') });
       }
     });
+  }
+
+  var flotte = ss.getSheetByName('FLOTTE') ? lireTable_(ss.getSheetByName('FLOTTE')).filter(estActif_) : [];
+
+  // 4. Véhicules indisponibles (colonne Statut de FLOTTE)
+  flotte.forEach(function (l) {
+    if (!estIndisponible_(l.Statut)) return;
+    var jusqu = l.Indisponible_Jusqu_Au instanceof Date ? l.Indisponible_Jusqu_Au : dateDepuisTexte_(l.Indisponible_Jusqu_Au);
+    var objet = l.Camion_ID + (l['Société'] ? ' (' + l['Société'] + ')' : '');
+    alertes.push({ niveau: 'urgent', categorie: 'vehicules', domaine: 'Flotte', objet: objet, sujet: 'Indisponible',
+      message: objet + ' indisponible : ' + l.Statut + (jusqu ? ' jusqu\'au ' + Utilities.formatDate(jusqu, FUSEAU, 'dd/MM/yyyy') : ''),
+      cle: 'INDISPO|' + l.Camion_ID + '|' + l.Statut + '|' + (jusqu ? Utilities.formatDate(jusqu, FUSEAU, 'yyyy-MM-dd') : '') });
+  });
+
+  // 5. Clients à relancer : factures échues non payées sans relance récente, regroupées par client
+  var shFa = ss.getSheetByName('FACTURES');
+  if (shFa) {
+    var joursRelance = nombre_(p.JOURS_RELANCE, 15);
+    var parClient = {};
+    lireTable_(shFa).forEach(function (l) {
+      if (!factureEnAttente_(l.Statut)) return;
+      var ech = l.Echeance instanceof Date ? l.Echeance : dateDepuisTexte_(l.Echeance);
+      if (!ech || minuit_(ech) >= jour0) return;
+      var relance = l.Derniere_Relance instanceof Date ? l.Derniere_Relance : dateDepuisTexte_(l.Derniere_Relance);
+      if (relance && (jour0 - minuit_(relance)) / 86400000 < joursRelance) return;
+      var c = parClient[l.Client] = parClient[l.Client] || { nb: 0, montant: 0, retardMax: 0, relance: null };
+      c.nb++;
+      c.montant += nombre_(l.Montant_TTC, 0);
+      c.retardMax = Math.max(c.retardMax, Math.round((jour0 - minuit_(ech)) / 86400000));
+      if (relance && (!c.relance || relance > c.relance)) c.relance = relance;
+    });
+    Object.keys(parClient).forEach(function (client) {
+      var c = parClient[client];
+      var depuis = c.relance ? 'dernière relance le ' + Utilities.formatDate(c.relance, FUSEAU, 'dd/MM/yyyy') : 'jamais relancé';
+      alertes.push({ niveau: c.retardMax > 45 ? 'depasse' : 'urgent', categorie: 'relances', domaine: 'Factures', objet: client,
+        sujet: 'Relance', jours: -c.retardMax,
+        message: client + ' : ' + c.nb + ' facture(s) impayée(s), ' + euros_(c.montant) + ', échue(s) depuis ' + c.retardMax + ' j (' + depuis + ')',
+        cle: 'RELANCE|' + client + '|' + (c.relance ? Utilities.formatDate(c.relance, FUSEAU, 'yyyy-MM-dd') : 'jamais') });
+    });
+  }
+
+  // 6. Marge par activité en baisse : dernier mois comparé aux 3 mois précédents
+  if (shF) {
+    var activiteCamion = {};
+    flotte.forEach(function (l) { if (l.Activite) activiteCamion[l.Camion_ID] = String(l.Activite).trim(); });
+    alertes = alertes.concat(baissesMarge_(lireTable_(shF), activiteCamion, nombre_(p.SEUIL_BAISSE_MARGE_PTS, 5)));
+  }
+
+  // 7. Taux de retards du mois en cours
+  var shL = ss.getSheetByName('LIVRAISONS');
+  if (shL) {
+    var moisCourant = Utilities.formatDate(jour0, FUSEAU, 'yyyy-MM'), nbL = 0, nbR = 0;
+    lireTable_(shL).forEach(function (l) {
+      var dt = l.Date instanceof Date ? l.Date : dateDepuisTexte_(l.Date);
+      if (!dt || Utilities.formatDate(dt, FUSEAU, 'yyyy-MM') !== moisCourant) return;
+      nbL += nombre_(l.Nb_Livraisons, 0);
+      nbR += nombre_(l.Nb_Retards, 0);
+    });
+    var seuilRetards = nombre_(p.SEUIL_RETARDS_PCT, 5);
+    if (nbL >= 20 && nbR / nbL * 100 > seuilRetards) {
+      alertes.push({ niveau: 'urgent', categorie: 'retards', domaine: 'Livraisons', objet: moisCourant, sujet: 'Retards',
+        message: fr1_(nbR / nbL * 100) + ' % de livraisons en retard ce mois-ci (' + nbR + ' sur ' + nbL + ', seuil ' + seuilRetards + ' %)',
+        cle: 'RETARDS|' + moisCourant });
+    }
   }
 
   var ordre = { depasse: 0, urgent: 1, a_prevoir: 2 };
@@ -313,6 +445,52 @@ function calculerAlertes_(ss, aujourdhui) {
     return (ordre[a.niveau] - ordre[b.niveau]) || ((a.jours === undefined ? 999 : a.jours) - (b.jours === undefined ? 999 : b.jours));
   });
   return alertes;
+}
+
+/**
+ * Compare, par activité (colonne Activite de FLOTTE, à défaut la société), la marge du dernier mois importé
+ * à celle des 3 mois précédents cumulés. Seuls les camions dont le CA est connu sont pris en compte.
+ */
+function baissesMarge_(finances, activiteCamion, seuilPts) {
+  var mois = {};
+  finances.forEach(function (l) { var m = moisTexte_(l.Mois); if (m) mois[m] = 1; });
+  var liste = Object.keys(mois).sort();
+  if (liste.length < 2) return [];
+  var dernier = liste[liste.length - 1], precedents = liste.slice(-4, -1);
+  var agg = {};
+  finances.forEach(function (l) {
+    var m = moisTexte_(l.Mois), periode = m === dernier ? 'd' : (precedents.indexOf(m) >= 0 ? 'p' : null);
+    var ca = nombre_(l.CA, null);
+    if (!periode) return;
+    var act = activiteCamion[l.Camion_ID] ? 'l\'activité ' + activiteCamion[l.Camion_ID] : 'la société ' + (l['Société'] || '?');
+    var a = agg[act] = agg[act] || { d: { ca: 0, ch: 0 }, p: { ca: 0, ch: 0 } };
+    if (ca !== null) a[periode].ca += ca;
+    ['Carburant', 'Peages', 'Salaires', 'Entretien', 'Charges_Fixes', 'Charges_Mutualisees'].forEach(function (k) {
+      a[periode].ch += nombre_(l[k], 0);
+    });
+  });
+  var res = [];
+  Object.keys(agg).forEach(function (act) {
+    var a = agg[act];
+    if (a.d.ca <= 0 || a.p.ca <= 0) return;
+    var md = (a.d.ca - a.d.ch) / a.d.ca * 100, mp = (a.p.ca - a.p.ch) / a.p.ca * 100;
+    if (mp - md < seuilPts) return;
+    res.push({ niveau: 'urgent', categorie: 'marge', domaine: 'Finances', objet: act, sujet: 'Marge en baisse',
+      message: 'Marge de ' + act + ' en baisse : ' + fr1_(md) + ' % en ' + dernier + ' contre ' + fr1_(mp)
+        + ' % les ' + precedents.length + ' mois précédents',
+      cle: 'BAISSE_MARGE|' + act + '|' + dernier });
+  });
+  return res;
+}
+
+function estIndisponible_(statut) {
+  var s = String(statut || '').trim().toLowerCase();
+  return s !== '' && s.indexOf('dispo') !== 0;
+}
+
+function factureEnAttente_(statut) {
+  var s = String(statut || '').trim().toLowerCase();
+  return s.indexOf('pay') !== 0 && s !== 'réglée' && s !== 'reglee' && s !== 'annulée' && s !== 'annulee';
 }
 
 /** L/100 km par camion : litres des pleins après le premier ÷ km parcourus entre premier et dernier plein. */
@@ -535,6 +713,8 @@ function moisTexte_(v) {
 }
 
 function minuit_(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+
+function fr1_(n) { return n.toFixed(1).replace('.', ','); }
 
 function euros_(n) {
   return n.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' €';

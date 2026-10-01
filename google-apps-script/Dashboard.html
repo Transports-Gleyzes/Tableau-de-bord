@@ -86,6 +86,24 @@ form.saisie label { display: flex; flex-direction: column; gap: 4px; font-size: 
 form.saisie .actions { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; }
 .msg { font-size: 13px; }
 .msg.ok { color: var(--good-text); } .msg.err { color: var(--critical-text); }
+.tuiles.kpi { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.tuiles.kpi .val { font-size: 28px; }
+.delta { font-size: 12px; font-weight: 600; }
+.delta.bien { color: var(--good-text); } .delta.mal { color: var(--critical-text); } .delta.neutre { color: var(--text-3); }
+.attention { background: var(--surface); border: 1px solid var(--border); border-left: 6px solid var(--critical); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+.attention.calme { border-left-color: var(--good); }
+.attention.veille { border-left-color: var(--warning); }
+.attention h2 { font-size: 18px; margin: 0 0 8px; letter-spacing: .02em; }
+.attention details { border-top: 1px solid var(--border); }
+.attention details:first-of-type { border-top: 0; }
+.attention summary { cursor: pointer; padding: 9px 0; font-size: 15px; list-style: none; display: flex; gap: 10px; align-items: baseline; }
+.attention summary::-webkit-details-marker { display: none; }
+.attention summary::after { content: '›'; margin-left: auto; color: var(--text-3); transition: transform .15s; }
+.attention details[open] summary::after { transform: rotate(90deg); }
+.attention .detail { padding: 0 0 10px 30px; color: var(--text-2); font-size: 13px; }
+.attention .detail div { padding: 2px 0; }
+.attention .ico { width: 20px; text-align: center; }
+button.petit { padding: 2px 8px; font-size: 12px; }
 #chargement { padding: 40px; text-align: center; color: var(--text-2); }
 .legende { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
 .legende i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
@@ -108,6 +126,7 @@ form.saisie .actions { grid-column: 1 / -1; display: flex; gap: 10px; align-item
   <button role="tab" data-onglet="flotte">Flotte</button>
   <button role="tab" data-onglet="salaries">Salariés</button>
   <button role="tab" data-onglet="activite">Carburant &amp; livraisons</button>
+  <button role="tab" data-onglet="factures">Factures</button>
   <button role="tab" data-onglet="alertes">Alertes <span class="pastille" id="nbAlertes" hidden></span></button>
   <button role="tab" data-onglet="saisie">Saisie rapide</button>
 </nav>
@@ -116,18 +135,19 @@ form.saisie .actions { grid-column: 1 / -1; display: flex; gap: 10px; align-item
 
   <!-- ACCUEIL -->
   <section id="accueil" hidden>
-    <div class="tuiles" id="tuilesAccueil"></div>
+    <div class="tuiles kpi" id="tuilesAccueil"></div>
+    <div class="attention" id="attention"></div>
     <div class="grille">
-      <div class="carte">
-        <h2>À traiter en priorité</h2>
-        <p class="note">Échéances dépassées ou proches, marges faibles, consommations anormales</p>
-        <div id="prioritaires"></div>
-      </div>
       <div class="carte">
         <h2>CA et charges par mois</h2>
         <p class="note">12 derniers mois importés depuis le classeur Excel (onglet FINANCES)</p>
         <div class="legende" id="legCaCharges"></div>
         <div class="graph"><canvas id="gCaCharges" aria-label="CA et charges par mois"></canvas></div>
+      </div>
+      <div class="carte">
+        <h2>Marge par mois</h2>
+        <p class="note">Résultat ÷ CA, 12 derniers mois importés</p>
+        <div class="graph"><canvas id="gMarge" aria-label="Marge par mois"></canvas></div>
       </div>
     </div>
   </section>
@@ -202,6 +222,17 @@ form.saisie .actions { grid-column: 1 / -1; display: flex; gap: 10px; align-item
     </div>
   </section>
 
+  <!-- FACTURES -->
+  <section id="factures" hidden>
+    <div class="tuiles" id="tuilesFact"></div>
+    <div class="carte">
+      <h2>Factures en attente de paiement</h2>
+      <p class="note">« Relancé » note la relance d'aujourd'hui ; « Payée » sort la facture de la liste. Nouvelle facture : onglet Saisie rapide.</p>
+      <div class="tableau"><table id="tabFact"></table></div>
+      <p class="msg" id="msgFact"></p>
+    </div>
+  </section>
+
   <!-- ALERTES -->
   <section id="alertes" hidden>
     <div class="barre">
@@ -227,6 +258,7 @@ form.saisie .actions { grid-column: 1 / -1; display: flex; gap: 10px; align-item
         <label>Chauffeur<select name="Chauffeur" class="listeSalaries"></select></label>
         <label>Client<input name="Client"></label>
         <label>Nb de livraisons<input type="number" name="Nb_Livraisons" min="0" step="1" required></label>
+        <label>Dont en retard<input type="number" name="Nb_Retards" min="0" step="1"></label>
         <label>CA HT (€)<input type="number" name="CA_HT" min="0" step="0.01"></label>
         <label>Remarque<input name="Remarque"></label>
         <div class="actions"><button class="primaire">Enregistrer</button><span class="msg"></span></div>
@@ -244,6 +276,29 @@ form.saisie .actions { grid-column: 1 / -1; display: flex; gap: 10px; align-item
         <label>Lieu<input name="Lieu"></label>
         <div class="actions"><button class="primaire">Enregistrer</button><span class="msg"></span></div>
       </form>
+    </div>
+    <div class="carte">
+      <h2>Heures chauffeur</h2>
+      <form class="saisie" data-type="HEURES">
+        <label>Date<input type="date" name="Date" required></label>
+        <label>Salarié<select name="Salarié" required class="listeSalaries"></select></label>
+        <label>Heures travaillées<input type="number" name="Heures" min="0" max="24" step="0.25" required></label>
+        <label>Remarque<input name="Remarque"></label>
+        <div class="actions"><button class="primaire">Enregistrer</button><span class="msg"></span></div>
+      </form>
+    </div>
+    <div class="carte">
+      <h2>Facture client</h2>
+      <form class="saisie" data-type="FACTURES">
+        <label>N° de facture<input name="N_Facture" required></label>
+        <label>Client<input name="Client" required list="listeClients"></label>
+        <label>Date de facture<input type="date" name="Date_Facture" required></label>
+        <label>Échéance<input type="date" name="Echeance" required></label>
+        <label>Montant TTC (€)<input type="number" name="Montant_TTC" min="0" step="0.01" required></label>
+        <label>Remarque<input name="Remarque"></label>
+        <div class="actions"><button class="primaire">Enregistrer</button><span class="msg"></span></div>
+      </form>
+      <datalist id="listeClients"></datalist>
     </div>
     <div class="carte">
       <h2>Absence</h2>
@@ -349,7 +404,10 @@ function remplirListes() {
   document.querySelectorAll('.listeSalaries').forEach(function (s) {
     s.innerHTML = '<option value="">—</option>' + salaries.map(function (c) { return '<option>' + txt(c) + '</option>'; }).join('');
   });
-  document.querySelectorAll('form.saisie input[type=date]').forEach(function (i) { if (!i.value && i.required) i.value = aujourdhui(); });
+  document.querySelectorAll('form.saisie input[type=date]').forEach(function (i) { if (!i.value && i.required && i.name !== 'Echeance') i.value = aujourdhui(); });
+  var clients = {};
+  D.FACTURES.concat(D.LIVRAISONS).forEach(function (l) { if (l.Client) clients[l.Client] = 1; });
+  document.getElementById('listeClients').innerHTML = Object.keys(clients).sort().map(function (c) { return '<option value="' + txt(c) + '">'; }).join('');
 }
 
 // ---------- calculs finances ----------
@@ -423,7 +481,7 @@ function afficherOnglet(nom) {
   try { localStorage.setItem('ongletTDB', nom); } catch (e) {}
   if (!D) return;
   ({ accueil: rendreAccueil, finances: rendreFinances, flotte: rendreFlotte, salaries: rendreSalaries,
-     activite: rendreActivite, alertes: rendreAlertes, saisie: function () {} })[nom]();
+     activite: rendreActivite, factures: rendreFactures, alertes: rendreAlertes, saisie: function () {} })[nom]();
 }
 
 function alertesFiltrees() {
@@ -445,38 +503,168 @@ function listeAlertesHtml(liste) {
   }).join('');
 }
 
+// ---------- indicateurs du mois (du 1er à aujourd'hui, comparés à la même période du mois précédent) ----------
+function periodes() {
+  var a = aujourdhui(), m = a.slice(0, 7), jour = +a.slice(8, 10);
+  var d = new Date(+m.slice(0, 4), +m.slice(5, 7) - 2, 1);
+  var mp = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
+  var jMax = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  return { mois: m, precedent: mp, finCourant: a, finPrecedent: mp + '-' + ('0' + Math.min(jour, jMax)).slice(-2) };
+}
+function dansPeriode(date, mois, fin) { var s = String(date || ''); return s.slice(0, 7) === mois && s <= fin; }
+function somme(lignes, k) { return lignes.reduce(function (s, l) { return s + (num(l[k]) || 0); }, 0); }
+function delta(cur, prev, sens, mode, libelle) {
+  if (cur === null || prev === null || prev === undefined || (mode !== 'pts' && !prev)) return '';
+  var v = mode === 'pts' ? cur - prev : (cur - prev) / Math.abs(prev) * 100;
+  if (Math.abs(v) < 0.05) return '<span class="delta neutre">= ' + libelle + '</span>';
+  var bon = (v > 0) === (sens > 0);
+  return '<span class="delta ' + (bon ? 'bien' : 'mal') + '">' + (v > 0 ? '▲ +' : '▼ ') + fmtNb.format(v) + (mode === 'pts' ? ' pt' : ' %') + '</span> ' + libelle;
+}
+function indisponibles() {
+  var auj = aujourdhui();
+  return D.FLOTTE.filter(function (c) { return garderSociete(c['Société']); }).map(function (c) {
+    var st = String(c.Statut || '').trim(), raison = null;
+    if (st && st.toLowerCase().indexOf('dispo') !== 0) raison = st + (c.Indisponible_Jusqu_Au ? ' jusqu\'au ' + dateFr(c.Indisponible_Jusqu_Au) : '');
+    else if (c.Prochain_CT && c.Prochain_CT < auj) raison = 'CT expiré';
+    return { id: c.Camion_ID, raison: raison };
+  });
+}
+function facturesEnAttente() {
+  return D.FACTURES.filter(function (f) {
+    var s = String(f.Statut || '').trim().toLowerCase();
+    return s.indexOf('pay') !== 0 && s !== 'réglée' && s !== 'reglee' && s.indexOf('annul') !== 0;
+  });
+}
+
 function rendreAccueil() {
-  var mois = aujourdhui().slice(0, 7);
-  var liv = D.LIVRAISONS.filter(function (l) { return String(l.Date).slice(0, 7) === mois && garderSociete(societeCamion(l.Camion_ID)); });
-  var caLiv = liv.reduce(function (s, l) { return s + (num(l.CA_HT) || 0); }, 0);
-  var nbLiv = liv.reduce(function (s, l) { return s + (num(l.Nb_Livraisons) || 0); }, 0);
-  var mf = moisFinances(), dernier = mf[mf.length - 1];
+  var P = periodes(), pref = ' vs ' + nomMois(P.precedent).split(' ')[0] + ' à date';
+  var livSoc = D.LIVRAISONS.filter(function (l) { return garderSociete(societeCamion(l.Camion_ID)); });
+  var liv = livSoc.filter(function (l) { return dansPeriode(l.Date, P.mois, P.finCourant); });
+  var livP = livSoc.filter(function (l) { return dansPeriode(l.Date, P.precedent, P.finPrecedent); });
+  var nbLiv = somme(liv, 'Nb_Livraisons'), nbLivP = somme(livP, 'Nb_Livraisons');
+  var tauxR = nbLiv ? somme(liv, 'Nb_Retards') / nbLiv * 100 : null, tauxRP = nbLivP ? somme(livP, 'Nb_Retards') / nbLivP * 100 : null;
+
+  var mf = moisFinances(), dernier = mf[mf.length - 1], avant = mf[mf.length - 2];
   var fin = financesFiltrees();
-  var tDernier = dernier ? totauxFinances(fin.filter(function (l) { return l.Mois === dernier; })) : null;
-  var al = alertesFiltrees();
-  var nbDep = al.filter(function (a) { return a.niveau === 'depasse'; }).length;
-  var nbUrg = al.filter(function (a) { return a.niveau === 'urgent'; }).length;
+  var tD = dernier ? totauxFinances(fin.filter(function (l) { return l.Mois === dernier; })) : null;
+  var tA = avant ? totauxFinances(fin.filter(function (l) { return l.Mois === avant; })) : null;
+
+  // CA : en temps réel d'après les livraisons ; à défaut, dernier mois importé
+  var caTuile = liv.length
+    ? tuile('CA ' + nomMois(P.mois), fmtEur.format(somme(liv, 'CA_HT')), delta(somme(liv, 'CA_HT'), somme(livP, 'CA_HT'), 1, '%', pref) || 'd\'après les livraisons saisies')
+    : tuile('CA ' + (dernier ? nomMois(dernier) : ''), tD ? eur(tD.ca) : '<span class="nd">N/D</span>', tD && tA ? delta(tD.ca, tA.ca, 1, '%', 'vs ' + nomMois(avant)) : 'aucune livraison saisie ce mois');
+
+  var indispo = indisponibles(), nbIndispo = indispo.filter(function (c) { return c.raison; });
+  var fa = facturesEnAttente(), auj = aujourdhui();
+  var echues = fa.filter(function (f) { return f.Echeance && f.Echeance < auj; });
+  var heuresSoc = D.HEURES.filter(function (h) { return !societe() || garderSociete(societeSalarie(h['Salarié'])); });
+  var hC = heuresSoc.filter(function (h) { return dansPeriode(h.Date, P.mois, P.finCourant); });
+  var hP = heuresSoc.filter(function (h) { return dansPeriode(h.Date, P.precedent, P.finPrecedent); });
+  var nbChauffeurs = Object.keys(hC.reduce(function (o, h) { o[h['Salarié']] = 1; return o; }, {})).length;
 
   document.getElementById('tuilesAccueil').innerHTML =
-    tuile('CA du mois en cours', liv.length ? fmtEur.format(caLiv) : '<span class="nd">N/D</span>', nomMois(mois) + ' · d\'après les livraisons saisies') +
-    tuile('Livraisons ce mois', liv.length ? fmtNb.format(nbLiv) : '<span class="nd">0</span>', liv.length + ' saisie(s)') +
-    tuile('Résultat ' + (dernier ? nomMois(dernier) : ''), tDernier ? eur(tDernier.resultat) : '<span class="nd">N/D</span>',
-          tDernier && tDernier.manquants.length ? incomplet(tDernier) :
-          (tDernier && tDernier.marge !== null ? 'Marge ' + fmtNb.format(tDernier.marge) + ' % · dernier mois importé' : 'Dernier mois importé')) +
-    tuile('Alertes', '<span class="' + (nbDep ? 'neg' : '') + '">' + (nbDep + nbUrg) + '</span>', nbDep + ' dépassée(s) · ' + nbUrg + ' urgente(s)');
+    caTuile +
+    tuile('Marge ' + (dernier ? nomMois(dernier) : ''), tD ? pct(tD.marge) : '<span class="nd">N/D</span>',
+          tD && tD.manquants.length ? incomplet(tD) : (tD && tA ? delta(tD.marge, tA.marge, 1, 'pts', 'vs ' + nomMois(avant)) : 'dernier mois importé')) +
+    tuile('Livraisons', liv.length ? fmtNb.format(nbLiv) : '<span class="nd">0</span>', delta(nbLiv, nbLivP, 1, '%', pref) || nomMois(P.mois)) +
+    tuile('Retards', tauxR === null ? '<span class="nd">N/D</span>' : fmtNb.format(tauxR) + ' %',
+          delta(tauxR, tauxRP, -1, 'pts', pref) || (nbLiv ? somme(liv, 'Nb_Retards') + ' sur ' + nbLiv + ' livraisons' : '')) +
+    tuile('Véhicules indisponibles', '<span class="' + (nbIndispo.length ? 'neg' : '') + '">' + nbIndispo.length + '</span>',
+          nbIndispo.length ? nbIndispo.map(function (c) { return txt(c.id + ' : ' + c.raison); }).join('<br>') : 'sur ' + indispo.length + ' véhicules') +
+    tuile('Factures en attente', fa.length, fmtEur.format(somme(fa, 'Montant_TTC')) + (echues.length ? ' · <span class="neg">' + echues.length + ' échue(s)</span>' : '')) +
+    tuile('Heures chauffeurs', hC.length ? fmtNb.format(somme(hC, 'Heures')) + ' h' : '<span class="nd">N/D</span>',
+          hC.length ? (delta(somme(hC, 'Heures'), somme(hP, 'Heures'), 0, '%', pref).replace(/delta (bien|mal)/, 'delta neutre') || nbChauffeurs + ' chauffeur(s)') : 'aucune saisie ce mois');
 
-  document.getElementById('prioritaires').innerHTML = listeAlertesHtml(al.slice(0, 8)) +
-    (al.length > 8 ? '<p class="note"><a href="#" onclick="afficherOnglet(\'alertes\');return false">Voir les ' + al.length + ' alertes</a></p>' : '');
+  rendreAttention(alertesFiltrees());
 
-  var derniers = mf.slice(-12);
-  var ca = [], ch = [];
+  var derniers = mf.slice(-12), ca = [], ch = [], marges = [];
   derniers.forEach(function (m) {
     var t = totauxFinances(fin.filter(function (l) { return l.Mois === m; }));
-    ca.push(t.ca); ch.push(t.charges);
+    ca.push(t.ca); ch.push(t.charges); marges.push(t.marge === null ? null : Math.round(t.marge * 10) / 10);
   });
   legende('legCaCharges', [['CA', css('--s1')], ['Charges', css('--s2')]]);
   dessiner('gCaCharges', { type: 'bar', data: { labels: derniers.map(nomMois), datasets: [
     barre('CA', ca, css('--s1')), barre('Charges', ch, css('--s2'))] }, options: optionsCommunes(false) });
+  var opt = optionsCommunes(false);
+  opt.scales.y.beginAtZero = false;
+  opt.scales.y.ticks.callback = function (v) { return fmtNb.format(v) + ' %'; };
+  opt.plugins.tooltip.callbacks = { label: function (c) { return ' Marge : ' + fmtNb.format(c.parsed.y) + ' %'; } };
+  dessiner('gMarge', { type: 'line', data: { labels: derniers.map(nomMois), datasets: [{ label: 'Marge', data: marges,
+    borderColor: css('--s1'), backgroundColor: css('--s1'), borderWidth: 2, pointRadius: 4, pointHoverRadius: 6,
+    pointBorderColor: css('--surface'), pointBorderWidth: 2, tension: 0, spanGaps: false }] }, options: opt });
+}
+
+function societeSalarie(nom) {
+  var s = D.SALARIES.filter(function (x) { return nomComplet(x) === nom; })[0];
+  return s ? s['Société'] : '';
+}
+
+// Bloc ATTENTION : une phrase par sujet, le détail se déplie au clic
+function rendreAttention(al) {
+  var par = {};
+  al.forEach(function (a) { (par[a.categorie || 'autre'] = par[a.categorie || 'autre'] || []).push(a); });
+  var pl = function (n, un, plusieurs) { return n + ' ' + (n > 1 ? plusieurs : un); };
+  var lignes = [];
+  var ajouter = function (liste, phrase) { if (liste && liste.length) lignes.push({ liste: liste, phrase: phrase }); };
+
+  var docs = par.documents || [];
+  var expires = docs.filter(function (a) { return a.niveau === 'depasse'; }).length, bientot = docs.length - expires;
+  ajouter(docs, expires && bientot ? pl(expires, 'document expiré', 'documents expirés') + ' et ' + pl(bientot, 'autre expire', 'autres expirent') + ' prochainement'
+    : expires ? pl(expires, 'document a expiré', 'documents ont expiré') : pl(bientot, 'document expire', 'documents expirent') + ' prochainement');
+  // Même décompte que la tuile : statut d'indisponibilité ou CT expiré
+  var indispo = indisponibles().filter(function (c) { return c.raison; }).map(function (c) {
+    return { niveau: c.raison === 'CT expiré' ? 'depasse' : 'urgent', message: c.id + ' : ' + c.raison };
+  });
+  ajouter(indispo, pl(indispo.length, 'véhicule est indisponible', 'véhicules sont indisponibles'));
+  ajouter(par.relances, (par.relances || []).length > 1 ? (par.relances.length + ' clients n\'ont pas été relancés') : '1 client n\'a pas été relancé');
+  (par.marge || []).filter(function (a) { return a.sujet === 'Marge en baisse'; }).forEach(function (a) { ajouter([a], a.message.split(' : ')[0]); });
+  var camions = (par.marge || []).filter(function (a) { return a.sujet !== 'Marge en baisse'; });
+  ajouter(camions, pl(camions.length, 'camion est en perte ou à marge faible', 'camions sont en perte ou à marge faible'));
+  ajouter(par.retards, (par.retards || [{}])[0].message);
+  ajouter(par.conso, pl((par.conso || []).length, 'camion consomme trop de carburant', 'camions consomment trop de carburant'));
+  ajouter(par.donnees, pl((par.donnees || []).length, 'donnée manque dans les finances', 'données manquent dans les finances'));
+
+  var ordre = { depasse: 0, urgent: 1, a_prevoir: 2 }, ico = { depasse: '⛔', urgent: '⚠️', a_prevoir: '🕒' };
+  lignes.forEach(function (l) { l.pire = l.liste.reduce(function (m, a) { return ordre[a.niveau] < ordre[m] ? a.niveau : m; }, 'a_prevoir'); });
+  lignes.sort(function (a, b) { return ordre[a.pire] - ordre[b.pire]; });
+  var grave = lignes.some(function (l) { return l.pire !== 'a_prevoir'; });
+  var bloc = document.getElementById('attention');
+  bloc.className = 'attention' + (!lignes.length ? ' calme' : grave ? '' : ' veille');
+  bloc.innerHTML = '<h2>' + (!lignes.length ? '🟢 Tout est en ordre' : grave ? '🔴 ATTENTION' : '🟠 À surveiller') + '</h2>' +
+    (lignes.length ? lignes.map(function (l) {
+      return '<details><summary><span class="ico" aria-label="' + NIVEAUX[l.pire][1] + '">' + ico[l.pire] + '</span><span>' + txt(l.phrase) + '</span></summary><div class="detail">' +
+        l.liste.map(function (a) { return '<div>' + badge(a.niveau) + ' ' + txt(a.message) + '</div>'; }).join('') + '</div></details>';
+    }).join('') : '<div class="vide">Aucun document qui expire, aucune relance en retard, aucune marge en baisse.</div>');
+}
+
+function rendreFactures() {
+  var fa = facturesEnAttente().slice().sort(function (a, b) { return String(a.Echeance) < String(b.Echeance) ? -1 : 1; });
+  var auj = aujourdhui(), jr = D.parametres.JOURS_RELANCE;
+  var echues = fa.filter(function (f) { return f.Echeance && f.Echeance < auj; });
+  var aRelancer = echues.filter(function (f) { return !f.Derniere_Relance || (new Date(auj) - new Date(f.Derniere_Relance)) / 86400000 >= jr; });
+  var clients = {}; aRelancer.forEach(function (f) { clients[f.Client] = 1; });
+  document.getElementById('tuilesFact').innerHTML = tuile('Factures en attente', fa.length, fmtEur.format(somme(fa, 'Montant_TTC'))) +
+    tuile('Dont échues', '<span class="' + (echues.length ? 'neg' : '') + '">' + echues.length + '</span>', fmtEur.format(somme(echues, 'Montant_TTC'))) +
+    tuile('Clients à relancer', Object.keys(clients).length, 'aucune relance depuis ' + jr + ' j');
+  var t = document.getElementById('tabFact');
+  t.innerHTML = '<thead><tr><th>N°</th><th>Client</th><th>Facturée le</th><th>Échéance</th><th class="n">Montant TTC</th><th>État</th><th>Dernière relance</th><th></th></tr></thead><tbody>' +
+    (fa.length ? fa.map(function (f) {
+      var j = f.Echeance ? Math.round((new Date(f.Echeance) - new Date(auj)) / 86400000) : null;
+      var etat = j === null ? '' : j < 0 ? badge(j < -45 ? 'depasse' : 'urgent', 'échue depuis ' + (-j) + ' j') : badge(j <= 7 ? 'a_prevoir' : 'ok', 'dans ' + j + ' j');
+      return '<tr><td>' + txt(f.N_Facture) + '</td><td>' + txt(f.Client) + '</td><td>' + dateFr(f.Date_Facture) + '</td><td>' + dateFr(f.Echeance) +
+        '</td><td class="n">' + eur(num(f.Montant_TTC)) + '</td><td>' + etat + '</td><td>' + (f.Derniere_Relance ? dateFr(f.Derniere_Relance) : '<span class="nd">jamais</span>') +
+        '</td><td><button class="petit" data-fact="' + txt(f.N_Facture) + '" data-action="relancee">Relancé</button> <button class="petit" data-fact="' + txt(f.N_Facture) + '" data-action="payee">Payée</button></td></tr>';
+    }).join('') : '<tr><td colspan="8" class="vide">Aucune facture en attente</td></tr>') + '</tbody>';
+  t.querySelectorAll('button[data-fact]').forEach(function (b) {
+    b.onclick = function () {
+      var msg = document.getElementById('msgFact');
+      if (!(window.google && google.script && google.script.run)) { msg.className = 'msg err'; msg.textContent = 'Mode démonstration : rien n\'est enregistré.'; return; }
+      b.disabled = true;
+      google.script.run.withSuccessHandler(function () { msg.className = 'msg ok'; msg.textContent = '✓ Facture ' + b.dataset.fact + ' mise à jour'; charger(); })
+        .withFailureHandler(function (e) { b.disabled = false; msg.className = 'msg err'; msg.textContent = e.message; })
+        .majFacture(b.dataset.fact, b.dataset.action);
+    };
+  });
 }
 
 function rendreFinances() {
@@ -570,13 +758,17 @@ var COL_SAL = [['Fin_Validite_Permis', 'Permis'], ['Fin_FIMO_FCO', 'FIMO / FCO']
 
 function rendreFlotte() {
   var lignes = D.FLOTTE.filter(function (c) { return garderSociete(c['Société']); }).map(function (c) {
-    return Object.assign({ _entete: [c.Camion_ID, c['Société'], c.Marque_Modele, c.Chauffeur_Attitre] }, c);
+    var st = String(c.Statut || '').trim(), dispo = !st || st.toLowerCase().indexOf('dispo') === 0;
+    return Object.assign({ _entete: [c.Camion_ID, c['Société'], c.Activite, c.Marque_Modele, c.Chauffeur_Attitre,
+      dispo ? '✓ ' + (st || 'Disponible') : '⚠ ' + st + (c.Indisponible_Jusqu_Au ? ' → ' + dateFr(c.Indisponible_Jusqu_Au) : '')] }, c);
   });
   var c = compteStatuts(lignes, COL_FLOTTE);
+  var nbI = indisponibles().filter(function (x) { return x.raison; }).length;
   document.getElementById('tuilesFlotte').innerHTML = tuile('Véhicules actifs', lignes.length) +
+    tuile('Indisponibles', '<span class="' + (nbI ? 'neg' : '') + '">' + nbI + '</span>') +
     tuile('Échéances dépassées', '<span class="' + (c.depasse ? 'neg' : '') + '">' + c.depasse + '</span>') +
     tuile('Sous ' + D.parametres.JOURS_PREAVIS + ' jours', c.urgent + c.a_prevoir) + tuile('Dates non renseignées', c.manquant);
-  tableEcheances('tabFlotte', lignes, COL_FLOTTE, ['Camion', 'Société', 'Modèle', 'Chauffeur']);
+  tableEcheances('tabFlotte', lignes, COL_FLOTTE, ['Camion', 'Société', 'Activité', 'Modèle', 'Chauffeur', 'Statut']);
 }
 
 function nomComplet(s) { return ((s['Prénom'] || '') + ' ' + (s.Nom || '')).trim(); }
