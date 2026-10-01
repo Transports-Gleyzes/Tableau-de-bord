@@ -260,7 +260,7 @@ button.petit { padding: 2px 8px; font-size: 12px; }
     </div>
     <div class="carte">
       <h2>CA par camion</h2>
-      <p class="note">Camion habituel du chauffeur (onglet CAMIONS_HABITUELS), sauf si un autre camion est tapé dans la colonne CAMION du planning</p>
+      <p class="note">Colonne CAMION des plannings (remplie automatiquement avec le camion habituel de l'onglet CAMIONS, modifiable à la main)</p>
       <div class="tableau"><table id="tabCamions"></table></div>
     </div>
     <div class="carte carbu">
@@ -721,12 +721,13 @@ function rendreAttention(al) {
   var camions = (par.marge || []).filter(function (a) { return a.sujet !== 'Marge en baisse'; });
   ajouter(camions, pl(camions.length, 'camion est en perte ou à marge faible', 'camions sont en perte ou à marge faible'));
   ajouter(par.retards, (par.retards || [{}])[0].message);
+  ajouter(par.ctroule, pl((par.ctroule || []).length, 'camion a roulé', 'camions ont roulé') + ' avec le contrôle technique expiré (' + (par.ctroule || []).map(function (a) { return a.objet; }).join(', ') + ')');
   ajouter(par.contrats, pl((par.contrats || []).length, 'contrat manquant', 'contrats manquants') + ' dans le planning Inter');
   ajouter(par.conso, (par.conso || []).length === 1 ? 'Le camion ' + par.conso[0].objet + ' consomme trop ces derniers temps'
     : pl((par.conso || []).length, 'camion consomme', 'camions consomment') + ' trop ces derniers temps (' + (par.conso || []).map(function (a) { return a.objet; }).join(', ') + ')');
   ajouter(par.taches, pl((par.taches || []).length, 'tâche du pense-bête arrive', 'tâches du pense-bête arrivent') + ' à échéance (' +
     (par.taches || []).map(function (a) { return a.objet; }).join(', ') + ')');
-  ajouter(par.donnees, pl((par.donnees || []).length, 'donnée manque dans les finances', 'données manquent dans les finances'));
+  ajouter(par.donnees, pl((par.donnees || []).length, 'donnée à compléter ou corriger', 'données à compléter ou corriger') + ' (plannings, finances)');
   ajouter(par.arenseigner, (par.arenseigner || [{}])[0].message);
 
   var ordre = { depasse: 0, urgent: 1, a_prevoir: 2 }, ico = { depasse: '⛔', urgent: '⚠️', a_prevoir: '🕒' };

@@ -39,7 +39,6 @@ var FEUILLES = {
   FACTURES: ['N_Facture', 'Client', 'Date_Facture', 'Echeance', 'Montant_TTC', 'Statut', 'Date_Paiement',
              'Derniere_Relance', 'Remarque'],
   HEURES: ['Date', 'Salarié', 'Heures', 'Remarque'],
-  CAMIONS_HABITUELS: ['Chauffeur', 'Camion_Habituel', 'Depuis_Le', 'Activite', 'Remarque'],
   JOURNAL_ALERTES: ['Date_Envoi', 'Clé', 'Niveau', 'Message']
 };
 
@@ -57,7 +56,7 @@ var COLONNES_DATE = {
   FLOTTE: ['Prochain_CT', 'Prochain_Entretien', 'Echeance_Assurance', 'Controle_Tachygraphe', 'Indisponible_Jusqu_Au'],
   SALARIES: ['Fin_Validite_Permis', 'Fin_FIMO_FCO', 'Prochaine_Visite_Medicale', 'Fin_Carte_Conducteur', 'Date_Formation'],
   FACTURES: ['Date_Facture', 'Echeance', 'Date_Paiement', 'Derniere_Relance'],
-  HEURES: ['Date'], LIVRAISONS: ['Date'], CARBURANT: ['Date'], ABSENCES: ['Début', 'Fin'], CAMIONS_HABITUELS: ['Depuis_Le']
+  HEURES: ['Date'], LIVRAISONS: ['Date'], CARBURANT: ['Date'], ABSENCES: ['Début', 'Fin']
 };
 
 var PARAMETRES_DEFAUT = [
@@ -100,6 +99,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Importer les finances depuis Drive', 'importerFinancesManuel')
     .addItem('Vérifier les alertes et envoyer le mail maintenant', 'verifierAlertesManuel')
+    .addItem('Remplir la colonne CAMION des plannings', 'preparerCamionsManuel')
     .addToUi();
 }
 
@@ -159,7 +159,7 @@ function installer() {
   });
   var synchro = '';
   try {
-    synchro = synchroniserReferentiels_(ss) + completerCamionsHabituels_(ss);
+    synchro = synchroniserReferentiels_(ss) + preparerCamionsPlannings_(ss);
   } catch (e) {
     synchro = '\n\nTableau « Échéances flotte » illisible : ' + e.message;
   }
@@ -181,6 +181,7 @@ function installerDeclencheurs() {
 
 function tacheQuotidienne() {
   try { importerFinances(false); } catch (e) { console.error('Import finances : ' + e); }
+  try { preparerCamionsPlannings_(classeur_()); } catch (e) { console.error('Colonne CAMION : ' + e); }
   verifierAlertes(false);
 }
 
@@ -494,6 +495,7 @@ function calculerAlertes_(ss, aujourdhui) {
 
   // 8. Plannings et litrages (Google Sheets reliés) : une erreur de lecture ne bloque pas les autres alertes
   try { alertes = alertes.concat(alertesPlannings_(plannings_(ss), jour0)); } catch (e) { console.warn('Plannings : ' + e); }
+  try { alertes = alertes.concat(alertesCamionsPlannings_(ss, plannings_(ss), jour0)); } catch (e) { console.warn('Camions des plannings : ' + e); }
   try {
     alertes = alertes.concat(alertesConsoHebdo_(litrages_(ss), jour0, nombre_(p.SEUIL_CONSO_L100, 38), nombre_(p.SEUIL_HAUSSE_CONSO_PCT, 15),
       Math.max(1, nombre_(p.NB_SEMAINES_CONSO, 2))));
@@ -688,7 +690,7 @@ function plannings_(ss) {
     if (!ext) return;
     ext.getSheets().forEach(function (sh) {
       var nom = cle_(sh.getName());
-      if (/^CA\b|TARIF|COMPARATIF|RECAP/.test(nom)) return;
+      if (/^CA\b|TARIF|COMPARATIF|RECAP|CAMIONS/.test(nom)) return;
       if (!Object.keys(MOIS_ONGLETS).some(function (m) { return nom.indexOf(m) >= 0; })) return;
       if (sh.getLastRow() < 2) return;
       var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
@@ -744,59 +746,233 @@ function plannings_(ss) {
   return res;
 }
 
+// ---------------------------------------------------------------------------
+// Colonne CAMION des plannings : remplie automatiquement, modifiable à la main
+// ---------------------------------------------------------------------------
+var SOURCES_PLANNING = [['ID_PLANNING_INTER', 'Inter'], ['ID_PLANNING_CARBURANT', 'Carburant']];
+
+/** Mois / année d'un onglet mensuel (« SEPTEMBRE 2026 », « AOUT ») ; null pour les onglets CA, TARIFS… */
+function moisOnglet_(nomOnglet) {
+  var nom = cle_(nomOnglet);
+  if (/^CA\b|TARIF|COMPARATIF|RECAP|CAMIONS/.test(nom)) return null;
+  var m = Object.keys(MOIS_ONGLETS).filter(function (x) { return nom.indexOf(x) >= 0; })[0];
+  if (!m) return null;
+  var an = (nom.match(/(20\d\d)/) || [])[1];
+  return { mois: MOIS_ONGLETS[m], an: an ? +an : null };
+}
+
+/** Ligne d'en-tête (0-based) et colonnes utiles d'un onglet mensuel de planning. */
+function structurePlanning_(v) {
+  for (var i = 0; i < Math.min(6, v.length); i++) {
+    var h = v[i].map(cle_);
+    var ch = -1, cam = -1, dt = -1;
+    h.forEach(function (x, k) {
+      if (ch < 0 && x.indexOf('CHAUFFEUR') === 0) ch = k;
+      if (cam < 0 && /^(CAMION|VEHICULE|IMMAT|TRACTEUR)/.test(x)) cam = k;
+      if (dt < 0 && (x === 'DATE' || x === 'DATES')) dt = k;
+    });
+    if (ch >= 0 && h.some(function (x) { return x.indexOf('SOCIETE') === 0; })) return { entete: i, chauffeur: ch, camion: cam, date: Math.max(0, dt) };
+  }
+  return null;
+}
+
+/** Immatriculation connue qui ne diffère que d'un caractère (faute de frappe probable), s'il n'y en a qu'une. */
+function procheConnue_(p, connues) {
+  var c = Object.keys(connues).filter(function (k) { return k.length === p.length && k.split('').filter(function (ch, i) { return ch !== p[i]; }).length === 1; });
+  return c.length === 1 ? c[0] : null;
+}
+
+function colonneLettre_(n) { var s = ''; while (n > 0) { var r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); } return s; }
+
+/** Onglet CAMIONS d'un planning : nom du chauffeur (normalisé) -> immatriculation. */
+function habituelsPlanning_(ext) {
+  var sh = ext.getSheetByName('CAMIONS'), res = {};
+  if (!sh || sh.getLastRow() < 2) return res;
+  sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (l) { if (l[0] && l[1]) res[cle_(l[0])] = plaque_(l[1]); });
+  return res;
+}
+
+function immatsConnues_(ss) {
+  var connues = {};
+  var shF = ss.getSheetByName('FLOTTE');
+  if (shF) lireTable_(shF).forEach(function (l) { if (l.Camion_ID) connues[plaque_(l.Camion_ID)] = 1; });
+  try { echeances_(ss).forEach(function (e) { if (e.domaine === 'Flotte') connues[e.nom] = 1; }); } catch (e) { /* tableau non relié */ }
+  return connues;
+}
+
+function preparerCamionsManuel() {
+  var msg = preparerCamionsPlannings_(classeur_());
+  SpreadsheetApp.getUi().alert(msg ? msg.trim() : 'Renseignez d\'abord ID_PLANNING_INTER et ID_PLANNING_CARBURANT dans PARAMETRES.');
+}
+
 /**
- * Camion de chaque ligne de planning : celui tapé dans la colonne CAMION du planning s'il y en a un (changement
- * ponctuel), sinon le camion habituel du chauffeur (onglet CAMIONS_HABITUELS, ligne « Depuis_Le » la plus récente
- * antérieure à la date ; une Activite renseignée limite la règle à Inter ou Carburant).
+ * Pour chaque planning (Inter, Carburant) :
+ *  1. crée / complète l'onglet CAMIONS (chauffeur -> camion habituel), proposé d'après le camion le plus utilisé ;
+ *  2. dans les onglets du mois en cours et des mois suivants, ajoute la colonne CAMION (après CHAUFFEUR) si besoin
+ *     et met dans chaque case vide une formule qui va chercher le camion habituel du chauffeur ;
+ *  3. fige les jours passés (formule remplacée par sa valeur) : changer plus tard le camion habituel ne réécrit pas l'historique.
+ * Une case où un camion a été tapé à la main n'est jamais modifiée.
+ */
+function preparerCamionsPlannings_(ss) {
+  var auj = minuit_(new Date()), courant = auj.getFullYear() * 12 + auj.getMonth() + 1;
+  var connues = immatsConnues_(ss), msgs = [];
+  SOURCES_PLANNING.forEach(function (src) {
+    var ext = classeurParam_(ss, src[0]);
+    if (!ext) return;
+    var onglets = ext.getSheets().map(function (sh) { var m = moisOnglet_(sh.getName()); return m ? { sh: sh, mois: m.mois, an: m.an } : null; })
+      .filter(Boolean).map(function (o) {
+        if (!o.an) o.an = auj.getFullYear();
+        o.rang = o.an * 12 + o.mois;
+        return o;
+      });
+
+    // 1. Onglet CAMIONS, proposé d'après les camions déjà saisis (plus récents d'abord)
+    var shC = ext.getSheetByName('CAMIONS');
+    if (!shC) {
+      shC = ext.insertSheet('CAMIONS');
+      shC.getRange(1, 1, 1, 3).setValues([['CHAUFFEUR', 'CAMION HABITUEL', 'REMARQUE']]).setFontWeight('bold');
+      shC.setFrozenRows(1);
+    }
+    var habituels = habituelsPlanning_(ext);
+    var recents = {}, vus = {};
+    onglets.filter(function (o) { return o.rang >= courant - 3 && o.rang <= courant; }).forEach(function (o) {
+      if (o.sh.getLastRow() < 2) return;
+      var v = o.sh.getRange(1, 1, o.sh.getLastRow(), o.sh.getLastColumn()).getValues(), st = structurePlanning_(v);
+      if (!st) return;
+      v.slice(st.entete + 1).forEach(function (l) {
+        var ch = cle_(l[st.chauffeur]);
+        if (!ch) return;
+        vus[ch] = 1;
+        var cam = st.camion >= 0 ? plaque_(l[st.camion]) : '';
+        if (cam && !connues[cam]) cam = procheConnue_(cam, connues) || '';   // GB042ZC -> GD042ZC
+        var dt = l[st.date] instanceof Date ? l[st.date] : dateDepuisTexte_(l[st.date]);
+        if (cam && dt) (recents[ch] = recents[ch] || []).push({ dt: dt, cam: cam });
+      });
+    });
+    // Proposition : camion le plus utilisé sur les 10 dernières lignes du chauffeur (suit un changement récent)
+    var proposition = function (ch) {
+      var l = (recents[ch] || []).sort(function (a, b) { return a.dt - b.dt; }).slice(-10), f = {};
+      l.forEach(function (x) { f[x.cam] = (f[x.cam] || 0) + 1; });
+      return Object.keys(f).sort(function (a, b) { return f[b] - f[a]; })[0] || '';
+    };
+    var lignesC = shC.getLastRow() > 1 ? shC.getRange(2, 1, shC.getLastRow() - 1, 3).getValues() : [];
+    var dejaListes = lignesC.map(function (l) { return cle_(l[0]); });
+    // Chauffeurs déjà listés mais sans camion : on complète la case vide avec la proposition
+    var complete = false;
+    lignesC.forEach(function (l) {
+      if (l[0] && !String(l[1]).trim()) { var pr = proposition(cle_(l[0])); if (pr) { l[1] = pr; l[2] = 'proposé : camion le plus utilisé récemment'; complete = true; } }
+    });
+    if (complete) shC.getRange(2, 1, lignesC.length, 3).setValues(lignesC);
+    var ajouts = Object.keys(vus).filter(function (ch) { return !habituels[ch] && dejaListes.indexOf(ch) < 0; }).sort().map(function (ch) {
+      var best = proposition(ch);
+      return [ch, best, best ? 'proposé : camion le plus utilisé récemment' : 'à compléter'];
+    });
+    if (ajouts.length) shC.getRange(shC.getLastRow() + 1, 1, ajouts.length, 3).setValues(ajouts);
+
+    // 2. et 3. Colonne CAMION : formules sur le mois en cours et les suivants, valeurs figées pour les jours passés
+    var nbFormules = 0, nbFiges = 0, nbColonnes = 0;
+    onglets.filter(function (o) { return o.rang >= courant - 1; }).forEach(function (o) {
+      var sh = o.sh;
+      if (sh.getLastRow() < 1) return;
+      var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues(), st = structurePlanning_(v);
+      if (!st) return;
+      if (st.camion < 0) {
+        if (o.rang < courant) return;   // on n'ajoute pas de colonne dans un mois terminé
+        sh.insertColumnAfter(st.chauffeur + 1);
+        sh.getRange(st.entete + 1, st.chauffeur + 2).setValue('CAMION').setFontWeight('bold');
+        st.camion = st.chauffeur + 1;
+        if (st.date > st.chauffeur) st.date++;
+        nbColonnes++;
+        v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+      }
+      // Formules sur les lignes existantes, et au moins 300 lignes d'avance pour un mois qui commence
+      var n = Math.min(sh.getMaxRows(), Math.max(sh.getLastRow(), o.rang >= courant ? st.entete + 1 + 300 : 0)) - st.entete - 1;
+      if (n <= 0) return;
+      var rng = sh.getRange(st.entete + 2, st.camion + 1, n, 1);
+      var formules = rng.getFormulas(), valeurs = rng.getValues(), lettre = colonneLettre_(st.chauffeur + 1), change = false;
+      var sortie = valeurs.map(function (x, i) {
+        var ligne = v[st.entete + 1 + i] || [], r = st.entete + 2 + i;
+        if (x[0] === undefined) x = [''];
+        var dt = ligne[st.date] instanceof Date ? ligne[st.date] : dateDepuisTexte_(ligne[st.date]);
+        var aChauffeur = String(ligne[st.chauffeur] || '').trim() !== '';
+        if (formules[i][0]) {
+          if (dt && minuit_(dt) < auj && aChauffeur) { change = true; nbFiges++; return [x[0]]; }   // jour passé : on fige
+          return [formules[i][0]];
+        }
+        if (String(x[0]).trim() !== '') return [x[0]];                                           // saisi à la main : on ne touche pas
+        if (o.rang < courant) return [x[0]];                                                     // mois terminé : pas de nouvelle formule
+        change = true; nbFormules++;
+        return ['=IF(TRIM(' + lettre + r + ')="","",IFERROR(VLOOKUP(TRIM(' + lettre + r + '),CAMIONS!$A:$B,2,FALSE),""))'];
+      });
+      if (change) rng.setValues(sortie);
+    });
+    msgs.push('Planning ' + src[1] + ' : ' + (ajouts.length ? ajouts.length + ' chauffeur(s) ajouté(s) dans l\'onglet CAMIONS, ' : '') +
+      (nbColonnes ? nbColonnes + ' colonne(s) CAMION ajoutée(s), ' : '') + nbFormules + ' case(s) CAMION automatisée(s), ' + nbFiges + ' jour(s) passé(s) figé(s).');
+  });
+  return msgs.length ? '\n\n' + msgs.join('\n') : '';
+}
+
+/**
+ * Camion de chaque ligne de planning : celui de la colonne CAMION (formule ou saisie), sinon le camion habituel du
+ * chauffeur (onglet CAMIONS du planning, ou à défaut l'ancien onglet CAMIONS_HABITUELS du tableau de bord).
+ * camionSource = 'habituel' si c'est le camion habituel, 'planning' si un autre camion a été tapé (changement).
  */
 function attribuerCamions_(ss, lignes) {
-  var sh = ss.getSheetByName('CAMIONS_HABITUELS');
-  var regles = (sh ? lireTable_(sh) : []).filter(function (r) { return r.Chauffeur && r.Camion_Habituel; }).map(function (r) {
-    var d = r.Depuis_Le instanceof Date ? r.Depuis_Le : dateDepuisTexte_(r.Depuis_Le);
-    return { chauffeur: String(r.Chauffeur), camion: plaque_(r.Camion_Habituel), depuis: d, activite: cle_(r.Activite) };
+  var habituels = {};
+  SOURCES_PLANNING.forEach(function (src) {
+    try { var ext = classeurParam_(ss, src[1] === 'Inter' ? 'ID_PLANNING_INTER' : 'ID_PLANNING_CARBURANT'); if (ext) habituels[src[1]] = habituelsPlanning_(ext); }
+    catch (e) { habituels[src[1]] = {}; }
   });
+  var sh = ss.getSheetByName('CAMIONS_HABITUELS');
+  var anciens = (sh ? lireTable_(sh) : []).filter(function (r) { return r.Chauffeur && r.Camion_Habituel; });
   lignes.forEach(function (l) {
-    if (l.camionSaisi) { l.camion = l.camionSaisi; l.camionSource = 'planning'; return; }
-    var meilleure = null;
-    regles.forEach(function (r) {
-      if (!memePersonne_(r.chauffeur, l.chauffeur)) return;
-      if (r.activite && cle_(l.activite).indexOf(r.activite) !== 0 && r.activite.indexOf(cle_(l.activite)) !== 0) return;
-      if (r.depuis && r.depuis > l.date) return;
-      if (!meilleure || (r.depuis || 0) >= (meilleure.depuis || 0)) meilleure = r;
-    });
-    l.camion = meilleure ? meilleure.camion : '';
-    l.camionSource = meilleure ? 'habituel' : '';
+    var ch = cle_(l.chauffeur), h = habituels[l.activite] || {};
+    var hab = h[ch] || (Object.keys(h).filter(function (k) { return memePersonne_(k, ch); }).map(function (k) { return h[k]; })[0]) ||
+      (anciens.filter(function (r) { return memePersonne_(r.Chauffeur, ch); }).map(function (r) { return plaque_(r.Camion_Habituel); })[0]) || '';
+    if (l.camionSaisi) { l.camion = l.camionSaisi; l.camionSource = l.camionSaisi === hab ? 'habituel' : 'planning'; }
+    else { l.camion = hab; l.camionSource = hab ? 'habituel' : ''; }
   });
 }
 
-/** Ajoute dans CAMIONS_HABITUELS chaque chauffeur des plannings qui n'y figure pas encore (camion à remplir). */
-function completerCamionsHabituels_(ss) {
-  var sh = ss.getSheetByName('CAMIONS_HABITUELS');
-  if (!sh) return '';
-  CACHE_PLANNINGS_ = null;
-  var lignes = plannings_(ss);
-  var connus = lireTable_(sh).map(function (r) { return String(r.Chauffeur || ''); });
-  var nouveaux = {};
+/**
+ * Contrôles sur les camions des plannings (60 derniers jours) :
+ *  - immatriculation inconnue (ni dans FLOTTE ni dans le tableau des échéances), avec la correction probable ;
+ *  - camion utilisé alors que son contrôle technique était expiré.
+ */
+function alertesCamionsPlannings_(ss, lignes, jour0) {
+  var depuis = new Date(jour0.getTime() - 60 * 86400000), res = [];
+  var connues = immatsConnues_(ss), ct = {};
+  try {
+    echeances_(ss).forEach(function (e) { if (e.domaine === 'Flotte' && e.date && /CONTROLE TECHNIQUE/.test(cle_(e.document))) ct[e.nom] = e.date; });
+  } catch (e) { /* tableau non relié */ }
+  var inconnues = {}, roule = {};
   lignes.forEach(function (l) {
-    var n = cle_(l.chauffeur);
-    if (!n || connus.some(function (c) { return memePersonne_(c, n); })) return;
-    var k = Object.keys(nouveaux).filter(function (x) { return memePersonne_(x, n); })[0] || n;
-    var x = nouveaux[k] = nouveaux[k] || { act: {}, nb: 0 };
-    x.act[l.activite] = 1; x.nb++;
+    if (!l.camion || l.date < depuis || l.date > jour0) return;
+    if (Object.keys(connues).length && !connues[l.camion]) {
+      var x = inconnues[l.camion] = inconnues[l.camion] || { n: 0, act: {}, ch: {} };
+      x.n++; x.act[l.activite] = 1; x.ch[cle_(l.chauffeur)] = 1;
+    }
+    if (ct[l.camion] && l.date > ct[l.camion]) {
+      var y = roule[l.camion] = roule[l.camion] || { n: 0, ch: {}, der: l.date };
+      y.n++; y.ch[cle_(l.chauffeur)] = 1; if (l.date > y.der) y.der = l.date;
+    }
   });
-  var noms = Object.keys(nouveaux).sort();
-  if (noms.length) {
-    sh.getRange(sh.getLastRow() + 1, 1, noms.length, 5).setValues(noms.map(function (n) {
-      return [n, '', '', Object.keys(nouveaux[n].act).length === 1 ? Object.keys(nouveaux[n].act)[0] : '', nouveaux[n].nb + ' ligne(s) de planning'];
-    }));
-  }
-  // Liste déroulante des immatriculations de FLOTTE dans la colonne Camion_Habituel
-  var shF = ss.getSheetByName('FLOTTE');
-  if (shF && shF.getLastRow() > 1) {
-    sh.getRange(2, 2, sh.getMaxRows() - 1, 1).setDataValidation(SpreadsheetApp.newDataValidation()
-      .requireValueInRange(shF.getRange(2, 1, shF.getLastRow() - 1, 1), true).setAllowInvalid(true).build());
-  }
-  return noms.length ? '\n\n' + noms.length + ' chauffeur(s) des plannings ajouté(s) dans CAMIONS_HABITUELS : indiquez leur camion habituel.' : '';
+  Object.keys(inconnues).forEach(function (p) {
+    var x = inconnues[p];
+    var proche = procheConnue_(p, connues);
+    res.push({ niveau: 'urgent', categorie: 'donnees', domaine: 'Plannings', objet: p, sujet: 'Immatriculation inconnue',
+      message: 'Immatriculation inconnue « ' + p + ' » dans le planning ' + Object.keys(x.act).join(' et ') + ' (' + x.n + ' ligne(s), ' +
+        Object.keys(x.ch).join(', ') + ')' + (proche ? ' : faute de frappe pour ' + proche + ' ?' : ''),
+      cle: 'IMMAT_INCONNUE|' + p });
+  });
+  Object.keys(roule).forEach(function (p) {
+    var y = roule[p];
+    res.push({ niveau: 'depasse', categorie: 'ctroule', domaine: 'Flotte', objet: p, sujet: 'Roule avec CT expiré',
+      message: p + ' a roulé ' + y.n + ' fois avec le contrôle technique expiré (depuis le ' + Utilities.formatDate(ct[p], FUSEAU, 'dd/MM/yyyy') +
+        ', dernière fois le ' + Utilities.formatDate(y.der, FUSEAU, 'dd/MM/yyyy') + ', ' + Object.keys(y.ch).join(', ') + ')',
+      cle: 'CT_ROULE|' + p + '|' + Utilities.formatDate(y.der, FUSEAU, 'yyyy-MM-dd') });
+  });
+  return res;
 }
 
 /** Contrats manquants (Inter) et livraisons sans prix (Carburant) des 60 derniers jours. */
@@ -819,7 +995,7 @@ function alertesPlannings_(lignes, jour0) {
   lignes.forEach(function (l) { if (l.date >= depuis && l.date <= jour0 && !l.camion && l.chauffeur) sansCamion[cle_(l.chauffeur)] = 1; });
   if (Object.keys(sansCamion).length) {
     res.push({ niveau: 'a_prevoir', categorie: 'donnees', domaine: 'Plannings', objet: '', sujet: 'Camion habituel manquant',
-      message: Object.keys(sansCamion).length + ' chauffeur(s) du planning sans camion habituel (' + Object.keys(sansCamion).sort().join(', ') + ') : à remplir dans CAMIONS_HABITUELS',
+      message: Object.keys(sansCamion).length + ' chauffeur(s) du planning sans camion (' + Object.keys(sansCamion).sort().join(', ') + ') : à compléter dans l\'onglet CAMIONS du planning',
       cle: 'SANSCAMION|' + Object.keys(sansCamion).sort().join(',') });
   }
   Object.keys(sansPrix).forEach(function (k) {
