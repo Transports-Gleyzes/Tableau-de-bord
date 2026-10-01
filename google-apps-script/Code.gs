@@ -11,6 +11,9 @@
  *  - verifierAlertes()          : calcule les alertes et envoie le mail (déclencheur quotidien).
  *  - importerFinances()         : importe FINANCES_EXPORT.csv (produit par exporter_finances_csv.py).
  *
+ * Si PARAMETRES > ID_CLASSEUR_ECHEANCES contient le lien du Google Sheet « Échéances flotte », ses onglets
+ * « Toutes les échéances », « CONGES… » et « Pense-bête mensuel » sont lus directement (rien n'est recopié).
+ *
  * Principe repris de maj_mensuelle_flotte.py : ne jamais inventer un 0.
  * Une cellule vide reste vide et s'affiche « N/D » sur le site.
  */
@@ -24,7 +27,7 @@ var FEUILLES = {
              'Entretien', 'Charges_Fixes', 'Charges_Mutualisees'],
   FLOTTE: ['Camion_ID', 'Société', 'Marque_Modele', 'Chauffeur_Attitre', 'Prochain_CT',
            'Prochain_Entretien', 'Echeance_Assurance', 'Controle_Tachygraphe', 'Actif', 'Remarques',
-           'Activite', 'Statut', 'Indisponible_Jusqu_Au'],
+           'Activite', 'Statut', 'Indisponible_Jusqu_Au', 'Type'],
   SALARIES: ['Nom', 'Prénom', 'Société', 'Poste', 'Fin_Validite_Permis', 'Fin_FIMO_FCO',
              'Prochaine_Visite_Medicale', 'Fin_Carte_Conducteur', 'Formation_A_Prevoir',
              'Date_Formation', 'Actif', 'Remarques'],
@@ -56,6 +59,7 @@ var COLONNES_DATE = {
 
 var PARAMETRES_DEFAUT = [
   ['EMAIL_ALERTES', '', 'Adresse(s) qui reçoivent les alertes, séparées par des virgules'],
+  ['ID_CLASSEUR_ECHEANCES', '', 'Lien du Google Sheet « Échéances flotte » : échéances, congés et pense-bête y sont lus directement'],
   ['JOURS_PREAVIS', 30, 'Une échéance passe « à prévoir » ce nombre de jours avant la date'],
   ['JOURS_URGENT', 7, 'Une échéance passe « urgente » ce nombre de jours avant la date'],
   ['SEUIL_MARGE_PCT', 5, 'Alerte si la marge d\'un camion sur le dernier mois est sous ce % (négatif = urgent)'],
@@ -145,8 +149,14 @@ function installer() {
         SpreadsheetApp.newDataValidation().requireValueInList(listes[nom][col], true).setAllowInvalid(true).build());
     });
   });
+  var synchro = '';
   try {
-    SpreadsheetApp.getUi().alert('Onglets prêts. Remplissez FLOTTE et SALARIES, puis activez les envois automatiques (menu Tableau de bord > 2).');
+    synchro = synchroniserReferentiels_(ss);
+  } catch (e) {
+    synchro = '\n\nTableau « Échéances flotte » illisible : ' + e.message;
+  }
+  try {
+    SpreadsheetApp.getUi().alert('Onglets prêts.' + synchro + '\n\nComplétez FLOTTE (Société, Activite, Statut) et SALARIES (Société), puis activez les envois automatiques (menu Tableau de bord > 2).');
   } catch (e) { /* lancé hors interface */ }
 }
 
@@ -187,6 +197,16 @@ function getDonnees() {
   d.FINANCES.forEach(function (l) { l.Mois = moisTexte_(l.Mois); });
   d.FLOTTE = d.FLOTTE.filter(estActif_);
   d.SALARIES = d.SALARIES.filter(estActif_);
+  try {
+    d.ECHEANCES = echeances_(ss).map(function (e) {
+      return { categorie: e.categorie, domaine: e.domaine, nom: e.nom, document: e.document, periodicite: e.periodicite,
+        echeance: e.date ? Utilities.formatDate(e.date, FUSEAU, 'yyyy-MM-dd') : '' };
+    });
+    d.ABSENCES = d.ABSENCES.concat(absencesExternes_(ss).map(serialiser_));
+  } catch (e) {
+    d.ECHEANCES = d.ECHEANCES || [];
+    d.erreurEcheances = 'Tableau « Échéances flotte » illisible : ' + e.message;
+  }
   var params = lireParametres_();
   d.parametres = {
     JOURS_PREAVIS: nombre_(params.JOURS_PREAVIS, 30),
@@ -194,7 +214,8 @@ function getDonnees() {
     SEUIL_MARGE_PCT: nombre_(params.SEUIL_MARGE_PCT, 5),
     SEUIL_CONSO_L100: nombre_(params.SEUIL_CONSO_L100, 38),
     JOURS_RELANCE: nombre_(params.JOURS_RELANCE, 15),
-    SEUIL_RETARDS_PCT: nombre_(params.SEUIL_RETARDS_PCT, 5)
+    SEUIL_RETARDS_PCT: nombre_(params.SEUIL_RETARDS_PCT, 5),
+    sourceEcheances: !!String(params.ID_CLASSEUR_ECHEANCES || '').trim()
   };
   d.alertes = calculerAlertes_(ss, new Date());
   d.genereLe = Utilities.formatDate(new Date(), FUSEAU, "dd/MM/yyyy 'à' HH:mm");
@@ -245,6 +266,14 @@ function ajouterSaisie(type, objet) {
   verrou.waitLock(10000);
   try {
     var sh = ss.getSheetByName(type);
+    var conges = type === 'ABSENCES' ? ongletExterne_(ss, /CONGE/) : null;
+    if (conges) {
+      // Les absences vont dans l'onglet CONGES du tableau « Échéances flotte », là où elles sont déjà suivies
+      var correspondance = { CHAUFFEUR: 'Salarié', SALARIE: 'Salarié', TYPE: 'Type', DEBUT: 'Début', FIN: 'Fin', COMMENTAIRE: 'Remarque', REMARQUE: 'Remarque' };
+      var entetesC = conges.getRange(1, 1, 1, conges.getLastColumn()).getValues()[0];
+      conges.appendRow(entetesC.map(function (h) { var k = correspondance[cle_(h)]; return k ? ligneObj[k] : ''; }));
+      return true;
+    }
     var entetes = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
     sh.appendRow(entetes.map(function (h) { return ligneObj.hasOwnProperty(h) ? ligneObj[h] : ''; }));
   } finally {
@@ -294,33 +323,28 @@ function calculerAlertes_(ss, aujourdhui) {
   var jour0 = minuit_(aujourdhui);
   var alertes = [];
 
-  // 1. Échéances flotte et salariés
-  [['FLOTTE', 'Flotte'], ['SALARIES', 'Salariés']].forEach(function (f) {
-    var sh = ss.getSheetByName(f[0]);
-    if (!sh) return;
-    lireTable_(sh).filter(estActif_).forEach(function (l) {
-      var objet = f[0] === 'FLOTTE'
-        ? l.Camion_ID + (l['Société'] ? ' (' + l['Société'] + ')' : '')
-        : ((l['Prénom'] || '') + ' ' + (l.Nom || '')).trim();
-      if (!objet) return;
-      ECHEANCES[f[0]].forEach(function (e) {
-        var dt = l[e[0]] instanceof Date ? l[e[0]] : dateDepuisTexte_(l[e[0]]);
-        if (!dt) return;
-        var jours = Math.round((minuit_(dt) - jour0) / 86400000);
-        if (jours > preavis) return;
-        var niveau = jours < 0 ? 'depasse' : (jours <= urgent ? 'urgent' : 'a_prevoir');
-        var quand = jours < 0 ? 'dépassé depuis ' + (-jours) + ' j'
-          : (jours === 0 ? 'aujourd\'hui' : 'dans ' + jours + ' j');
-        var libelle = e[1] + (e[0] === 'Date_Formation' && l.Formation_A_Prevoir ? ' (' + l.Formation_A_Prevoir + ')' : '');
-        alertes.push({
-          niveau: niveau, categorie: 'documents', domaine: f[1], objet: objet, sujet: libelle, jours: jours,
-          date: Utilities.formatDate(dt, FUSEAU, 'dd/MM/yyyy'),
-          message: libelle + ' — ' + objet + ' : ' + Utilities.formatDate(dt, FUSEAU, 'dd/MM/yyyy') + ' (' + quand + ')',
-          cle: f[0] + '|' + objet + '|' + e[0] + '|' + Utilities.formatDate(dt, FUSEAU, 'yyyy-MM-dd')
-        });
-      });
+  // 1. Échéances : documents des véhicules, des chauffeurs et de l'entreprise
+  var aRenseigner = 0;
+  echeances_(ss).forEach(function (e) {
+    if (!e.date) { aRenseigner++; return; }
+    var jours = Math.round((minuit_(e.date) - jour0) / 86400000);
+    if (jours > preavis) return;
+    var niveau = jours < 0 ? 'depasse' : (jours <= urgent ? 'urgent' : 'a_prevoir');
+    var quand = jours < 0 ? 'dépassé depuis ' + (-jours) + ' j' : (jours === 0 ? 'aujourd\'hui' : 'dans ' + jours + ' j');
+    var dateTxt = Utilities.formatDate(e.date, FUSEAU, 'dd/MM/yyyy');
+    alertes.push({
+      niveau: niveau, categorie: 'documents', domaine: e.domaine, objet: e.nom, sujet: e.document, jours: jours, date: dateTxt,
+      message: e.document + ' — ' + e.nom + ' : ' + dateTxt + ' (' + quand + ')',
+      cle: 'ECH|' + e.nom + '|' + e.document + '|' + Utilities.formatDate(e.date, FUSEAU, 'yyyy-MM-dd')
     });
   });
+  if (aRenseigner) {
+    alertes.push({ niveau: 'a_prevoir', categorie: 'arenseigner', domaine: 'Échéances', objet: '', sujet: 'Dates manquantes',
+      message: aRenseigner + ' date(s) de contrôle à renseigner dans le tableau des échéances', cle: 'ARENSEIGNER' });
+  }
+
+  // 1 bis. Pense-bête mensuel (TVA, péages…) : rappel 7 jours avant la date du mois
+  alertes = alertes.concat(taches_(ss, jour0));
 
   // 2. Finances : dernier mois importé
   var shF = ss.getSheetByName('FINANCES');
@@ -491,6 +515,154 @@ function estIndisponible_(statut) {
 function factureEnAttente_(statut) {
   var s = String(statut || '').trim().toLowerCase();
   return s.indexOf('pay') !== 0 && s !== 'réglée' && s !== 'reglee' && s !== 'annulée' && s !== 'annulee';
+}
+
+// ---------------------------------------------------------------------------
+// Tableau « Échéances flotte » (Google Sheet séparé, lu directement)
+// ---------------------------------------------------------------------------
+var CACHE_EXTERNE_ = {};
+
+function classeurEcheances_(ss) {
+  var v = String(lireParametres_(ss).ID_CLASSEUR_ECHEANCES || '').trim();
+  if (!v) return null;
+  var m = v.match(/\/d\/([a-zA-Z0-9_-]{20,})/);
+  var id = m ? m[1] : v;
+  if (!CACHE_EXTERNE_[id]) CACHE_EXTERNE_[id] = SpreadsheetApp.openById(id);
+  return CACHE_EXTERNE_[id];
+}
+
+/** Premier onglet du tableau « Échéances flotte » dont le nom (sans accents, en majuscules) correspond au motif. */
+function ongletExterne_(ss, motif) {
+  var ext = classeurEcheances_(ss);
+  if (!ext) return null;
+  return ext.getSheets().filter(function (sh) { return motif.test(cle_(sh.getName())); })[0] || null;
+}
+
+/** « Contrôle / Document » -> « CONTROLE/DOCUMENT » : sert à reconnaître les en-têtes quelle que soit leur écriture. */
+function cle_(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[\s_]+/g, ' ').trim()
+    .replace(/ ?\/ ?/g, '/');
+}
+
+function plaque_(s) { return String(s || '').toUpperCase().replace(/[\s-]/g, ''); }
+
+var CATEGORIES_VEHICULE = /TRACTEUR|REMORQUE|CITERNE|PORTEUR|VEHICULE|TELECHARGEMENT/;
+
+/**
+ * Toutes les échéances suivies : colonnes de date de FLOTTE / SALARIES (si remplies)
+ * + toutes les lignes du tableau « Échéances flotte » (y compris celles sans date, date = null).
+ */
+function echeances_(ss) {
+  var res = [];
+  [['FLOTTE', 'Véhicule', 'Flotte'], ['SALARIES', 'Chauffeur', 'Salariés']].forEach(function (f) {
+    var sh = ss.getSheetByName(f[0]);
+    if (!sh) return;
+    lireTable_(sh).filter(estActif_).forEach(function (l) {
+      var nom = f[0] === 'FLOTTE' ? plaque_(l.Camion_ID) : ((l['Prénom'] || '') + ' ' + (l.Nom || '')).trim();
+      if (!nom) return;
+      ECHEANCES[f[0]].forEach(function (e) {
+        var dt = l[e[0]] instanceof Date ? l[e[0]] : dateDepuisTexte_(l[e[0]]);
+        if (!dt) return;
+        var doc = e[1] + (e[0] === 'Date_Formation' && l.Formation_A_Prevoir ? ' (' + l.Formation_A_Prevoir + ')' : '');
+        res.push({ categorie: f[0] === 'FLOTTE' ? (l.Type || f[1]) : f[1], domaine: f[2], nom: nom, document: doc, date: dt, periodicite: null });
+      });
+    });
+  });
+
+  var sh = ongletExterne_(ss, /ECHEANCE/);
+  if (!sh || sh.getLastRow() < 2) return res;
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var e = v[0].map(cle_);
+  var col = function (motif) { for (var i = 0; i < e.length; i++) if (motif.test(e[i])) return i; return -1; };
+  var cCat = col(/^CATEGORIE/), cNom = col(/^NOM/), cDoc = col(/CONTROLE|DOCUMENT/), cPer = col(/^PERIODICITE/),
+      cDer = col(/^DERNIER/), cEch = col(/^ECHEANCE/);
+  if (cNom < 0 || cDoc < 0 || cEch < 0) throw new Error('colonnes « Nom », « Contrôle / Document » ou « Échéance » introuvables');
+  var cat = '', nom = '';
+  v.slice(1).forEach(function (l) {
+    if (cCat >= 0 && String(l[cCat]).trim()) cat = String(l[cCat]).trim();
+    if (String(l[cNom]).trim()) nom = String(l[cNom]).trim();
+    var doc = String(l[cDoc] || '').trim();
+    if (!doc || !nom) return;
+    var date = l[cEch] instanceof Date ? l[cEch] : dateDepuisTexte_(l[cEch]);
+    var per = cPer >= 0 ? nombre_(l[cPer], null) : null;
+    var dernier = cDer >= 0 ? (l[cDer] instanceof Date ? l[cDer] : dateDepuisTexte_(l[cDer])) : null;
+    if (!date && dernier && per) date = new Date(dernier.getFullYear(), dernier.getMonth() + per, dernier.getDate());
+    var k = cle_(cat);
+    var vehicule = CATEGORIES_VEHICULE.test(k);
+    res.push({ categorie: cat || 'Autre', domaine: k === 'CHAUFFEUR' ? 'Salariés' : (vehicule ? 'Flotte' : 'Entreprise'),
+      nom: vehicule ? plaque_(nom) : nom, document: doc, date: date, periodicite: per });
+  });
+  return res;
+}
+
+/** Onglet « CONGES - ABSENCES - FORMATION » du tableau « Échéances flotte », au format de l'onglet ABSENCES. */
+function absencesExternes_(ss) {
+  var sh = ongletExterne_(ss, /CONGE/);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var e = v[0].map(cle_);
+  var i = function (noms) { for (var k = 0; k < noms.length; k++) { var j = e.indexOf(noms[k]); if (j >= 0) return j; } return -1; };
+  var cN = i(['CHAUFFEUR', 'SALARIE', 'NOM']), cT = i(['TYPE']), cD = i(['DEBUT']), cF = i(['FIN']), cC = i(['COMMENTAIRE', 'REMARQUE']);
+  return v.slice(1).filter(function (l) { return cN >= 0 && String(l[cN]).trim(); }).map(function (l) {
+    return { 'Salarié': String(l[cN]).trim(), Type: cT >= 0 ? l[cT] : '', 'Début': cD >= 0 ? l[cD] : '', Fin: cF >= 0 ? l[cF] : '',
+      Remarque: cC >= 0 ? l[cC] : '' };
+  });
+}
+
+/** Pense-bête mensuel : une alerte dans les 7 jours qui précèdent le jour du mois indiqué. */
+function taches_(ss, jour0) {
+  var sh = ongletExterne_(ss, /PENSE/);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var res = [];
+  v.slice(1).forEach(function (l) {
+    var tache = String(l[0] || '').trim(), jour = nombre_(l[1], null), note = String(l[2] || '').trim();
+    if (!tache || !jour) return;
+    var dueCeMois = new Date(jour0.getFullYear(), jour0.getMonth(), Math.min(jour, new Date(jour0.getFullYear(), jour0.getMonth() + 1, 0).getDate()));
+    var due = dueCeMois >= jour0 ? dueCeMois
+      : new Date(jour0.getFullYear(), jour0.getMonth() + 1, Math.min(jour, new Date(jour0.getFullYear(), jour0.getMonth() + 2, 0).getDate()));
+    var j = Math.round((due - jour0) / 86400000);
+    if (j > 7) return;
+    var dateTxt = Utilities.formatDate(due, FUSEAU, 'dd/MM/yyyy');
+    res.push({ niveau: j <= 2 ? 'urgent' : 'a_prevoir', categorie: 'taches', domaine: 'Pense-bête', objet: tache, sujet: tache, jours: j,
+      message: tache + ' : pour le ' + dateTxt + ' (' + (j === 0 ? 'aujourd\'hui' : 'dans ' + j + ' j') + ')' + (note ? ' — ' + note : ''),
+      cle: 'TACHE|' + tache + '|' + Utilities.formatDate(due, FUSEAU, 'yyyy-MM-dd') });
+  });
+  return res;
+}
+
+/** Deux noms désignent la même personne si les mots du plus court sont tous dans le plus long (ordre et accents ignorés). */
+function memePersonne_(a, b) {
+  var m = function (s) { return cle_(s).split(/[\s-]+/).filter(String); };
+  var x = m(a), y = m(b);
+  if (!x.length || !y.length) return false;
+  var court = x.length <= y.length ? x : y, long = x.length <= y.length ? y : x;
+  return court.every(function (w) { return long.indexOf(w) >= 0; });
+}
+
+/** Ajoute à FLOTTE et SALARIES les véhicules et chauffeurs du tableau « Échéances flotte » qui n'y sont pas encore. */
+function synchroniserReferentiels_(ss) {
+  if (!classeurEcheances_(ss)) return '';
+  var shF = ss.getSheetByName('FLOTTE'), shS = ss.getSheetByName('SALARIES');
+  var flotte = lireTable_(shF).map(function (l) { return plaque_(l.Camion_ID); });
+  var salaries = lireTable_(shS).map(function (l) { return ((l['Prénom'] || '') + ' ' + (l.Nom || '')).trim(); });
+  var eF = shF.getRange(1, 1, 1, shF.getLastColumn()).getValues()[0], eS = shS.getRange(1, 1, 1, shS.getLastColumn()).getValues()[0];
+  var nbV = 0, nbC = 0, vus = {};
+  echeances_(ss).forEach(function (e) {
+    if (vus[e.nom]) return;
+    vus[e.nom] = 1;
+    var k = cle_(e.categorie);
+    if (e.domaine === 'Flotte' && k !== 'TELECHARGEMENT' && flotte.indexOf(e.nom) < 0) {
+      var lv = { Camion_ID: e.nom, Type: e.categorie, Actif: 'O', Statut: 'Disponible' };
+      shF.appendRow(eF.map(function (h) { return lv[h] || ''; }));
+      flotte.push(e.nom); nbV++;
+    } else if (k === 'CHAUFFEUR' && !salaries.some(function (n) { return memePersonne_(n, e.nom); })) {
+      var ls = { Nom: e.nom, Poste: 'Chauffeur', Actif: 'O' };
+      shS.appendRow(eS.map(function (h) { return ls[h] || ''; }));
+      salaries.push(e.nom); nbC++;
+    }
+  });
+  return '\n\nTableau « Échéances flotte » relié : ' + nbV + ' véhicule(s) et ' + nbC + ' chauffeur(s) ajouté(s) dans FLOTTE et SALARIES.';
 }
 
 /** L/100 km par camion : litres des pleins après le premier ÷ km parcourus entre premier et dernier plein. */

@@ -39,6 +39,7 @@ Il faut un compte Google (une adresse Gmail ou Google Workspace).
 
 ### 3. Remplir les données de base
 - **PARAMETRES** : vérifiez `EMAIL_ALERTES` (plusieurs adresses possibles, séparées par des virgules, par exemple `transports-gleyzes@orange.fr`) et ajustez les seuils.
+- **ID_CLASSEUR_ECHEANCES** (onglet PARAMETRES, colonne B) : collez le lien de votre Google Sheet « Échéances flotte ». Ses onglets « Toutes les échéances », « CONGES - ABSENCES - FORMATION » et « Pense-bête mensuel » sont alors lus directement : on continue à les remplir là-bas, le tableau de bord suit. Relancez ensuite **1. Installer / compléter les onglets** : les véhicules et chauffeurs de ce tableau sont ajoutés à FLOTTE et SALARIES.
 - **FLOTTE** : une ligne par camion. `Activite` (ex : Frigo, Benne, Plateau) sert à suivre la marge par activité ; `Statut` (Disponible, Atelier, Immobilisé…) compte les véhicules indisponibles. `Camion_ID` = l'immatriculation **sans tirets**, comme dans REF_Camions (ex : `GD042ZC`). Mettez `Actif` à `N` pour un camion sorti du parc.
 - **SALARIES** : une ligne par salarié, avec les dates de fin de validité.
 

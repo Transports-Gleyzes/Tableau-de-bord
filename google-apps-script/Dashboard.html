@@ -181,8 +181,25 @@ button.petit { padding: 2px 8px; font-size: 12px; }
     <div class="tuiles" id="tuilesFlotte"></div>
     <div class="carte">
       <h2>Échéances des véhicules</h2>
-      <p class="note">À compléter dans l'onglet FLOTTE du Google Sheet</p>
-      <div class="tableau"><table id="tabFlotte"></table></div>
+      <p class="note" id="noteEchV"></p>
+      <div class="barre">
+        <label for="filtreCatV">Type</label><select id="filtreCatV"></select>
+        <label for="filtreEtatV">État</label>
+        <select id="filtreEtatV"><option value="">Tous</option><option value="alerte">En retard ou bientôt</option><option value="depasse">En retard</option><option value="vide">À renseigner</option></select>
+      </div>
+      <div class="tableau"><table id="tabEchV"></table></div>
+    </div>
+    <div class="grille">
+      <div class="carte">
+        <h2>Véhicules</h2>
+        <p class="note">Société, activité et statut : onglet FLOTTE du Google Sheet du tableau de bord</p>
+        <div class="tableau"><table id="tabFlotte"></table></div>
+      </div>
+      <div class="carte">
+        <h2>Documents de l'entreprise</h2>
+        <p class="note">Licences, ADR, DUERP, assurances</p>
+        <div class="tableau"><table id="tabEchE"></table></div>
+      </div>
     </div>
   </section>
 
@@ -190,8 +207,12 @@ button.petit { padding: 2px 8px; font-size: 12px; }
   <section id="salaries" hidden>
     <div class="tuiles" id="tuilesSal"></div>
     <div class="carte">
-      <h2>Permis, formations et visites</h2>
-      <p class="note">À compléter dans l'onglet SALARIES du Google Sheet</p>
+      <h2>Permis, FCO, ADR, visites médicales, cartes conducteur</h2>
+      <p class="note" id="noteEchS"></p>
+      <div class="barre">
+        <label for="filtreEtatS">État</label>
+        <select id="filtreEtatS"><option value="">Tous</option><option value="alerte">En retard ou bientôt</option><option value="depasse">En retard</option><option value="vide">À renseigner</option></select>
+      </div>
       <div class="tableau"><table id="tabSal"></table></div>
     </div>
     <div class="grille">
@@ -370,7 +391,8 @@ function charger() {
 function recevoir(d) {
   D = d;
   document.getElementById('chargement').hidden = true;
-  document.getElementById('maj').textContent = 'Mis à jour le ' + d.genereLe + (d.derniereImport ? ' · finances importées le ' + d.derniereImport : '');
+  document.getElementById('maj').textContent = 'Mis à jour le ' + d.genereLe + (d.derniereImport ? ' · finances importées le ' + d.derniereImport : '') +
+    (d.erreurEcheances ? ' · ⚠ ' + d.erreurEcheances : '');
   remplirSelectMois();
   remplirListes();
   afficherOnglet(ongletActif());
@@ -463,9 +485,20 @@ function optionsCommunes(empile, horizontal) {
   };
 }
 function dessiner(id, config) {
-  if (graphiques[id]) graphiques[id].destroy();
+  if (graphiques[id]) { graphiques[id].destroy(); delete graphiques[id]; }
+  var canvas = document.getElementById(id), boite = canvas.parentNode;
+  var vide = !config.data.labels.length || config.data.datasets.every(function (d) { return d.data.every(function (v) { return v === null || v === 0; }); });
+  var msg = boite.querySelector('.vide');
+  if (vide) {
+    canvas.style.display = 'none';
+    if (!msg) { msg = document.createElement('div'); msg.className = 'vide'; boite.appendChild(msg); }
+    msg.textContent = 'Pas encore de données pour ce graphique.';
+    return;
+  }
+  canvas.style.display = '';
+  if (msg) msg.remove();
   if (!window.Chart) return;
-  graphiques[id] = new Chart(document.getElementById(id), config);
+  graphiques[id] = new Chart(canvas, config);
 }
 function legende(id, series) {
   document.getElementById(id).innerHTML = series.map(function (s) { return '<span><i style="background:' + s[1] + '"></i>' + s[0] + '</span>'; }).join('');
@@ -487,12 +520,9 @@ function afficherOnglet(nom) {
 function alertesFiltrees() {
   return D.alertes.filter(function (a) {
     if (!societe()) return true;
-    if (a.domaine === 'Salariés') {
-      var s = D.SALARIES.filter(function (x) { return ((x['Prénom'] || '') + ' ' + (x.Nom || '')).trim() === a.objet; })[0];
-      return !s || garderSociete(s['Société']);
-    }
-    var id = String(a.objet).split(' ')[0];
-    var soc = societeCamion(id);
+    var soc = a.domaine === 'Salariés' ? societeSalarie(a.objet)
+      : a.domaine === 'Entreprise' ? societeEcheance({ domaine: 'Entreprise', nom: a.objet })
+      : societeCamion(String(a.objet).split(' ')[0]);
     return !soc || garderSociete(soc);
   });
 }
@@ -525,7 +555,9 @@ function indisponibles() {
   return D.FLOTTE.filter(function (c) { return garderSociete(c['Société']); }).map(function (c) {
     var st = String(c.Statut || '').trim(), raison = null;
     if (st && st.toLowerCase().indexOf('dispo') !== 0) raison = st + (c.Indisponible_Jusqu_Au ? ' jusqu\'au ' + dateFr(c.Indisponible_Jusqu_Au) : '');
-    else if (c.Prochain_CT && c.Prochain_CT < auj) raison = 'CT expiré';
+    else if ((c.Prochain_CT && c.Prochain_CT < auj) || (D.ECHEANCES || []).some(function (e) {
+      return e.nom === c.Camion_ID && /contr[oô]le technique/i.test(e.document) && e.echeance && e.echeance < auj;
+    })) raison = 'CT expiré';
     return { id: c.Camion_ID, raison: raison };
   });
 }
@@ -595,7 +627,7 @@ function rendreAccueil() {
 }
 
 function societeSalarie(nom) {
-  var s = D.SALARIES.filter(function (x) { return nomComplet(x) === nom; })[0];
+  var s = D.SALARIES.filter(function (x) { return memePersonne(nomComplet(x), nom); })[0];
   return s ? s['Société'] : '';
 }
 
@@ -622,7 +654,10 @@ function rendreAttention(al) {
   ajouter(camions, pl(camions.length, 'camion est en perte ou à marge faible', 'camions sont en perte ou à marge faible'));
   ajouter(par.retards, (par.retards || [{}])[0].message);
   ajouter(par.conso, pl((par.conso || []).length, 'camion consomme trop de carburant', 'camions consomment trop de carburant'));
+  ajouter(par.taches, pl((par.taches || []).length, 'tâche du pense-bête arrive', 'tâches du pense-bête arrivent') + ' à échéance (' +
+    (par.taches || []).map(function (a) { return a.objet; }).join(', ') + ')');
   ajouter(par.donnees, pl((par.donnees || []).length, 'donnée manque dans les finances', 'données manquent dans les finances'));
+  ajouter(par.arenseigner, (par.arenseigner || [{}])[0].message);
 
   var ordre = { depasse: 0, urgent: 1, a_prevoir: 2 }, ico = { depasse: '⛔', urgent: '⚠️', a_prevoir: '🕒' };
   lignes.forEach(function (l) { l.pire = l.liste.reduce(function (m, a) { return ordre[a.niveau] < ordre[m] ? a.niveau : m; }, 'a_prevoir'); });
@@ -739,57 +774,99 @@ function celluleEcheance(dateStr) {
   var quand = s.jours < 0 ? 'dépassé de ' + (-s.jours) + ' j' : s.jours === 0 ? 'aujourd\'hui' : 'dans ' + s.jours + ' j';
   return '<td>' + dateFr(dateStr) + ' ' + badge(s.niveau, quand) + '</td>';
 }
-function tableEcheances(id, lignes, colonnes, entete) {
-  var table = document.getElementById(id);
-  if (!lignes.length) { table.innerHTML = '<tr><td class="vide">Aucune ligne : complétez l\'onglet dans le Google Sheet.</td></tr>'; return; }
-  table.innerHTML = '<thead><tr>' + entete.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
-    colonnes.map(function (c) { return '<th>' + c[1] + '</th>'; }).join('') + '</tr></thead><tbody>' +
-    lignes.map(function (l) { return '<tr>' + l._entete.map(function (v) { return '<td>' + txt(v) + '</td>'; }).join('') +
-      colonnes.map(function (c) { return celluleEcheance(l[c[0]]); }).join('') + '</tr>'; }).join('') + '</tbody>';
+// Deux noms désignent la même personne si les mots du plus court sont tous dans le plus long (ordre et accents ignorés)
+function mots(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().split(/[\s-]+/).filter(String); }
+function memePersonne(a, b) {
+  var x = mots(a), y = mots(b);
+  if (!x.length || !y.length) return false;
+  var court = x.length <= y.length ? x : y, long = x.length <= y.length ? y : x;
+  return court.every(function (w) { return long.indexOf(w) >= 0; });
 }
-function compteStatuts(lignes, colonnes) {
-  var c = { depasse: 0, urgent: 0, a_prevoir: 0, manquant: 0 };
-  lignes.forEach(function (l) { colonnes.forEach(function (k) { var s = statutEcheance(l[k[0]]); if (!s) c.manquant++; else if (c[s.niveau] !== undefined) c[s.niveau]++; }); });
+function societeEcheance(e) {
+  if (e.domaine === 'Flotte') return societeCamion(e.nom);
+  if (e.domaine === 'Salariés') return societeSalarie(e.nom);
+  var n = String(e.nom).toUpperCase();
+  return n.indexOf('LPB') >= 0 ? 'LPB' : n.indexOf('GLEYZES') >= 0 ? 'Gleyzes' : '';
+}
+function echeancesDe(domaine) {
+  return (D.ECHEANCES || []).filter(function (e) { return e.domaine === domaine && (!societe() || !societeEcheance(e) || garderSociete(societeEcheance(e))); });
+}
+function compteEcheances(liste) {
+  var c = { depasse: 0, urgent: 0, a_prevoir: 0, ok: 0, manquant: 0 };
+  liste.forEach(function (e) { var st = statutEcheance(e.echeance); c[st ? st.niveau : 'manquant']++; });
   return c;
 }
-
-var COL_FLOTTE = [['Prochain_CT', 'Contrôle technique'], ['Prochain_Entretien', 'Entretien'], ['Echeance_Assurance', 'Assurance'], ['Controle_Tachygraphe', 'Chronotachygraphe']];
-var COL_SAL = [['Fin_Validite_Permis', 'Permis'], ['Fin_FIMO_FCO', 'FIMO / FCO'], ['Prochaine_Visite_Medicale', 'Visite médicale'], ['Fin_Carte_Conducteur', 'Carte conducteur'], ['Date_Formation', 'Formation']];
+function filtrerEtat(liste, etat) {
+  return liste.filter(function (e) {
+    var st = statutEcheance(e.echeance);
+    if (etat === 'vide') return !st;
+    if (etat === 'depasse') return st && st.niveau === 'depasse';
+    if (etat === 'alerte') return st && st.niveau !== 'ok';
+    return true;
+  });
+}
+function tableListeEcheances(id, liste, avecCategorie) {
+  var t = document.getElementById(id);
+  var tri = liste.slice().sort(function (a, b) {
+    if (!a.echeance !== !b.echeance) return a.echeance ? -1 : 1;
+    if (a.echeance !== b.echeance) return a.echeance < b.echeance ? -1 : 1;
+    return a.nom < b.nom ? -1 : 1;
+  });
+  t.innerHTML = '<thead><tr>' + (avecCategorie ? '<th>Type</th>' : '') + '<th>Nom</th><th>Contrôle / document</th><th>Échéance</th></tr></thead><tbody>' +
+    (tri.length ? tri.map(function (e) {
+      return '<tr>' + (avecCategorie ? '<td>' + txt(e.categorie) + '</td>' : '') + '<td>' + txt(e.nom) + '</td><td>' + txt(e.document) + '</td>' + celluleEcheance(e.echeance) + '</tr>';
+    }).join('') : '<tr><td colspan="4" class="vide">Aucune échéance</td></tr>') + '</tbody>';
+}
+function noteSource(id) {
+  document.getElementById(id).textContent = D.erreurEcheances ? '⚠ ' + D.erreurEcheances
+    : D.parametres.sourceEcheances ? 'Lu en direct dans votre Google Sheet « Échéances flotte » : les modifications se font là-bas.'
+    : 'Renseignez le lien du Google Sheet « Échéances flotte » dans PARAMETRES > ID_CLASSEUR_ECHEANCES.';
+}
 
 function rendreFlotte() {
-  var lignes = D.FLOTTE.filter(function (c) { return garderSociete(c['Société']); }).map(function (c) {
-    var st = String(c.Statut || '').trim(), dispo = !st || st.toLowerCase().indexOf('dispo') === 0;
-    return Object.assign({ _entete: [c.Camion_ID, c['Société'], c.Activite, c.Marque_Modele, c.Chauffeur_Attitre,
-      dispo ? '✓ ' + (st || 'Disponible') : '⚠ ' + st + (c.Indisponible_Jusqu_Au ? ' → ' + dateFr(c.Indisponible_Jusqu_Au) : '')] }, c);
-  });
-  var c = compteStatuts(lignes, COL_FLOTTE);
-  var nbI = indisponibles().filter(function (x) { return x.raison; }).length;
-  document.getElementById('tuilesFlotte').innerHTML = tuile('Véhicules actifs', lignes.length) +
+  var sel = document.getElementById('filtreCatV'), ancien = sel.value;
+  var vehic = echeancesDe('Flotte');
+  var cats = {}; vehic.forEach(function (e) { cats[e.categorie] = 1; });
+  sel.innerHTML = '<option value="">Tous</option>' + Object.keys(cats).sort().map(function (c) { return '<option>' + txt(c) + '</option>'; }).join('');
+  if (cats[ancien]) sel.value = ancien;
+  var liste = filtrerEtat(vehic.filter(function (e) { return !sel.value || e.categorie === sel.value; }), document.getElementById('filtreEtatV').value);
+  var c = compteEcheances(vehic);
+  var flotte = D.FLOTTE.filter(function (x) { return garderSociete(x['Société']); });
+  var indispo = indisponibles(), nbI = indispo.filter(function (x) { return x.raison; }).length;
+  document.getElementById('tuilesFlotte').innerHTML = tuile('Véhicules actifs', flotte.length) +
     tuile('Indisponibles', '<span class="' + (nbI ? 'neg' : '') + '">' + nbI + '</span>') +
-    tuile('Échéances dépassées', '<span class="' + (c.depasse ? 'neg' : '') + '">' + c.depasse + '</span>') +
-    tuile('Sous ' + D.parametres.JOURS_PREAVIS + ' jours', c.urgent + c.a_prevoir) + tuile('Dates non renseignées', c.manquant);
-  tableEcheances('tabFlotte', lignes, COL_FLOTTE, ['Camion', 'Société', 'Activité', 'Modèle', 'Chauffeur', 'Statut']);
+    tuile('Contrôles en retard', '<span class="' + (c.depasse ? 'neg' : '') + '">' + c.depasse + '</span>') +
+    tuile('Sous ' + D.parametres.JOURS_PREAVIS + ' jours', c.urgent + c.a_prevoir) + tuile('Dates à renseigner', c.manquant);
+  noteSource('noteEchV');
+  tableListeEcheances('tabEchV', liste, true);
+  tableListeEcheances('tabEchE', echeancesDe('Entreprise'), false);
+  var raisons = {}; indispo.forEach(function (x) { raisons[x.id] = x.raison; });
+  document.getElementById('tabFlotte').innerHTML = '<thead><tr><th>Immat.</th><th>Type</th><th>Société</th><th>Activité</th><th>Statut</th></tr></thead><tbody>' +
+    (flotte.length ? flotte.map(function (v) {
+      var r = raisons[v.Camion_ID];
+      return '<tr><td>' + txt(v.Camion_ID) + '</td><td>' + txt(v.Type) + '</td><td>' + (v['Société'] ? txt(v['Société']) : '<span class="nd">à compléter</span>') +
+        '</td><td>' + txt(v.Activite) + '</td><td>' + (r ? badge(r === 'CT expiré' ? 'depasse' : 'urgent', r) : badge('ok', v.Statut || 'Disponible')) + '</td></tr>';
+    }).join('') : '<tr><td colspan="5" class="vide">Aucun véhicule dans FLOTTE</td></tr>') + '</tbody>';
 }
 
 function nomComplet(s) { return ((s['Prénom'] || '') + ' ' + (s.Nom || '')).trim(); }
 function rendreSalaries() {
   var sal = D.SALARIES.filter(function (s) { return garderSociete(s['Société']); });
-  var lignes = sal.map(function (s) { return Object.assign({ _entete: [nomComplet(s), s['Société'], s.Poste] }, s); });
-  var c = compteStatuts(lignes, COL_SAL);
-  var noms = sal.map(nomComplet), auj = aujourdhui();
+  var docs = echeancesDe('Salariés'), c = compteEcheances(docs), auj = aujourdhui();
   var dans30 = new Date(); dans30.setDate(dans30.getDate() + 30);
   var lim = dans30.toISOString().slice(0, 10);
-  var abs = D.ABSENCES.filter(function (a) { return !societe() || noms.indexOf(a['Salarié']) >= 0; });
+  var abs = D.ABSENCES.filter(function (a) { return !societe() || sal.some(function (s) { return memePersonne(nomComplet(s), a['Salarié']); }); });
   var enCours = abs.filter(function (a) { return a['Début'] <= auj && (!a.Fin || a.Fin >= auj); });
   var aVenir = abs.filter(function (a) { return a['Début'] > auj && a['Début'] <= lim; }).sort(function (a, b) { return a['Début'] < b['Début'] ? -1 : 1; });
   document.getElementById('tuilesSal').innerHTML = tuile('Salariés actifs', sal.length) +
     tuile('Absents aujourd\'hui', enCours.length) +
-    tuile('Échéances dépassées', '<span class="' + (c.depasse ? 'neg' : '') + '">' + c.depasse + '</span>') +
-    tuile('Sous ' + D.parametres.JOURS_PREAVIS + ' jours', c.urgent + c.a_prevoir);
-  tableEcheances('tabSal', lignes, COL_SAL, ['Salarié', 'Société', 'Poste']);
+    tuile('Documents expirés', '<span class="' + (c.depasse ? 'neg' : '') + '">' + c.depasse + '</span>') +
+    tuile('Sous ' + D.parametres.JOURS_PREAVIS + ' jours', c.urgent + c.a_prevoir) + tuile('Dates à renseigner', c.manquant);
+  noteSource('noteEchS');
+  tableListeEcheances('tabSal', filtrerEtat(docs, document.getElementById('filtreEtatS').value), false);
   var liste = function (l) {
     return l.length ? '<table><tbody>' + l.map(function (a) {
-      return '<tr><td>' + txt(a['Salarié']) + '</td><td>' + txt(a.Type) + '</td><td>' + dateFr(a['Début']) + (a.Fin ? ' → ' + dateFr(a.Fin) : ' → ?') + '</td></tr>';
+      return '<tr><td>' + txt(a['Salarié']) + '</td><td>' + txt(a.Type) + (a.Remarque ? ' (' + txt(a.Remarque) + ')' : '') + '</td><td>' + dateFr(a['Début']) + (a.Fin ? ' → ' + dateFr(a.Fin) : ' → ?') + '</td></tr>';
     }).join('') + '</tbody></table>' : '<div class="vide">Aucune</div>';
   };
   document.getElementById('absAujourdhui').innerHTML = liste(enCours);
@@ -893,6 +970,8 @@ document.getElementById('filtreSociete').addEventListener('change', function () 
 document.getElementById('moisFin').addEventListener('change', rendreFinances);
 document.getElementById('moisAct').addEventListener('change', rendreActivite);
 document.getElementById('filtreNiveau').addEventListener('change', rendreAlertes);
+['filtreCatV', 'filtreEtatV'].forEach(function (id) { document.getElementById(id).addEventListener('change', rendreFlotte); });
+document.getElementById('filtreEtatS').addEventListener('change', rendreSalaries);
 document.getElementById('actualiser').addEventListener('click', charger);
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { if (D) afficherOnglet(ongletActif()); });
 try {
