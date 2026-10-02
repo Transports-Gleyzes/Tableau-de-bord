@@ -195,7 +195,8 @@ button.petit { padding: 2px 8px; font-size: 12px; }
     <div class="carte">
       <h2>Charges à mutualiser</h2>
       <p class="note">Modifiez directement les cases, ajoutez ou supprimez des lignes, puis cliquez sur « Enregistrer ».
-        « Fin » : dernier jour où la charge compte (ex. départ d'une salariée, fin d'un contrat d'assurance). « Début » : pour une nouvelle charge.</p>
+        « Échéance » : date de renouvellement d'un contrat ou d'une assurance (vous êtes prévenu avant, dans ATTENTION et par mail).
+        « Fin » : dernier jour où la charge compte (ex. départ d'une salariée, contrat résilié). « Début » : pour une nouvelle charge.</p>
       <div class="tableau"><table id="tabCharges" class="edition"></table></div>
       <div class="barre" style="margin-top:12px">
         <button id="ajoutCharge">+ Ajouter une charge</button>
@@ -754,6 +755,8 @@ function rendreAttention(al) {
   ajouter(par.contrats, pl((par.contrats || []).length, 'contrat manquant', 'contrats manquants') + ' dans le planning Inter');
   ajouter(par.conso, (par.conso || []).length === 1 ? 'Le camion ' + par.conso[0].objet + ' consomme trop ces derniers temps'
     : pl((par.conso || []).length, 'camion consomme', 'camions consomment') + ' trop ces derniers temps (' + (par.conso || []).map(function (a) { return a.objet; }).join(', ') + ')');
+  ajouter(par.charges, pl((par.charges || []).length, 'contrat ou charge arrive', 'contrats ou charges arrivent') + ' à échéance (' +
+    (par.charges || []).map(function (a) { return a.objet; }).join(', ') + ')');
   ajouter(par.taches, pl((par.taches || []).length, 'tâche du pense-bête arrive', 'tâches du pense-bête arrivent') + ' à échéance (' +
     (par.taches || []).map(function (a) { return a.objet; }).join(', ') + ')');
   ajouter(par.donnees, pl((par.donnees || []).length, 'donnée à compléter ou corriger', 'données à compléter ou corriger') + ' (plannings, finances)');
@@ -1115,8 +1118,14 @@ function chargesDepuisDonnees() {
   return (D.CHARGES_MUTUALISEES || []).map(function (c) {
     var so = String(c['Société'] || '').toUpperCase();
     return { Poste: String(c.Poste || '').trim(), 'Société': so.indexOf('LPB') >= 0 ? 'LPB' : (so.indexOf('GLEYZES') >= 0 ? 'Gleyzes' : ''),
-      Montant_Mensuel: num(c.Montant_Mensuel), Debut: String(c.Debut || '').slice(0, 10), Fin: String(c.Fin || '').slice(0, 10) };
+      Montant_Mensuel: num(c.Montant_Mensuel), Debut: String(c.Debut || '').slice(0, 10), Fin: String(c.Fin || '').slice(0, 10),
+      Echeance: String(c.Echeance || '').slice(0, 10) };
   });
+}
+function badgeEcheanceCharge(d) {
+  var st = statutEcheance(d);
+  if (!st || st.niveau === 'ok') return '';
+  return badge(st.niveau, st.jours < 0 ? 'dépassée' : st.jours === 0 ? 'aujourd\'hui' : 'dans ' + st.jours + ' j');
 }
 function chargeActive(c, jour) { return (!c.Debut || c.Debut <= jour) && (!c.Fin || c.Fin >= jour); }
 function rendreCharges() {
@@ -1126,13 +1135,14 @@ function rendreCharges() {
   document.getElementById('tuilesCharges').innerHTML = tuile('Charges mensuelles Gleyzes', fmtEur.format(tot.Gleyzes), 'en vigueur aujourd\'hui') +
     tuile('Charges mensuelles LPB', fmtEur.format(tot.LPB), 'en vigueur aujourd\'hui') + tuile('Total', fmtEur.format(tot.Gleyzes + tot.LPB), brouillonCharges.length + ' ligne(s)');
   var t = document.getElementById('tabCharges');
-  t.innerHTML = '<thead><tr><th>Poste</th><th>Société</th><th class="n">Montant mensuel (€)</th><th>Début</th><th>Fin</th><th></th></tr></thead><tbody>' +
+  t.innerHTML = '<thead><tr><th>Poste</th><th>Société</th><th class="n">Montant mensuel (€)</th><th>Échéance / renouvellement</th><th>Début</th><th>Fin</th><th></th></tr></thead><tbody>' +
     brouillonCharges.map(function (c, i) {
       var finie = c.Fin && c.Fin < auj;
       return '<tr class="' + (finie ? 'terminee' : '') + '" data-i="' + i + '">' +
         '<td><input class="poste" data-k="Poste" value="' + txt(c.Poste) + '"></td>' +
         '<td><select data-k="Société"><option value=""></option><option' + (c['Société'] === 'Gleyzes' ? ' selected' : '') + '>Gleyzes</option><option' + (c['Société'] === 'LPB' ? ' selected' : '') + '>LPB</option></select></td>' +
         '<td><input class="montant" data-k="Montant_Mensuel" type="number" step="0.01" min="0" value="' + (c.Montant_Mensuel === null ? '' : c.Montant_Mensuel) + '"></td>' +
+        '<td><input data-k="Echeance" type="date" value="' + txt(c.Echeance) + '">' + (c.Echeance && !finie ? ' ' + badgeEcheanceCharge(c.Echeance) : '') + '</td>' +
         '<td><input data-k="Debut" type="date" value="' + txt(c.Debut) + '"></td>' +
         '<td><input data-k="Fin" type="date" value="' + txt(c.Fin) + '">' + (finie ? ' <span class="nd">terminée</span>' : '') + '</td>' +
         '<td><button class="suppr" title="Supprimer cette ligne" data-suppr="' + i + '">✕</button></td></tr>';
@@ -1157,7 +1167,7 @@ function rendreCharges() {
 }
 document.getElementById('ajoutCharge').addEventListener('click', function () {
   if (!brouillonCharges) brouillonCharges = chargesDepuisDonnees();
-  brouillonCharges.push({ Poste: '', 'Société': '', Montant_Mensuel: null, Debut: '', Fin: '' });
+  brouillonCharges.push({ Poste: '', 'Société': '', Montant_Mensuel: null, Debut: '', Fin: '', Echeance: '' });
   rendreCharges();
   var champs = document.querySelectorAll('#tabCharges input.poste'); if (champs.length) champs[champs.length - 1].focus();
 });

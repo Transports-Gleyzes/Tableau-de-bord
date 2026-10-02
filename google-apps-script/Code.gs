@@ -39,7 +39,7 @@ var FEUILLES = {
   FACTURES: ['N_Facture', 'Client', 'Date_Facture', 'Echeance', 'Montant_TTC', 'Statut', 'Date_Paiement',
              'Derniere_Relance', 'Remarque'],
   HEURES: ['Date', 'Salarié', 'Heures', 'Remarque'],
-  CHARGES_MUTUALISEES: ['Poste', 'Société', 'Montant_Mensuel', 'Debut', 'Fin'],
+  CHARGES_MUTUALISEES: ['Poste', 'Société', 'Montant_Mensuel', 'Debut', 'Fin', 'Echeance'],
   JOURNAL_ALERTES: ['Date_Envoi', 'Clé', 'Niveau', 'Message']
 };
 
@@ -57,7 +57,7 @@ var COLONNES_DATE = {
   FLOTTE: ['Prochain_CT', 'Prochain_Entretien', 'Echeance_Assurance', 'Controle_Tachygraphe', 'Indisponible_Jusqu_Au'],
   SALARIES: ['Fin_Validite_Permis', 'Fin_FIMO_FCO', 'Prochaine_Visite_Medicale', 'Fin_Carte_Conducteur', 'Date_Formation'],
   FACTURES: ['Date_Facture', 'Echeance', 'Date_Paiement', 'Derniere_Relance'],
-  HEURES: ['Date'], LIVRAISONS: ['Date'], CARBURANT: ['Date'], ABSENCES: ['Début', 'Fin'], CHARGES_MUTUALISEES: ['Debut', 'Fin']
+  HEURES: ['Date'], LIVRAISONS: ['Date'], CARBURANT: ['Date'], ABSENCES: ['Début', 'Fin'], CHARGES_MUTUALISEES: ['Debut', 'Fin', 'Echeance']
 };
 
 var PARAMETRES_DEFAUT = [
@@ -348,9 +348,9 @@ function enregistrerCharges(lignes) {
       if (!d) throw new Error('Ligne « ' + poste + ' » : date de ' + nom + ' invalide');
       return d;
     };
-    var debut = date(l.Debut, 'début'), fin = date(l.Fin, 'fin');
+    var debut = date(l.Debut, 'début'), fin = date(l.Fin, 'fin'), echeance = date(l.Echeance, 'échéance');
     if (debut && fin && fin < debut) throw new Error('Ligne « ' + poste + ' » : la fin est avant le début');
-    return [poste, soc, montant, debut, fin];
+    return [poste, soc, montant, debut, fin, echeance];
   });
   var verrou = LockService.getScriptLock();
   verrou.waitLock(10000);
@@ -426,6 +426,38 @@ function calculerAlertes_(ss, aujourdhui) {
   if (aRenseigner) {
     alertes.push({ niveau: 'a_prevoir', categorie: 'arenseigner', domaine: 'Échéances', objet: '', sujet: 'Dates manquantes',
       message: aRenseigner + ' date(s) de contrôle à renseigner dans le tableau des échéances', cle: 'ARENSEIGNER' });
+  }
+
+  // 1 ter. Charges à mutualiser : échéance (renouvellement d'un contrat, d'une assurance) et fin d'une charge
+  var shCh = ss.getSheetByName('CHARGES_MUTUALISEES');
+  if (shCh) {
+    lireTable_(shCh).forEach(function (c) {
+      var poste = String(c.Poste || '').trim();
+      if (!poste) return;
+      var soc = cle_(c['Société']).indexOf('LPB') >= 0 ? 'LPB' : 'Gleyzes';
+      var fin = c.Fin instanceof Date ? c.Fin : dateDepuisTexte_(c.Fin);
+      var ech = c.Echeance instanceof Date ? c.Echeance : dateDepuisTexte_(c.Echeance);
+      if (fin && minuit_(fin) < jour0) return;   // charge terminée : plus rien à signaler
+      var txtDate = function (d) { return Utilities.formatDate(d, FUSEAU, 'dd/MM/yyyy'); };
+      if (ech) {
+        var j = Math.round((minuit_(ech) - jour0) / 86400000);
+        if (j <= preavis) {
+          alertes.push({ niveau: j < 0 ? 'depasse' : (j <= urgent ? 'urgent' : 'a_prevoir'), categorie: 'charges', domaine: 'Charges',
+            objet: poste + ' (' + soc + ')', sujet: 'Échéance', jours: j,
+            message: 'Échéance ' + poste + ' (' + soc + ') : ' + txtDate(ech) + (j < 0 ? ' (dépassée depuis ' + (-j) + ' j : renouvelée ? mettez à jour la date et le montant dans l\'onglet Charges)'
+              : ' (' + (j === 0 ? 'aujourd\'hui' : 'dans ' + j + ' j') + ') : renouvellement, montant à vérifier'),
+            cle: 'CHARGE_ECH|' + poste + '|' + soc + '|' + Utilities.formatDate(ech, FUSEAU, 'yyyy-MM-dd') });
+        }
+      }
+      if (fin) {
+        var jf = Math.round((minuit_(fin) - jour0) / 86400000);
+        if (jf <= preavis) {
+          alertes.push({ niveau: 'a_prevoir', categorie: 'charges', domaine: 'Charges', objet: poste + ' (' + soc + ')', sujet: 'Fin', jours: jf,
+            message: poste + ' (' + soc + ') s\'arrête le ' + txtDate(fin) + ' (' + (jf === 0 ? 'aujourd\'hui' : 'dans ' + jf + ' j') + ')',
+            cle: 'CHARGE_FIN|' + poste + '|' + soc + '|' + Utilities.formatDate(fin, FUSEAU, 'yyyy-MM-dd') });
+        }
+      }
+    });
   }
 
   // 1 bis. Pense-bête mensuel (TVA, péages…) : rappel 7 jours avant la date du mois
