@@ -40,6 +40,7 @@ var FEUILLES = {
              'Derniere_Relance', 'Remarque'],
   HEURES: ['Date', 'Salarié', 'Heures', 'Remarque'],
   CHARGES_MUTUALISEES: ['Poste', 'Société', 'Montant_Mensuel', 'Debut', 'Fin', 'Echeance'],
+  CORRESPONDANCES: ['Type', 'Sur_la_facture', 'Sur_le_planning', 'Remarque'],
   FACTURES_CLIENTS: ['N_Facture', 'Date_Facture', 'Mois', 'Societe', 'Client', 'Ref_Client', 'Activite', 'Nature', 'Lieu',
                      'Quantite', 'Prix_Unitaire', 'Montant_HT', 'Indexation_Pct', 'LVN', 'Date_LVN', 'Prefacture',
                      'Net_HT_Facture', 'Fichier', 'Depose_Le'],
@@ -134,6 +135,14 @@ function installer() {
     sh.setFrozenRows(1);
   });
   console.log('Onglets vérifiés');
+  var shCo = ss.getSheetByName('CORRESPONDANCES');
+  if (shCo && shCo.getLastRow() < 2) {
+    shCo.getRange(2, 1, 4, 4).setValues([
+      ['CLIENT', 'TEO CARBURANT', 'SEB', 'Nom sur la facture INFORCE -> nom du client au planning'],
+      ['CLIENT', 'THEVENIN & DUCROT', 'TD / BRIGNOLES', 'Client / lieu au planning (le lieu est facultatif)'],
+      ['LIEU', 'VINEZAC', 'AUBENAS', 'Même lieu de livraison'],
+      ['', '', '', '']]);
+  }
   var shP = ss.getSheetByName('PARAMETRES');
   var existants = lireTable_(shP).map(function (l) { return l['Paramètre']; });
   var nouveauxP = PARAMETRES_DEFAUT.filter(function (p) { return existants.indexOf(p[0]) < 0; });
@@ -493,6 +502,13 @@ function controleFactures_(ss, jour0) {
   fact.forEach(function (l) { var m = moisTexte_(l.Mois); if (m) aControler[m] = 1; });
   if (jour0.getDate() >= jourCtrl) aControler[prec] = 1;
   var res = {}, alertes = [], r2 = function (x) { return Math.round(x * 100) / 100; };
+  // Correspondances déclarées (onglet CORRESPONDANCES) : nom client facture -> planning, lieux équivalents
+  var corr = { clients: [], lieux: [] }, shC = ss.getSheetByName('CORRESPONDANCES');
+  if (shC) lireTable_(shC).forEach(function (l) {
+    var t = cle_(l.Type), f = String(l.Sur_la_facture || '').trim(), pl2 = String(l.Sur_le_planning || '').trim();
+    if (!f || !pl2) return;
+    if (t.indexOf('CLIENT') === 0) corr.clients.push([f].concat(pl2.split('/').map(function (x) { return x.trim(); }))); else if (t.indexOf('LIEU') === 0) corr.lieux.push([f, pl2]);
+  });
   var fmt = function (x) { return String(r2(x)).replace('.', ','); };
 
   Object.keys(aControler).sort().forEach(function (M) {
@@ -502,48 +518,53 @@ function controleFactures_(ss, jour0) {
     var fM = fact.filter(function (l) { return moisTexte_(l.Mois) === M; });
     var plM = pl.filter(function (l) { return Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM') === M; });
 
-    // --- Carburant : groupes du planning (société du client, client, lieu)
+    // --- Carburant : groupes du planning (client + lieu ; la société est celle du client)
     var groupes = {};
     plM.filter(function (l) { return l.activite === 'Carburant' && (l.ca || l.litres || l.m3); }).forEach(function (l) {
-      var k = l.societe + '|' + cle_(l.client) + '|' + cle_(l.lieu);
+      var k = cle_(l.client) + '|' + cle_(l.lieu);
       var g = groupes[k] = groupes[k] || { societe: l.societe, client: l.client, lieu: l.lieu, n: 0, m3: 0, ca: 0, prix: {}, lvns: [] };
       g.n++; g.m3 += l.m3 || Math.round((l.litres || 0) / 1000); g.ca += l.ca || 0;
-      if (l.prix) g.prix[l.prix] = (g.prix[l.prix] || 0) + 1;
-      if (l.lvn) g.lvns.push({ lvn: l.lvn, date: Utilities.formatDate(l.date, FUSEAU, 'dd/MM'), m3: l.m3 });
+      if (l.prix) g.prix[r2(l.prix)] = (g.prix[r2(l.prix)] || 0) + 1;
+      if (l.lvn) g.lvns.push({ lvn: String(l.lvn), date: Utilities.formatDate(l.date, FUSEAU, 'dd/MM'), m3: l.m3 });
     });
-    // --- Carburant : agrégats facturés (société, réf. client, lieu)
+    // --- Carburant : agrégats facturés (société, réf. client, lieu). Un « transport » à plus de 60 €/m³ est un forfait, pas des m³.
     var facturees = {}, parClient = {};
     fM.filter(function (l) { return l.Activite === 'Carburant'; }).forEach(function (l) {
       var kc = l.Societe + '|' + l.Ref_Client;
       var c = parClient[kc] = parClient[kc] || { societe: l.Societe, client: l.Client, ref: l.Ref_Client, base: 0, index: 0, pct: null, factures: {}, transport: false };
       c.factures[l.N_Facture] = 1;
-      var montant = nombre_(l.Montant_HT, 0);
+      var montant = nombre_(l.Montant_HT, 0), pu = nombre_(l.Prix_Unitaire, null);
       if (l.Nature === 'INDEXATION') { c.index += montant; if (nombre_(l.Indexation_Pct, null) !== null) c.pct = nombre_(l.Indexation_Pct, null); return; }
       c.base += montant;
-      if (l.Nature !== 'TRANSPORT') return;
+      if (l.Nature !== 'TRANSPORT' || (pu !== null && pu > 60)) return;
       c.transport = true;
       var k = kc + '|' + cle_(l.Lieu);
       var a = facturees[k] = facturees[k] || { societe: l.Societe, client: l.Client, ref: l.Ref_Client, lieu: l.Lieu, qte: 0, montant: 0, prix: {}, lvns: [], factures: {} };
       a.qte += nombre_(l.Quantite, 0); a.montant += montant; a.factures[l.N_Facture] = 1;
-      if (nombre_(l.Prix_Unitaire, null) !== null) a.prix[nombre_(l.Prix_Unitaire, 0)] = 1;
-      if (l.LVN) a.lvns.push(String(l.LVN));
+      if (pu !== null) a.prix[r2(pu)] = 1;
+      if (l.LVN) a.lvns.push(String(l.LVN).replace(/\.0+$/, ''));
     });
-    var pris = {};
-    Object.keys(facturees).map(function (k) { return facturees[k]; }).sort(function (a, b) { return b.qte - a.qte; }).forEach(function (a) {
-      // Client du planning : même société, même lieu, m³ les plus proches
-      var cand = Object.keys(groupes).filter(function (k) { return !pris[k] && groupes[k].societe === a.societe && memeLieu_(a.lieu, groupes[k].lieu); })
-        .sort(function (x, y) { return Math.abs(groupes[x].m3 - a.qte) - Math.abs(groupes[y].m3 - a.qte); });
+    var pris = {}, alias = {};   // alias : réf. client de la facture -> nom du client au planning (appris sur les correspondances sûres)
+    var lieuOk = function (lf, lp) {
+      return memeLieu_(lf, lp) || corr.lieux.some(function (c) { return (memeLieu_(c[0], lf) && memeLieu_(c[1], lp)) || (memeLieu_(c[1], lf) && memeLieu_(c[0], lp)); });
+    };
+    var regleDe = function (a) {
+      return corr.clients.filter(function (c) { return memePersonne_(c[0], a.client) || cle_(c[0]) === cle_(a.client); })[0];
+    };
+    var clientPlanningDe = function (a) { var t = regleDe(a); return t ? cle_(t[1]) : (alias[a.ref] || null); };
+    var lieuOkPour = function (a, g) { var t = regleDe(a); return lieuOk(a.lieu, g.lieu) || !!(t && t[2] && memeLieu_(t[2], g.lieu)); };
+    var rapprocher = function (a, k, lieuDifferent) {
+      var g = groupes[k]; pris[k] = 1; alias[a.ref] = cle_(g.client);
       var prixF = Object.keys(a.prix).map(Number), facts = Object.keys(a.factures).join(', ');
-      if (!cand.length) {
-        out.carburant.push({ societe: a.societe, clientFacture: a.client, lieu: a.lieu, m3Fact: a.qte, prixFact: prixF.join(' / '), montantFact: r2(a.montant), factures: facts, etats: ['absent du planning'] });
-        alertes.push({ niveau: 'a_prevoir', categorie: 'facturation', domaine: 'Factures', objet: a.client, sujet: 'Facturé hors planning',
-          message: a.client + ' — ' + a.lieu + ' (' + lib + ') : ' + a.qte + ' m³ facturés (' + facts + ') mais aucune livraison au planning', cle: 'FACT_HORS|' + M + '|' + a.ref + '|' + a.lieu });
-        return;
-      }
-      var g = groupes[cand[0]]; pris[cand[0]] = 1;
       var prixP = Object.keys(g.prix).map(Number).sort(function (x, y) { return g.prix[y] - g.prix[x]; });
-      var etats = [], ligne = { societe: a.societe, clientFacture: a.client, clientPlanning: g.client, lieu: g.lieu, n: g.n, m3Plan: g.m3, m3Fact: a.qte,
+      var etats = [], ligne = { societe: a.societe, clientFacture: a.client, clientPlanning: g.client, lieu: g.lieu, lieuFacture: a.lieu, n: g.n, m3Plan: g.m3, m3Fact: a.qte,
         prixPlan: prixP.join(' / '), prixFact: prixF.join(' / '), caPlan: r2(g.ca), montantFact: r2(a.montant), factures: facts, etats: etats };
+      if (lieuDifferent) {
+        etats.push('lieu');
+        alertes.push({ niveau: 'a_prevoir', categorie: 'facturation', domaine: 'Factures', objet: g.client, sujet: 'Lieu différent',
+          message: a.client + ' (' + lib + ') : facturé à ' + a.lieu + ' (' + facts + '), planning ' + g.client + ' ' + g.lieu + ' (' + g.m3 + ' m³) : vérifiez le lieu de livraison',
+          cle: 'FACT_LIEU|' + M + '|' + a.ref + '|' + a.lieu + '|' + g.lieu });
+      }
       if (Math.abs(g.m3 - a.qte) > 0.5) {
         etats.push('m³');
         alertes.push({ niveau: 'urgent', categorie: 'facturation', domaine: 'Factures', objet: g.client, sujet: 'Écart m³',
@@ -551,10 +572,13 @@ function controleFactures_(ss, jour0) {
           cle: 'FACT_M3|' + M + '|' + a.ref + '|' + g.lieu + '|' + a.qte + '|' + g.m3 });
       }
       if (a.lvns.length) {
-        var manquants = g.lvns.filter(function (x) { return a.lvns.indexOf(String(x.lvn)) < 0; });
+        var manquants = g.lvns.filter(function (x) { return a.lvns.indexOf(x.lvn) < 0; });
         if (manquants.length) {
           ligne.lvnManquants = manquants.map(function (x) { return 'LVN ' + x.lvn + ' du ' + x.date; }).join(', ');
           if (etats.indexOf('m³') < 0) etats.push('livraisons');
+          alertes.push({ niveau: 'urgent', categorie: 'facturation', domaine: 'Factures', objet: g.client, sujet: 'Livraisons non facturées',
+            message: g.client + ' ' + g.lieu + ' (' + lib + ') : livraisons du planning absentes de la facture ' + facts + ' : ' + ligne.lvnManquants,
+            cle: 'FACT_LVN|' + M + '|' + a.ref + '|' + g.lieu + '|' + ligne.lvnManquants });
         }
       }
       var prixDiff = prixF.filter(function (pf) { return !prixP.some(function (pp) { return Math.abs(pp - pf) < 0.005; }); });
@@ -565,12 +589,33 @@ function controleFactures_(ss, jour0) {
             ' €/m³ (CA planning ' + euros_(g.ca) + ', facturé ' + euros_(a.montant) + ') : vérifiez l\'onglet TARIFS',
           cle: 'FACT_PRIX|' + M + '|' + a.ref + '|' + g.lieu + '|' + prixF.join('/') });
       }
-      if (ligne.lvnManquants) {
-        alertes.push({ niveau: 'urgent', categorie: 'facturation', domaine: 'Factures', objet: g.client, sujet: 'Livraisons non facturées',
-          message: g.client + ' ' + g.lieu + ' (' + lib + ') : livraisons du planning absentes de la facture ' + facts + ' : ' + ligne.lvnManquants,
-          cle: 'FACT_LVN|' + M + '|' + a.ref + '|' + g.lieu + '|' + ligne.lvnManquants });
-      }
       out.carburant.push(ligne);
+    };
+    var aggs = Object.keys(facturees).map(function (k) { return facturees[k]; }).sort(function (a, b) { return b.qte - a.qte; });
+    var restants = [];
+    // 1er passage : par numéros de LVN (sûr), puis par lieu + m³ les plus proches
+    aggs.forEach(function (a) {
+      var parLvn = a.lvns.length ? Object.keys(groupes).filter(function (k) {
+        return !pris[k] && groupes[k].lvns.some(function (x) { return a.lvns.indexOf(x.lvn) >= 0; });
+      }) : [];
+      if (parLvn.length) { rapprocher(a, parLvn[0], !memeLieu_(a.lieu, groupes[parLvn[0]].lieu) && false); return; }
+      var connu = clientPlanningDe(a);
+      var cand = Object.keys(groupes).filter(function (k) { return !pris[k] && lieuOkPour(a, groupes[k]) && (!connu || cle_(groupes[k].client) === connu); })
+        .sort(function (x, y) { return Math.abs(groupes[x].m3 - a.qte) - Math.abs(groupes[y].m3 - a.qte) || (groupes[x].societe === a.societe ? -1 : 1); });
+      if (cand.length) rapprocher(a, cand[0], false); else restants.push(a);
+    });
+    // 2e passage : même client (appris sur les autres lignes) mais lieu différent, m³ identiques à 1 près
+    restants.forEach(function (a) {
+      var nom = clientPlanningDe(a);
+      var cand = Object.keys(groupes).filter(function (k) { return !pris[k] && ((nom && cle_(groupes[k].client) === nom) || memePersonne_(groupes[k].client, a.client)); })
+        .sort(function (x, y) { return Math.abs(groupes[x].m3 - a.qte) - Math.abs(groupes[y].m3 - a.qte); });
+      if (cand.length && (Math.abs(groupes[cand[0]].m3 - a.qte) <= 1 || lieuOkPour(a, groupes[cand[0]]))) {
+        rapprocher(a, cand[0], !lieuOkPour(a, groupes[cand[0]])); return;
+      }
+      var prixF = Object.keys(a.prix).map(Number), facts = Object.keys(a.factures).join(', ');
+      out.carburant.push({ societe: a.societe, clientFacture: a.client, lieu: a.lieu, m3Fact: a.qte, prixFact: prixF.join(' / '), montantFact: r2(a.montant), factures: facts, etats: ['absent du planning'] });
+      alertes.push({ niveau: 'a_prevoir', categorie: 'facturation', domaine: 'Factures', objet: a.client, sujet: 'Facturé hors planning',
+        message: a.client + ' — ' + a.lieu + ' (' + lib + ') : ' + a.qte + ' m³ facturés (' + facts + ') mais aucune livraison correspondante au planning', cle: 'FACT_HORS|' + M + '|' + a.ref + '|' + a.lieu });
     });
     Object.keys(groupes).filter(function (k) { return !pris[k]; }).forEach(function (k) {
       var g = groupes[k];
@@ -1131,6 +1176,21 @@ function plannings_(ss) {
         });
       });
     });
+  });
+  // Une facture = un client = une société : la société d'un client Carburant (client + lieu) est celle de la majorité
+  // de ses lignes, quel que soit le chauffeur ; une ligne saisie avec l'autre société est ramenée à celle du client.
+  var majorite = {};
+  res.forEach(function (l) {
+    if (l.activite !== 'Carburant' || !l.societe) return;
+    var k = cle_(l.client) + '|' + cle_(l.lieu), m = majorite[k] = majorite[k] || {};
+    m[l.societe] = (m[l.societe] || 0) + 1;
+  });
+  res.forEach(function (l) {
+    if (l.activite !== 'Carburant') return;
+    var m = majorite[cle_(l.client) + '|' + cle_(l.lieu)];
+    if (!m) return;
+    var soc = Object.keys(m).sort(function (a, b) { return m[b] - m[a]; })[0];
+    if (soc && soc !== l.societe) { l.societeSaisie = l.societe; l.societe = soc; }
   });
   attribuerCamions_(ss, res);
   CACHE_PLANNINGS_ = res;

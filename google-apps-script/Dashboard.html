@@ -1372,7 +1372,7 @@ function analyserFacture(lignes, largeur) {
     else if (/TERME VARIABLE/.test(tout2)) nature = 'TERME_VARIABLE';
     else if (e.total < 0 || /AVOIR|AVOR\b/.test(tout2)) nature = 'AVOIR';
     else if (/DEPOTAGE/.test(tout2)) nature = 'DEPOTAGE';
-    else if (/TRANSPORTS? CARBURANTS?/.test(tout2)) nature = 'TRANSPORT';
+    else if (/TRANSPORTS? CARBURANTS?/.test(tout2) && !(e.prix > 60)) nature = 'TRANSPORT';   // plus de 60 €/m³ : forfait, pas des m³
     else nature = 'AUTRE';
     var l = { nature: nature, lieu: nature === 'TRANSPORT' ? (e.lieu || dernierLieu || f.villeClient || '') : (e.lieu || ''), quantite: e.qte, prix: e.prix, montant: e.total };
     if (nature === 'TRANSPORT' && l.lieu) dernierLieu = l.lieu;
@@ -1533,19 +1533,19 @@ function rendreFacturation() {
     if (!x.etats || !x.etats.length) return badge('ok', 'Conforme');
     return x.etats.map(function (e) {
       var niv = e === 'à facturer' ? 'a_prevoir' : (e === 'prix' || e === 'absent du planning') ? 'a_prevoir' : 'urgent';
-      var lib = { 'm³': 'Écart m³', prix: 'Écart prix', livraisons: 'Livraisons manquantes', 'non facturé': 'Non facturé', 'à facturer': 'À facturer', 'absent du planning': 'Hors planning', tournees: 'Écart tournées', 'tournées': 'Écart tournées' }[e] || e;
+      var lib = { 'm³': 'Écart m³', prix: 'Écart prix', lieu: 'Lieu différent', livraisons: 'Livraisons manquantes', 'non facturé': 'Non facturé', 'à facturer': 'À facturer', 'absent du planning': 'Hors planning', tournees: 'Écart tournées', 'tournées': 'Écart tournées' }[e] || e;
       return badge(niv, lib);
     }).join(' ');
   };
   var gravite = function (x) {
     var e = x.etats || [];
-    return e.indexOf('non facturé') >= 0 || e.indexOf('m³') >= 0 || e.indexOf('livraisons') >= 0 ? 0 : e.indexOf('absent du planning') >= 0 ? 1 : e.indexOf('prix') >= 0 ? 2 : e.length ? 3 : 4;
+    return e.indexOf('non facturé') >= 0 || e.indexOf('m³') >= 0 || e.indexOf('livraisons') >= 0 ? 0 : e.indexOf('absent du planning') >= 0 ? 1 : e.indexOf('lieu') >= 0 || e.indexOf('prix') >= 0 ? 2 : e.length ? 3 : 4;
   };
   var c = ctrl.carburant.filter(function (x) { return garderSociete(x.societe); }).sort(function (a, b) { return gravite(a) - gravite(b) || String(a.clientPlanning || a.clientFacture).localeCompare(String(b.clientPlanning || b.clientFacture)); });
   var v = function (x) { return x === undefined || x === null || x === '' ? '<span class="nd">—</span>' : txt(x); };
   document.getElementById('tabCtrlCarbu').innerHTML = '<thead><tr><th>Client planning</th><th>Client facture</th><th>Lieu</th><th>Soc.</th><th class="n">Livr.</th><th class="n">m³ plan.</th><th class="n">m³ fact.</th><th class="n">Prix plan.</th><th class="n">Prix fact.</th><th class="n">CA planning</th><th class="n">Facturé HT</th><th>État</th></tr></thead><tbody>' +
     (c.length ? c.map(function (x) {
-      return '<tr><td>' + v(x.clientPlanning) + '</td><td>' + v(x.clientFacture) + '</td><td>' + v(x.lieu) + '</td><td>' + v(x.societe) + '</td><td class="n">' + v(x.n) +
+      return '<tr><td>' + v(x.clientPlanning) + '</td><td>' + v(x.clientFacture) + '</td><td>' + v(x.lieu) + (x.lieuFacture && x.lieu && sansAccents(x.lieuFacture) !== sansAccents(x.lieu) && (x.etats || []).indexOf('lieu') >= 0 ? '<div class="note">facturé : ' + txt(x.lieuFacture) + '</div>' : '') + '</td><td>' + v(x.societe) + '</td><td class="n">' + v(x.n) +
         '</td><td class="n">' + v(x.m3Plan) + '</td><td class="n' + (x.m3Plan !== undefined && x.m3Fact !== undefined && Math.abs(x.m3Plan - x.m3Fact) > 0.5 ? ' neg' : '') + '">' + v(x.m3Fact) +
         '</td><td class="n">' + v(x.prixPlan) + '</td><td class="n' + ((x.etats || []).indexOf('prix') >= 0 ? ' neg' : '') + '">' + v(x.prixFact) +
         '</td><td class="n">' + (x.caPlan !== undefined ? eur(x.caPlan) : '<span class="nd">—</span>') + '</td><td class="n">' + (x.montantFact !== undefined ? eur(x.montantFact) : '<span class="nd">—</span>') +
