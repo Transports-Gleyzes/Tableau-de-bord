@@ -771,7 +771,7 @@ function plannings_(ss) {
           chauffeur: chauffeur, client: String(val(l, c.client) || '').trim(), lieu: String(val(l, c.lieu) || '').trim(),
           ca: ca, km: nombre_(val(l, c.km), null), litres: nombre_(val(l, c.litres), null),
           attente: nombre_(val(l, c.attente), null), contratManquant: String(val(l, c.contrat) || '').trim(),
-          camionSaisi: plaque_(val(l, c.camion))
+          camionSaisi: /^#/.test(String(val(l, c.camion))) ? '' : plaque_(val(l, c.camion))
         });
       });
     });
@@ -932,22 +932,38 @@ function preparerCamionsPlannings_(ss) {
       var n = Math.min(sh.getMaxRows(), Math.max(sh.getLastRow(), o.rang >= courant ? st.entete + 1 + 300 : 0)) - st.entete - 1;
       if (n <= 0) return;
       var rng = sh.getRange(st.entete + 2, st.camion + 1, n, 1);
-      var formules = rng.getFormulas(), valeurs = rng.getValues(), lettre = colonneLettre_(st.chauffeur + 1), change = false;
-      var sortie = valeurs.map(function (x, i) {
-        var ligne = v[st.entete + 1 + i] || [], r = st.entete + 2 + i;
-        if (x[0] === undefined) x = [''];
+      var formules = rng.getFormulas(), valeurs = rng.getValues(), lettre = colonneLettre_(st.chauffeur + 1);
+      var hab = habituelsPlanning_(ext);
+      // Chaque case : 'f' = (ré)écrire la formule, 'v' = écrire une valeur figée, null = ne pas toucher
+      var actions = valeurs.map(function (x, i) {
+        var ligne = v[st.entete + 1 + i] || [], r = st.entete + 2 + i, val = x[0] === undefined ? '' : x[0];
+        var attendue = '=IF(TRIM(' + lettre + r + ')="","",IFERROR(VLOOKUP(TRIM(' + lettre + r + '),CAMIONS!$A:$B,2,FALSE),""))';
         var dt = ligne[st.date] instanceof Date ? ligne[st.date] : dateDepuisTexte_(ligne[st.date]);
-        var aChauffeur = String(ligne[st.chauffeur] || '').trim() !== '';
+        var chauffeur = String(ligne[st.chauffeur] || '').trim(), enErreur = /^#/.test(String(val));
         if (formules[i][0]) {
-          if (dt && minuit_(dt) < auj && aChauffeur) { change = true; nbFiges++; return [x[0]]; }   // jour passé : on fige
-          return [formules[i][0]];
+          if (dt && minuit_(dt) < auj && chauffeur) {   // jour passé : on fige le camion
+            nbFiges++;
+            return { t: 'v', x: enErreur ? (hab[cle_(chauffeur)] || '') : val };
+          }
+          if (formules[i][0] === attendue && !enErreur) return null;
+          nbFormules++;
+          return { t: 'f', x: attendue };               // formule absente ou cassée : on la (ré)écrit
         }
-        if (String(x[0]).trim() !== '') return [x[0]];                                           // saisi à la main : on ne touche pas
-        if (o.rang < courant) return [x[0]];                                                     // mois terminé : pas de nouvelle formule
-        change = true; nbFormules++;
-        return ['=IF(TRIM(' + lettre + r + ')="","",IFERROR(VLOOKUP(TRIM(' + lettre + r + '),CAMIONS!$A:$B,2,FALSE),""))'];
+        if (String(val).trim() !== '' || o.rang < courant) return null;   // saisi à la main, ou mois terminé
+        nbFormules++;
+        return { t: 'f', x: attendue };
       });
-      if (change) rng.setValues(sortie);
+      // Écriture par blocs : setFormulas comprend la syntaxe anglaise quelle que soit la langue du fichier
+      // (setValues interpréterait « , » selon la langue : en français il faut « ; », d'où des #ERROR!)
+      var i = 0;
+      while (i < actions.length) {
+        if (!actions[i]) { i++; continue; }
+        var j = i, t = actions[i].t;
+        while (j < actions.length && actions[j] && actions[j].t === t) j++;
+        var bloc = sh.getRange(st.entete + 2 + i, st.camion + 1, j - i, 1), donnees = actions.slice(i, j).map(function (a) { return [a.x]; });
+        if (t === 'f') bloc.setFormulas(donnees); else bloc.setValues(donnees);
+        i = j;
+      }
       console.log('Planning ' + src[1] + ' : onglet ' + sh.getName() + ' traité');
     });
     msgs.push('Planning ' + src[1] + ' : ' + (ajouts.length ? ajouts.length + ' chauffeur(s) ajouté(s) dans l\'onglet CAMIONS, ' : '') +
