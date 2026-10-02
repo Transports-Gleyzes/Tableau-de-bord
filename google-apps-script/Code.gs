@@ -564,6 +564,10 @@ function controleFactures_(ss, jour0) {
       if (regul || l.Nature === 'AVOIR') c.ajustements.push({ libelle: regul ? 'Régularisation' : 'Avoir', montant: r2(montant), facture: l.N_Facture });
       if (l.Nature !== 'TRANSPORT' || regul) return;
       c.transport = true;
+      // Client déclaré « client / lieu » dans CORRESPONDANCES : toutes ses livraisons sont à ce lieu
+      // (une facture sans ligne de trajet porte sinon l'adresse du client, ex. Miramas pour Brignoles)
+      var regle = corr.clients.filter(function (c) { return c[2] && (memePersonne_(c[0], l.Client) || cle_(c[0]) === cle_(l.Client)); })[0];
+      if (regle) l.Lieu = regle[2];
       var k = l.Societe + '|' + cle_(l.Client) + '|' + cle_(l.Lieu);   // les 2 factures d'une quinzaine s'additionnent
       var a = facturees[k] = facturees[k] || { societe: l.Societe, client: l.Client, ref: l.Ref_Client, lieu: l.Lieu, qte: 0, montant: 0, prix: {}, lvns: [], factures: {}, quinzaines: {} };
       a.qte += nombre_(l.Quantite, 0); a.montant += montant; a.factures[l.N_Facture] = 1;
@@ -653,7 +657,8 @@ function controleFactures_(ss, jour0) {
       var nom = clientPlanningDe(a) || clientPlanningDe({ client: sansForme(a.client), ref: a.ref });
       return Object.keys(faits).filter(function (k) {
         var f = faits[k], g = groupes[k];
-        return f.a.societe === a.societe && (memePersonne_(sansForme(f.a.client), sansForme(a.client)) || (nom && cle_(g.client) === nom)) && (lieuOkPour(a, g) || lieuOk(a.lieu, f.a.lieu));
+        return f.a.societe === a.societe && (memePersonne_(sansForme(f.a.client), sansForme(a.client)) || (nom && cle_(g.client) === nom)) && (lieuOkPour(a, g) || lieuOk(a.lieu, f.a.lieu) ||
+          (f.a.ref === a.ref && !Object.keys(groupes).some(function (k2) { return lieuOk(a.lieu, groupes[k2].lieu); })));   // lieu inconnu du planning (adresse du client)
       })[0];
     };
     var aggs = Object.keys(facturees).map(function (k) { return facturees[k]; }).sort(function (a, b) { return b.qte - a.qte; });
