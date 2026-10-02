@@ -213,6 +213,10 @@ button.petit { padding: 2px 8px; font-size: 12px; }
   <!-- SALARIES -->
   <section id="salaries" hidden>
     <div class="tuiles" id="tuilesSal"></div>
+    <div class="grille">
+      <div class="carte"><h2>Absents aujourd'hui</h2><div id="absAujourdhui"></div></div>
+      <div class="carte"><h2>Absences des 30 prochains jours</h2><div id="absAVenir"></div></div>
+    </div>
     <div class="carte">
       <h2>Permis, FCO, ADR, visites médicales, cartes conducteur</h2>
       <p class="note" id="noteEchS"></p>
@@ -221,10 +225,6 @@ button.petit { padding: 2px 8px; font-size: 12px; }
         <select id="filtreEtatS"><option value="">Tous</option><option value="alerte">En retard ou bientôt</option><option value="depasse">En retard</option><option value="vide">À renseigner</option></select>
       </div>
       <div class="tableau"><table id="tabSal"></table></div>
-    </div>
-    <div class="grille">
-      <div class="carte"><h2>Absents aujourd'hui</h2><div id="absAujourdhui"></div></div>
-      <div class="carte"><h2>Absences des 30 prochains jours</h2><div id="absAVenir"></div></div>
     </div>
   </section>
 
