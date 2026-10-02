@@ -127,11 +127,12 @@ function installer() {
     sh.getRange(1, 1, 1, sh.getLastColumn()).setFontWeight('bold').setBackground('#e8eef7');
     sh.setFrozenRows(1);
   });
+  console.log('Onglets vérifiés');
   var shP = ss.getSheetByName('PARAMETRES');
   var existants = lireTable_(shP).map(function (l) { return l['Paramètre']; });
-  PARAMETRES_DEFAUT.forEach(function (p) {
-    if (existants.indexOf(p[0]) < 0) shP.appendRow(p);
-  });
+  var nouveauxP = PARAMETRES_DEFAUT.filter(function (p) { return existants.indexOf(p[0]) < 0; });
+  if (nouveauxP.length) shP.getRange(shP.getLastRow() + 1, 1, nouveauxP.length, 3).setValues(nouveauxP);
+  CACHE_PARAMS_ = null;
   if (!lireParametres_()['EMAIL_ALERTES']) {
     var moi = Session.getEffectiveUser().getEmail();
     if (moi) majParametre_('EMAIL_ALERTES', moi);
@@ -157,11 +158,16 @@ function installer() {
         SpreadsheetApp.newDataValidation().requireValueInList(listes[nom][col], true).setAllowInvalid(true).build());
     });
   });
+  console.log('Formats et listes déroulantes posés');
   var synchro = '';
   try {
-    synchro = synchroniserReferentiels_(ss) + preparerCamionsPlannings_(ss);
+    synchro = synchroniserReferentiels_(ss);
+    console.log('Véhicules et chauffeurs synchronisés');
   } catch (e) {
     synchro = '\n\nTableau « Échéances flotte » illisible : ' + e.message;
+  }
+  if (classeurParam_(ss, 'ID_PLANNING_INTER') || classeurParam_(ss, 'ID_PLANNING_CARBURANT')) {
+    synchro += '\n\nÉtape suivante : menu Tableau de bord > Remplir la colonne CAMION des plannings.';
   }
   try {
     SpreadsheetApp.getUi().alert('Onglets prêts.' + synchro + '\n\nComplétez FLOTTE (Société, Activite, Statut) et SALARIES (Société), puis activez les envois automatiques (menu Tableau de bord > 2).');
@@ -592,7 +598,14 @@ var CATEGORIES_VEHICULE = /TRACTEUR|REMORQUE|CITERNE|PORTEUR|VEHICULE|TELECHARGE
  * Toutes les échéances suivies : colonnes de date de FLOTTE / SALARIES (si remplies)
  * + toutes les lignes du tableau « Échéances flotte » (y compris celles sans date, date = null).
  */
+var CACHE_ECHEANCES_ = null;
 function echeances_(ss) {
+  if (CACHE_ECHEANCES_) return CACHE_ECHEANCES_;
+  var res = echeancesLues_(ss);
+  return (CACHE_ECHEANCES_ = res);
+}
+
+function echeancesLues_(ss) {
   var res = [];
   [['FLOTTE', 'Véhicule', 'Flotte'], ['SALARIES', 'Chauffeur', 'Salariés']].forEach(function (f) {
     var sh = ss.getSheetByName(f[0]);
@@ -814,11 +827,15 @@ function preparerCamionsManuel() {
  * Une case où un camion a été tapé à la main n'est jamais modifiée.
  */
 function preparerCamionsPlannings_(ss) {
+  var debutExec = Date.now(), tropLong = function () { return Date.now() - debutExec > 270000; }, interrompu = false;
   var auj = minuit_(new Date()), courant = auj.getFullYear() * 12 + auj.getMonth() + 1;
   var connues = immatsConnues_(ss), msgs = [];
+  console.log('Immatriculations connues : ' + Object.keys(connues).length);
   SOURCES_PLANNING.forEach(function (src) {
+    if (tropLong()) { interrompu = true; return; }
     var ext = classeurParam_(ss, src[0]);
     if (!ext) return;
+    console.log('Planning ' + src[1] + ' ouvert');
     var onglets = ext.getSheets().map(function (sh) { var m = moisOnglet_(sh.getName()); return m ? { sh: sh, mois: m.mois, an: m.an } : null; })
       .filter(Boolean).map(function (o) {
         if (!o.an) o.an = auj.getFullYear();
@@ -871,7 +888,9 @@ function preparerCamionsPlannings_(ss) {
 
     // 2. et 3. Colonne CAMION : formules sur le mois en cours et les suivants, valeurs figées pour les jours passés
     var nbFormules = 0, nbFiges = 0, nbColonnes = 0;
+    console.log('Planning ' + src[1] + ' : onglet CAMIONS à jour');
     onglets.filter(function (o) { return o.rang >= courant - 1; }).forEach(function (o) {
+      if (tropLong()) { interrompu = true; return; }
       var sh = o.sh;
       if (sh.getLastRow() < 1) return;
       var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues(), st = structurePlanning_(v);
@@ -905,10 +924,12 @@ function preparerCamionsPlannings_(ss) {
         return ['=IF(TRIM(' + lettre + r + ')="","",IFERROR(VLOOKUP(TRIM(' + lettre + r + '),CAMIONS!$A:$B,2,FALSE),""))'];
       });
       if (change) rng.setValues(sortie);
+      console.log('Planning ' + src[1] + ' : onglet ' + sh.getName() + ' traité');
     });
     msgs.push('Planning ' + src[1] + ' : ' + (ajouts.length ? ajouts.length + ' chauffeur(s) ajouté(s) dans l\'onglet CAMIONS, ' : '') +
       (nbColonnes ? nbColonnes + ' colonne(s) CAMION ajoutée(s), ' : '') + nbFormules + ' case(s) CAMION automatisée(s), ' + nbFiges + ' jour(s) passé(s) figé(s).');
   });
+  if (interrompu) msgs.push('Pas tout à fait fini (limite de temps de Google) : relancez « Remplir la colonne CAMION des plannings », il reprendra où il s\'est arrêté.');
   return msgs.length ? '\n\n' + msgs.join('\n') : '';
 }
 
@@ -1095,21 +1116,24 @@ function synchroniserReferentiels_(ss) {
   var flotte = lireTable_(shF).map(function (l) { return plaque_(l.Camion_ID); });
   var salaries = lireTable_(shS).map(function (l) { return ((l['Prénom'] || '') + ' ' + (l.Nom || '')).trim(); });
   var eF = shF.getRange(1, 1, 1, shF.getLastColumn()).getValues()[0], eS = shS.getRange(1, 1, 1, shS.getLastColumn()).getValues()[0];
-  var nbV = 0, nbC = 0, vus = {};
+  var nbV = 0, nbC = 0, vus = {}, ajoutsF = [], ajoutsS = [];
   echeances_(ss).forEach(function (e) {
     if (vus[e.nom]) return;
     vus[e.nom] = 1;
     var k = cle_(e.categorie);
     if (e.domaine === 'Flotte' && k !== 'TELECHARGEMENT' && flotte.indexOf(e.nom) < 0) {
       var lv = { Camion_ID: e.nom, Type: e.categorie, Actif: 'O', Statut: 'Disponible' };
-      shF.appendRow(eF.map(function (h) { return lv[h] || ''; }));
+      ajoutsF.push(eF.map(function (h) { return lv[h] || ''; }));
       flotte.push(e.nom); nbV++;
     } else if (k === 'CHAUFFEUR' && !salaries.some(function (n) { return memePersonne_(n, e.nom); })) {
       var ls = { Nom: e.nom, Poste: 'Chauffeur', Actif: 'O' };
-      shS.appendRow(eS.map(function (h) { return ls[h] || ''; }));
+      ajoutsS.push(eS.map(function (h) { return ls[h] || ''; }));
       salaries.push(e.nom); nbC++;
     }
   });
+  // Une seule écriture par onglet (bien plus rapide que des ajouts ligne par ligne)
+  if (ajoutsF.length) shF.getRange(shF.getLastRow() + 1, 1, ajoutsF.length, eF.length).setValues(ajoutsF);
+  if (ajoutsS.length) shS.getRange(shS.getLastRow() + 1, 1, ajoutsS.length, eS.length).setValues(ajoutsS);
   return '\n\nTableau « Échéances flotte » relié : ' + nbV + ' véhicule(s) et ' + nbC + ' chauffeur(s) ajouté(s) dans FLOTTE et SALARIES.';
 }
 
@@ -1273,18 +1297,20 @@ function lireTable_(sh) {
   });
 }
 
+var CACHE_PARAMS_ = null;
 function lireParametres_(ss) {
+  if (CACHE_PARAMS_) return CACHE_PARAMS_;
   var sh = (ss || classeur_()).getSheetByName('PARAMETRES');
   var p = {};
   lireTable_(sh).forEach(function (l) { p[String(l['Paramètre']).trim()] = l.Valeur; });
-  return p;
+  return (CACHE_PARAMS_ = p);
 }
 
 function majParametre_(nom, valeur) {
   var sh = classeur_().getSheetByName('PARAMETRES');
   var v = sh.getRange(1, 1, sh.getLastRow(), 2).getValues();
   for (var i = 1; i < v.length; i++) {
-    if (v[i][0] === nom) { sh.getRange(i + 1, 2).setValue(valeur); return; }
+    if (v[i][0] === nom) { sh.getRange(i + 1, 2).setValue(valeur); CACHE_PARAMS_ = null; return; }
   }
 }
 
