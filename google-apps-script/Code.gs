@@ -326,6 +326,47 @@ function ajouterSaisie(type, objet) {
   return true;
 }
 
+/**
+ * Depuis le site (onglet Charges) : remplace tout le contenu de l'onglet CHARGES_MUTUALISEES par les lignes reçues.
+ * Chaque ligne : { Poste, Société (Gleyzes / LPB), Montant_Mensuel, Debut, Fin } ; dates au format AAAA-MM-JJ ou vides.
+ */
+function enregistrerCharges(lignes) {
+  if (!Array.isArray(lignes)) throw new Error('Données invalides');
+  var propres = lignes.filter(function (l) {
+    return String(l.Poste || '').trim() || nombre_(l.Montant_Mensuel, null) !== null;
+  }).map(function (l, i) {
+    var poste = String(l.Poste || '').trim().replace(/^[=+\-@]/, "'$&").slice(0, 120);
+    if (!poste) throw new Error('Ligne ' + (i + 1) + ' : le poste est vide');
+    var soc = cle_(l['Société']);
+    soc = soc.indexOf('LPB') >= 0 ? 'LPB' : (soc.indexOf('GLEYZES') >= 0 ? 'GLEYZES' : '');
+    if (!soc) throw new Error('Ligne « ' + poste + ' » : choisissez la société (Gleyzes ou LPB)');
+    var montant = nombre_(l.Montant_Mensuel, null);
+    if (montant === null || montant < 0) throw new Error('Ligne « ' + poste + ' » : montant invalide');
+    var date = function (v, nom) {
+      if (!String(v || '').trim()) return '';
+      var d = dateDepuisTexte_(v);
+      if (!d) throw new Error('Ligne « ' + poste + ' » : date de ' + nom + ' invalide');
+      return d;
+    };
+    var debut = date(l.Debut, 'début'), fin = date(l.Fin, 'fin');
+    if (debut && fin && fin < debut) throw new Error('Ligne « ' + poste + ' » : la fin est avant le début');
+    return [poste, soc, montant, debut, fin];
+  });
+  var verrou = LockService.getScriptLock();
+  verrou.waitLock(10000);
+  try {
+    var sh = classeur_().getSheetByName('CHARGES_MUTUALISEES');
+    if (!sh) throw new Error('Onglet CHARGES_MUTUALISEES introuvable : lancez « Installer / compléter les onglets »');
+    var entetes = FEUILLES.CHARGES_MUTUALISEES;
+    sh.getRange(1, 1, 1, entetes.length).setValues([entetes]);
+    if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(entetes.length, sh.getLastColumn())).clearContent();
+    if (propres.length) sh.getRange(2, 1, propres.length, entetes.length).setValues(propres);
+  } finally {
+    verrou.releaseLock();
+  }
+  return propres.length;
+}
+
 /** Depuis le site : action 'payee' (Statut + Date_Paiement) ou 'relancee' (Derniere_Relance = aujourd'hui). */
 function majFacture(numero, action) {
   if (action !== 'payee' && action !== 'relancee') throw new Error('Action inconnue : ' + action);

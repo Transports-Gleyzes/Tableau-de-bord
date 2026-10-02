@@ -103,6 +103,11 @@ form.saisie .actions { grid-column: 1 / -1; display: flex; gap: 10px; align-item
 .attention .detail { padding: 0 0 10px 30px; color: var(--text-2); font-size: 13px; }
 .attention .detail div { padding: 2px 0; }
 .attention .ico { width: 20px; text-align: center; }
+table.edition input, table.edition select { width: 100%; min-width: 90px; padding: 4px 6px; }
+table.edition input.poste { min-width: 220px; }
+table.edition input.montant { text-align: right; min-width: 100px; }
+table.edition tr.terminee td { opacity: .55; }
+table.edition button.suppr { border: 0; background: none; color: var(--critical-text); font-size: 16px; padding: 2px 6px; }
 .carte.inter { border-top: 4px solid var(--s1); }
 .carte.carbu { border-top: 4px solid var(--s2); }
 .pastille-act { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
@@ -129,6 +134,7 @@ button.petit { padding: 2px 8px; font-size: 12px; }
 <nav role="tablist" id="onglets">
   <button role="tab" data-onglet="accueil" aria-selected="true">Accueil</button>
   <button role="tab" data-onglet="finances">Finances</button>
+  <button role="tab" data-onglet="charges">Charges</button>
   <button role="tab" data-onglet="flotte">Flotte</button>
   <button role="tab" data-onglet="salaries">Salariés</button>
   <button role="tab" data-onglet="activite">Activité</button>
@@ -180,6 +186,23 @@ button.petit { padding: 2px 8px; font-size: 12px; }
       <h2>Détail par camion</h2>
       <p class="note">N/D = donnée pas encore disponible (jamais remplacée par 0). Cliquez un titre de colonne pour trier.</p>
       <div class="tableau"><table id="tabFin"></table></div>
+    </div>
+  </section>
+
+  <!-- CHARGES (modifiables depuis le site) -->
+  <section id="charges" hidden>
+    <div class="tuiles" id="tuilesCharges"></div>
+    <div class="carte">
+      <h2>Charges à mutualiser</h2>
+      <p class="note">Modifiez directement les cases, ajoutez ou supprimez des lignes, puis cliquez sur « Enregistrer ».
+        « Fin » : dernier jour où la charge compte (ex. départ d'une salariée, fin d'un contrat d'assurance). « Début » : pour une nouvelle charge.</p>
+      <div class="tableau"><table id="tabCharges" class="edition"></table></div>
+      <div class="barre" style="margin-top:12px">
+        <button id="ajoutCharge">+ Ajouter une charge</button>
+        <button id="enregCharges" class="primaire">Enregistrer</button>
+        <button id="annulCharges">Annuler les modifications</button>
+        <span class="msg" id="msgCharges"></span>
+      </div>
     </div>
   </section>
 
@@ -569,7 +592,7 @@ function afficherOnglet(nom) {
   try { localStorage.setItem('ongletTDB', nom); } catch (e) {}
   if (!D) return;
   ({ accueil: rendreAccueil, finances: rendreFinances, flotte: rendreFlotte, salaries: rendreSalaries,
-     activite: rendreActivite, conso: rendreConso, factures: rendreFactures, alertes: rendreAlertes, saisie: function () {} })[nom]();
+     activite: rendreActivite, conso: rendreConso, factures: rendreFactures, charges: rendreCharges, alertes: rendreAlertes, saisie: function () {} })[nom]();
 }
 
 function alertesFiltrees() {
@@ -1085,6 +1108,73 @@ function rendreActivite() {
     return barre(a[1], moisAn.map(function (x) { return caListe(pl.filter(function (l) { return l.date.slice(0, 7) === x && l.activite === a[0]; })) || null; }), css(a[2]));
   }) }, options: optionsCommunes(false) });
 }
+
+// ---------- charges à mutualiser (modifiables) ----------
+var brouillonCharges = null;   // lignes en cours de modification (null = pas de modification en cours)
+function chargesDepuisDonnees() {
+  return (D.CHARGES_MUTUALISEES || []).map(function (c) {
+    var so = String(c['Société'] || '').toUpperCase();
+    return { Poste: String(c.Poste || '').trim(), 'Société': so.indexOf('LPB') >= 0 ? 'LPB' : (so.indexOf('GLEYZES') >= 0 ? 'Gleyzes' : ''),
+      Montant_Mensuel: num(c.Montant_Mensuel), Debut: String(c.Debut || '').slice(0, 10), Fin: String(c.Fin || '').slice(0, 10) };
+  });
+}
+function chargeActive(c, jour) { return (!c.Debut || c.Debut <= jour) && (!c.Fin || c.Fin >= jour); }
+function rendreCharges() {
+  if (!brouillonCharges) brouillonCharges = chargesDepuisDonnees();
+  var auj = aujourdhui(), tot = { Gleyzes: 0, LPB: 0 };
+  brouillonCharges.forEach(function (c) { if (chargeActive(c, auj) && tot[c['Société']] !== undefined) tot[c['Société']] += num(c.Montant_Mensuel) || 0; });
+  document.getElementById('tuilesCharges').innerHTML = tuile('Charges mensuelles Gleyzes', fmtEur.format(tot.Gleyzes), 'en vigueur aujourd\'hui') +
+    tuile('Charges mensuelles LPB', fmtEur.format(tot.LPB), 'en vigueur aujourd\'hui') + tuile('Total', fmtEur.format(tot.Gleyzes + tot.LPB), brouillonCharges.length + ' ligne(s)');
+  var t = document.getElementById('tabCharges');
+  t.innerHTML = '<thead><tr><th>Poste</th><th>Société</th><th class="n">Montant mensuel (€)</th><th>Début</th><th>Fin</th><th></th></tr></thead><tbody>' +
+    brouillonCharges.map(function (c, i) {
+      var finie = c.Fin && c.Fin < auj;
+      return '<tr class="' + (finie ? 'terminee' : '') + '" data-i="' + i + '">' +
+        '<td><input class="poste" data-k="Poste" value="' + txt(c.Poste) + '"></td>' +
+        '<td><select data-k="Société"><option value=""></option><option' + (c['Société'] === 'Gleyzes' ? ' selected' : '') + '>Gleyzes</option><option' + (c['Société'] === 'LPB' ? ' selected' : '') + '>LPB</option></select></td>' +
+        '<td><input class="montant" data-k="Montant_Mensuel" type="number" step="0.01" min="0" value="' + (c.Montant_Mensuel === null ? '' : c.Montant_Mensuel) + '"></td>' +
+        '<td><input data-k="Debut" type="date" value="' + txt(c.Debut) + '"></td>' +
+        '<td><input data-k="Fin" type="date" value="' + txt(c.Fin) + '">' + (finie ? ' <span class="nd">terminée</span>' : '') + '</td>' +
+        '<td><button class="suppr" title="Supprimer cette ligne" data-suppr="' + i + '">✕</button></td></tr>';
+    }).join('') + '</tbody>';
+  t.querySelectorAll('[data-k]').forEach(function (el) {
+    el.addEventListener('change', function () {
+      var c = brouillonCharges[+el.closest('tr').dataset.i], k = el.dataset.k;
+      c[k] = k === 'Montant_Mensuel' ? num(el.value) : el.value;
+      document.getElementById('msgCharges').className = 'msg'; document.getElementById('msgCharges').textContent = 'Modifications non enregistrées';
+      if (k !== 'Poste') rendreCharges();
+    });
+  });
+  t.querySelectorAll('[data-suppr]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var c = brouillonCharges[+b.dataset.suppr];
+      if (!confirm('Supprimer la ligne « ' + (c.Poste || 'sans nom') + ' » ? (Pour une charge qui s\'arrête, mettez plutôt une date de fin.)')) return;
+      brouillonCharges.splice(+b.dataset.suppr, 1);
+      document.getElementById('msgCharges').className = 'msg'; document.getElementById('msgCharges').textContent = 'Modifications non enregistrées';
+      rendreCharges();
+    });
+  });
+}
+document.getElementById('ajoutCharge').addEventListener('click', function () {
+  if (!brouillonCharges) brouillonCharges = chargesDepuisDonnees();
+  brouillonCharges.push({ Poste: '', 'Société': '', Montant_Mensuel: null, Debut: '', Fin: '' });
+  rendreCharges();
+  var champs = document.querySelectorAll('#tabCharges input.poste'); if (champs.length) champs[champs.length - 1].focus();
+});
+document.getElementById('annulCharges').addEventListener('click', function () {
+  brouillonCharges = null; document.getElementById('msgCharges').textContent = ''; rendreCharges();
+});
+document.getElementById('enregCharges').addEventListener('click', function () {
+  var msg = document.getElementById('msgCharges'), bouton = this;
+  if (!(window.google && google.script && google.script.run)) { msg.className = 'msg err'; msg.textContent = 'Mode démonstration : rien n\'est enregistré.'; return; }
+  bouton.disabled = true; msg.className = 'msg'; msg.textContent = 'Enregistrement…';
+  google.script.run.withSuccessHandler(function (n) {
+    bouton.disabled = false; msg.className = 'msg ok'; msg.textContent = '✓ ' + n + ' ligne(s) enregistrée(s)';
+    brouillonCharges = null; charger();
+  }).withFailureHandler(function (e) {
+    bouton.disabled = false; msg.className = 'msg err'; msg.textContent = e.message;
+  }).enregistrerCharges(brouillonCharges);
+});
 
 // ---------- consommation (fichier Litrages) ----------
 function rendreConso() {
