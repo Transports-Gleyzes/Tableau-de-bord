@@ -40,6 +40,9 @@ var FEUILLES = {
              'Derniere_Relance', 'Remarque'],
   HEURES: ['Date', 'Salarié', 'Heures', 'Remarque'],
   CHARGES_MUTUALISEES: ['Poste', 'Société', 'Montant_Mensuel', 'Debut', 'Fin', 'Echeance'],
+  FACTURES_CLIENTS: ['N_Facture', 'Date_Facture', 'Mois', 'Societe', 'Client', 'Ref_Client', 'Activite', 'Nature', 'Lieu',
+                     'Quantite', 'Prix_Unitaire', 'Montant_HT', 'Indexation_Pct', 'LVN', 'Date_LVN', 'Prefacture',
+                     'Net_HT_Facture', 'Fichier', 'Depose_Le'],
   JOURNAL_ALERTES: ['Date_Envoi', 'Clé', 'Niveau', 'Message']
 };
 
@@ -67,6 +70,7 @@ var PARAMETRES_DEFAUT = [
   ['ID_PLANNING_CARBURANT', '', 'Lien du Google Sheet « Planning Carburant » : CA et livraisons lus directement'],
   ['ID_LITRAGES', '', 'Lien du Google Sheet « Litrages véhicules » : consommation par semaine lue directement'],
   ['SEUIL_HAUSSE_CONSO_PCT', 15, 'Alerte si la consommation récente dépasse de ce % la moyenne habituelle du camion'],
+  ['JOUR_CONTROLE_FACTURES', 7, 'À partir de ce jour du mois, une livraison du mois précédent sans facture déposée est signalée'],
   ['JOURS_MOIS_PRECEDENT', 10, 'Pendant ces premiers jours du mois, les alertes des plannings portent aussi sur le mois précédent (ensuite : mois en cours seulement)'],
   ['NB_SEMAINES_CONSO', 2, 'Nombre de dernières semaines regroupées pour juger la consommation (1 = très réactif mais beaucoup de fausses alertes)'],
   ['JOURS_PREAVIS', 30, 'Une échéance passe « à prévoir » ce nombre de jours avant la date'],
@@ -214,7 +218,7 @@ function doGet() {
 function getDonnees() {
   var ss = classeur_();
   var d = {};
-  ['FINANCES', 'FLOTTE', 'SALARIES', 'ABSENCES', 'CARBURANT', 'LIVRAISONS', 'FACTURES', 'HEURES', 'CHARGES_MUTUALISEES'].forEach(function (nom) {
+  ['FINANCES', 'FLOTTE', 'SALARIES', 'ABSENCES', 'CARBURANT', 'LIVRAISONS', 'FACTURES', 'HEURES', 'CHARGES_MUTUALISEES', 'FACTURES_CLIENTS'].forEach(function (nom) {
     var sh = ss.getSheetByName(nom);
     d[nom] = sh ? lireTable_(sh).map(serialiser_) : [];
   });
@@ -261,6 +265,7 @@ function getDonnees() {
     SEUIL_HAUSSE_CONSO_PCT: nombre_(params.SEUIL_HAUSSE_CONSO_PCT, 15),
     NB_SEMAINES_CONSO: Math.max(1, nombre_(params.NB_SEMAINES_CONSO, 2))
   };
+  try { d.CONTROLE = controleFactures_(ss, minuit_(new Date())).mois; } catch (e) { d.CONTROLE = {}; d.erreurs.push('Contrôle des factures : ' + e.message); }
   d.alertes = calculerAlertes_(ss, new Date());
   d.genereLe = Utilities.formatDate(new Date(), FUSEAU, "dd/MM/yyyy 'à' HH:mm");
   d.derniereImport = PropertiesService.getScriptProperties().getProperty('DERNIER_IMPORT_TEXTE') || '';
@@ -365,6 +370,271 @@ function enregistrerCharges(lignes) {
     verrou.releaseLock();
   }
   return propres.length;
+}
+
+// ---------------------------------------------------------------------------
+// Factures clients (PDF INFORCE) : dépôt, lecture, contrôle avec les plannings, indexation
+// ---------------------------------------------------------------------------
+var DOSSIER_FACTURES = 'Tableau de bord - Factures clients';
+
+function dossierFactures_(mois) {
+  var it = DriveApp.getFoldersByName(DOSSIER_FACTURES);
+  var racine = it.hasNext() ? it.next() : DriveApp.createFolder(DOSSIER_FACTURES);
+  if (!mois) return racine;
+  var sous = racine.getFoldersByName(mois);
+  return sous.hasNext() ? sous.next() : racine.createFolder(mois);
+}
+
+/**
+ * Depuis le site : enregistre une facture lue dans le navigateur.
+ * f = { numero, date (AAAA-MM-JJ), mois (AAAA-MM), societe, client, refClient, activite, prefacture, netHT,
+ *       lignes: [{ nature, lieu, quantite, prix, montant, indexPct, lvn, dateLvn }] } ; pdfBase64 = le fichier.
+ * Une facture déjà déposée (même numéro) est remplacée.
+ */
+function deposerFacture(f, pdfBase64, nomFichier) {
+  if (!f || !/^[A-Z]{1,3}\d{4,}$/.test(String(f.numero || ''))) throw new Error('Numéro de facture illisible');
+  if (!/^\d{4}-\d{2}$/.test(String(f.mois || ''))) throw new Error('Mois de la facture illisible');
+  if (!Array.isArray(f.lignes) || !f.lignes.length) throw new Error('Aucune ligne lue sur la facture ' + f.numero);
+  var url = '';
+  if (pdfBase64) {
+    var blob = Utilities.newBlob(Utilities.base64Decode(pdfBase64), 'application/pdf', (nomFichier || f.numero + '.pdf'));
+    var dossier = dossierFactures_(f.mois);
+    var anciens = dossier.getFilesByName(blob.getName());
+    while (anciens.hasNext()) anciens.next().setTrashed(true);
+    url = dossier.createFile(blob).getUrl();
+  }
+  var propre = function (t) { return String(t || '').replace(/^[=+\-@]/, "'$&").slice(0, 200); };
+  var maintenant = new Date();
+  var lignes = f.lignes.map(function (l) {
+    return [f.numero, dateDepuisTexte_(f.date) || '', f.mois, f.societe === 'LPB' ? 'LPB' : 'Gleyzes', propre(f.client), propre(f.refClient),
+      f.activite === 'Inter' ? 'Inter' : 'Carburant', propre(l.nature), propre(l.lieu), nombre_(l.quantite, ''), nombre_(l.prix, ''),
+      nombre_(l.montant, 0), nombre_(l.indexPct, ''), propre(l.lvn), propre(l.dateLvn), propre(f.prefacture), nombre_(f.netHT, ''), url, maintenant];
+  });
+  var verrou = LockService.getScriptLock();
+  verrou.waitLock(15000);
+  try {
+    var sh = classeur_().getSheetByName('FACTURES_CLIENTS');
+    if (!sh) throw new Error('Onglet FACTURES_CLIENTS introuvable : lancez « Installer / compléter les onglets »');
+    supprimerLignesFacture_(sh, f.numero);
+    sh.getRange(sh.getLastRow() + 1, 1, lignes.length, lignes[0].length).setValues(lignes);
+  } finally {
+    verrou.releaseLock();
+  }
+  return { numero: f.numero, lignes: lignes.length, url: url };
+}
+
+function supprimerLignesFacture_(sh, numero) {
+  if (sh.getLastRow() < 2) return null;
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues(), e = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+  var cf = e.indexOf('Fichier'), url = null;
+  var garde = v.filter(function (l) { if (String(l[0]) === String(numero)) { url = url || l[cf]; return false; } return true; });
+  if (garde.length === v.length) return null;
+  sh.getRange(2, 1, v.length, v[0].length).clearContent();
+  if (garde.length) sh.getRange(2, 1, garde.length, garde[0].length).setValues(garde);
+  return url;
+}
+
+/** Depuis le site : supprime une facture déposée (lignes + PDF mis à la corbeille). */
+function supprimerFactureClient(numero) {
+  var verrou = LockService.getScriptLock();
+  verrou.waitLock(15000);
+  try {
+    var url = supprimerLignesFacture_(classeur_().getSheetByName('FACTURES_CLIENTS'), numero);
+    var id = url && (String(url).match(/[-\w]{25,}/) || [])[0];
+    if (id) try { DriveApp.getFileById(id).setTrashed(true); } catch (e) { /* déjà supprimé */ }
+    return !!url || true;
+  } finally {
+    verrou.releaseLock();
+  }
+}
+
+/**
+ * Depuis le site : texte d'un PDF scanné (sans texte), par la reconnaissance de caractères de Google Drive.
+ * Nécessite le service avancé Drive (déclaré dans appsscript.json). Renvoie le texte, une ligne par ligne lue.
+ */
+function lireScanFacture(pdfBase64, nomFichier) {
+  if (typeof Drive === 'undefined') throw new Error('Lecture des scans indisponible : le service Drive n\'est pas activé (appsscript.json)');
+  var blob = Utilities.newBlob(Utilities.base64Decode(pdfBase64), 'application/pdf', nomFichier || 'scan.pdf');
+  var doc = Drive.Files.create({ name: 'OCR temporaire - ' + (nomFichier || 'scan'), mimeType: 'application/vnd.google-apps.document' },
+    blob, { ocrLanguage: 'fr' });
+  try {
+    return DocumentApp.openById(doc.id).getBody().getText();
+  } finally {
+    try { Drive.Files.remove(doc.id); } catch (e) { try { DriveApp.getFileById(doc.id).setTrashed(true); } catch (e2) { /* rien */ } }
+  }
+}
+
+function nomMois_(m) {
+  var noms = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  return noms[+m.slice(5, 7) - 1] + ' ' + m.slice(0, 4);
+}
+
+/** Même lieu (« ALES » et « LIDL ALES », « AIGUES MORTES ») : égalité ou inclusion de mots. */
+function memeLieu_(a, b) {
+  var x = cle_(a).replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim(), y = cle_(b).replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!x || !y) return false;
+  return x === y || (' ' + y + ' ').indexOf(' ' + x + ' ') >= 0 || (' ' + x + ' ').indexOf(' ' + y + ' ') >= 0;
+}
+
+/**
+ * Rapproche, mois par mois, les factures déposées (FACTURES_CLIENTS) et les plannings.
+ * Mois contrôlés : ceux qui ont des factures déposées, plus le mois précédent à partir du JOUR_CONTROLE_FACTURES.
+ * Renvoie { mois: { 'AAAA-MM': { carburant: [...], inter: [...], indexation: [...] } }, alertes: [...] }.
+ */
+function controleFactures_(ss, jour0) {
+  var p = lireParametres_(ss), jourCtrl = nombre_(p.JOUR_CONTROLE_FACTURES, 7);
+  var sh = ss.getSheetByName('FACTURES_CLIENTS');
+  var fact = sh ? lireTable_(sh) : [];
+  var pl = [];
+  try { pl = plannings_(ss); } catch (e) { /* plannings non reliés */ }
+  var moisCourant = Utilities.formatDate(jour0, FUSEAU, 'yyyy-MM');
+  var prec = Utilities.formatDate(new Date(jour0.getFullYear(), jour0.getMonth() - 1, 1), FUSEAU, 'yyyy-MM');
+  var aControler = {};
+  fact.forEach(function (l) { var m = moisTexte_(l.Mois); if (m) aControler[m] = 1; });
+  if (jour0.getDate() >= jourCtrl) aControler[prec] = 1;
+  var res = {}, alertes = [], r2 = function (x) { return Math.round(x * 100) / 100; };
+  var fmt = function (x) { return String(r2(x)).replace('.', ','); };
+
+  Object.keys(aControler).sort().forEach(function (M) {
+    if (M >= moisCourant) return;   // le mois en cours n'est pas encore facturé
+    var oubliOk = M !== prec || jour0.getDate() >= jourCtrl;
+    var lib = nomMois_(M), deLib = (/^[aeiou]/.test(lib) ? 'd\'' : 'de ') + lib, out = { carburant: [], inter: [], indexation: [] };
+    var fM = fact.filter(function (l) { return moisTexte_(l.Mois) === M; });
+    var plM = pl.filter(function (l) { return Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM') === M; });
+
+    // --- Carburant : groupes du planning (société du client, client, lieu)
+    var groupes = {};
+    plM.filter(function (l) { return l.activite === 'Carburant' && (l.ca || l.litres || l.m3); }).forEach(function (l) {
+      var k = l.societe + '|' + cle_(l.client) + '|' + cle_(l.lieu);
+      var g = groupes[k] = groupes[k] || { societe: l.societe, client: l.client, lieu: l.lieu, n: 0, m3: 0, ca: 0, prix: {}, lvns: [] };
+      g.n++; g.m3 += l.m3 || Math.round((l.litres || 0) / 1000); g.ca += l.ca || 0;
+      if (l.prix) g.prix[l.prix] = (g.prix[l.prix] || 0) + 1;
+      if (l.lvn) g.lvns.push({ lvn: l.lvn, date: Utilities.formatDate(l.date, FUSEAU, 'dd/MM'), m3: l.m3 });
+    });
+    // --- Carburant : agrégats facturés (société, réf. client, lieu)
+    var facturees = {}, parClient = {};
+    fM.filter(function (l) { return l.Activite === 'Carburant'; }).forEach(function (l) {
+      var kc = l.Societe + '|' + l.Ref_Client;
+      var c = parClient[kc] = parClient[kc] || { societe: l.Societe, client: l.Client, ref: l.Ref_Client, base: 0, index: 0, pct: null, factures: {}, transport: false };
+      c.factures[l.N_Facture] = 1;
+      var montant = nombre_(l.Montant_HT, 0);
+      if (l.Nature === 'INDEXATION') { c.index += montant; if (nombre_(l.Indexation_Pct, null) !== null) c.pct = nombre_(l.Indexation_Pct, null); return; }
+      c.base += montant;
+      if (l.Nature !== 'TRANSPORT') return;
+      c.transport = true;
+      var k = kc + '|' + cle_(l.Lieu);
+      var a = facturees[k] = facturees[k] || { societe: l.Societe, client: l.Client, ref: l.Ref_Client, lieu: l.Lieu, qte: 0, montant: 0, prix: {}, lvns: [], factures: {} };
+      a.qte += nombre_(l.Quantite, 0); a.montant += montant; a.factures[l.N_Facture] = 1;
+      if (nombre_(l.Prix_Unitaire, null) !== null) a.prix[nombre_(l.Prix_Unitaire, 0)] = 1;
+      if (l.LVN) a.lvns.push(String(l.LVN));
+    });
+    var pris = {};
+    Object.keys(facturees).map(function (k) { return facturees[k]; }).sort(function (a, b) { return b.qte - a.qte; }).forEach(function (a) {
+      // Client du planning : même société, même lieu, m³ les plus proches
+      var cand = Object.keys(groupes).filter(function (k) { return !pris[k] && groupes[k].societe === a.societe && memeLieu_(a.lieu, groupes[k].lieu); })
+        .sort(function (x, y) { return Math.abs(groupes[x].m3 - a.qte) - Math.abs(groupes[y].m3 - a.qte); });
+      var prixF = Object.keys(a.prix).map(Number), facts = Object.keys(a.factures).join(', ');
+      if (!cand.length) {
+        out.carburant.push({ societe: a.societe, clientFacture: a.client, lieu: a.lieu, m3Fact: a.qte, prixFact: prixF.join(' / '), montantFact: r2(a.montant), factures: facts, etats: ['absent du planning'] });
+        alertes.push({ niveau: 'a_prevoir', categorie: 'facturation', domaine: 'Factures', objet: a.client, sujet: 'Facturé hors planning',
+          message: a.client + ' — ' + a.lieu + ' (' + lib + ') : ' + a.qte + ' m³ facturés (' + facts + ') mais aucune livraison au planning', cle: 'FACT_HORS|' + M + '|' + a.ref + '|' + a.lieu });
+        return;
+      }
+      var g = groupes[cand[0]]; pris[cand[0]] = 1;
+      var prixP = Object.keys(g.prix).map(Number).sort(function (x, y) { return g.prix[y] - g.prix[x]; });
+      var etats = [], ligne = { societe: a.societe, clientFacture: a.client, clientPlanning: g.client, lieu: g.lieu, n: g.n, m3Plan: g.m3, m3Fact: a.qte,
+        prixPlan: prixP.join(' / '), prixFact: prixF.join(' / '), caPlan: r2(g.ca), montantFact: r2(a.montant), factures: facts, etats: etats };
+      if (Math.abs(g.m3 - a.qte) > 0.5) {
+        etats.push('m³');
+        alertes.push({ niveau: 'urgent', categorie: 'facturation', domaine: 'Factures', objet: g.client, sujet: 'Écart m³',
+          message: g.client + ' ' + g.lieu + ' (' + lib + ') : ' + a.qte + ' m³ facturés (' + facts + ') pour ' + g.m3 + ' m³ au planning (' + g.n + ' livraisons)',
+          cle: 'FACT_M3|' + M + '|' + a.ref + '|' + g.lieu + '|' + a.qte + '|' + g.m3 });
+      }
+      if (a.lvns.length) {
+        var manquants = g.lvns.filter(function (x) { return a.lvns.indexOf(String(x.lvn)) < 0; });
+        if (manquants.length) {
+          ligne.lvnManquants = manquants.map(function (x) { return 'LVN ' + x.lvn + ' du ' + x.date; }).join(', ');
+          if (etats.indexOf('m³') < 0) etats.push('livraisons');
+        }
+      }
+      var prixDiff = prixF.filter(function (pf) { return !prixP.some(function (pp) { return Math.abs(pp - pf) < 0.005; }); });
+      if (prixP.length && prixDiff.length) {
+        etats.push('prix');
+        alertes.push({ niveau: 'a_prevoir', categorie: 'facturation', domaine: 'Factures', objet: g.client, sujet: 'Écart prix',
+          message: g.client + ' ' + g.lieu + ' (' + lib + ') : facturé ' + prixF.map(fmt).join(' / ') + ' €/m³, planning ' + prixP.map(fmt).join(' / ') +
+            ' €/m³ (CA planning ' + euros_(g.ca) + ', facturé ' + euros_(a.montant) + ') : vérifiez l\'onglet TARIFS',
+          cle: 'FACT_PRIX|' + M + '|' + a.ref + '|' + g.lieu + '|' + prixF.join('/') });
+      }
+      if (ligne.lvnManquants) {
+        alertes.push({ niveau: 'urgent', categorie: 'facturation', domaine: 'Factures', objet: g.client, sujet: 'Livraisons non facturées',
+          message: g.client + ' ' + g.lieu + ' (' + lib + ') : livraisons du planning absentes de la facture ' + facts + ' : ' + ligne.lvnManquants,
+          cle: 'FACT_LVN|' + M + '|' + a.ref + '|' + g.lieu + '|' + ligne.lvnManquants });
+      }
+      out.carburant.push(ligne);
+    });
+    Object.keys(groupes).filter(function (k) { return !pris[k]; }).forEach(function (k) {
+      var g = groupes[k];
+      out.carburant.push({ societe: g.societe, clientPlanning: g.client, lieu: g.lieu, n: g.n, m3Plan: g.m3, caPlan: r2(g.ca),
+        prixPlan: Object.keys(g.prix).join(' / '), etats: [oubliOk ? 'non facturé' : 'à facturer'] });
+      if (oubliOk) alertes.push({ niveau: 'urgent', categorie: 'facturation', domaine: 'Factures', objet: g.client, sujet: 'Facture oubliée',
+        message: 'Facture ' + deLib + ' non déposée : ' + g.client + ' ' + g.lieu + ' (' + g.societe + ', ' + g.n + ' livraisons, ' + g.m3 + ' m³, ' + euros_(g.ca) + ' au planning)',
+        cle: 'FACT_OUBLI|' + M + '|' + g.societe + '|' + g.client + '|' + g.lieu });
+    });
+    // --- Indexation par client (Carburant)
+    Object.keys(parClient).forEach(function (kc) {
+      var c = parClient[kc];
+      out.indexation.push({ activite: 'Carburant', societe: c.societe, client: c.client, base: r2(c.base), pct: c.pct, montant: r2(c.index), factures: Object.keys(c.factures).join(', ') });
+      if (c.transport && c.index && c.pct !== null && Math.abs(c.base * c.pct / 100 - c.index) > 1) {
+        alertes.push({ niveau: 'a_prevoir', categorie: 'facturation', domaine: 'Factures', objet: c.client, sujet: 'Indexation',
+          message: c.client + ' (' + lib + ') : indexation facturée ' + fmt(c.index) + ' € alors que ' + fmt(c.pct) + ' % de ' + fmt(c.base) + ' € = ' + fmt(c.base * c.pct / 100) + ' €',
+          cle: 'FACT_INDEX|' + M + '|' + c.ref + '|' + r2(c.index) });
+      }
+      var dejaIndexe = fact.some(function (l) { return l.Ref_Client === c.ref && l.Nature === 'INDEXATION' && moisTexte_(l.Mois) !== M; });
+      if (c.transport && !c.index && dejaIndexe && oubliOk) {
+        alertes.push({ niveau: 'urgent', categorie: 'facturation', domaine: 'Factures', objet: c.client, sujet: 'Indexation manquante',
+          message: c.client + ' (' + lib + ') : transport facturé mais pas d\'indexation (ce client en a d\'habitude)', cle: 'FACT_SANSINDEX|' + M + '|' + c.ref });
+      }
+    });
+
+    // --- Inter (ITM) : nombre de tournées par terme fixe, par société
+    ['Gleyzes', 'LPB'].forEach(function (so) {
+      var pI = plM.filter(function (l) { return l.activite === 'Inter' && l.societe === so && (l.termeFixe || l.ca); });
+      var fI = fM.filter(function (l) { return l.Activite === 'Inter' && l.Societe === so; });
+      if (!pI.length && !fI.length) return;
+      var parPrix = {};
+      pI.forEach(function (l) { var k = r2(l.termeFixe || 0); (parPrix[k] = parPrix[k] || { plan: 0, fact: 0, caPlan: 0 }).plan++; parPrix[k].caPlan += l.ca || 0; });
+      var tv = 0, peage = 0, index = 0, tf = 0, facts = {};
+      fI.forEach(function (l) {
+        facts[l.N_Facture] = 1;
+        var m = nombre_(l.Montant_HT, 0);
+        if (l.Nature === 'TERME_FIXE') { var k = r2(nombre_(l.Prix_Unitaire, 0)); (parPrix[k] = parPrix[k] || { plan: 0, fact: 0, caPlan: 0 }).fact += nombre_(l.Quantite, 0); tf += m; }
+        else if (l.Nature === 'TERME_VARIABLE') tv += m;
+        else if (l.Nature === 'PEAGE') peage += m;
+        else if (l.Nature === 'INDEXATION') index += m;
+        else tf += m;
+      });
+      var caPlan = pI.reduce(function (t, l) { return t + (l.ca || 0); }, 0);
+      var ecarts = [];
+      Object.keys(parPrix).forEach(function (k) {
+        var x = parPrix[k];
+        if (+k && x.plan !== x.fact && (fI.length || oubliOk)) ecarts.push(x.plan + ' tournée(s) à ' + fmt(+k) + ' € au planning, ' + x.fact + ' facturée(s)');
+      });
+      out.inter.push({ societe: so, tournees: pI.length, caPlan: r2(caPlan), termeFixe: r2(tf), termeVariable: r2(tv), peage: r2(peage), indexation: r2(index),
+        facture: r2(tf + tv + index), factures: Object.keys(facts).join(', '),
+        detail: Object.keys(parPrix).filter(Number).sort(function (a, b) { return a - b; }).map(function (k) { return { prix: +k, plan: parPrix[k].plan, fact: parPrix[k].fact }; }),
+        etats: !fI.length ? [oubliOk ? 'non facturé' : 'à facturer'] : (ecarts.length ? ['tournées'] : []) });
+      if (index) out.indexation.push({ activite: 'Inter', societe: so, client: 'ITM', base: r2(tf + tv), pct: null, montant: r2(index), factures: Object.keys(facts).join(', ') });
+      if (!fI.length && oubliOk) {
+        alertes.push({ niveau: 'urgent', categorie: 'facturation', domaine: 'Factures', objet: 'ITM ' + so, sujet: 'Facture oubliée',
+          message: 'Factures ITM (' + so + ') ' + deLib + ' non déposées : ' + pI.length + ' tournées, ' + euros_(caPlan) + ' au planning', cle: 'FACT_OUBLI_ITM|' + M + '|' + so });
+      } else if (fI.length && ecarts.length) {
+        alertes.push({ niveau: 'urgent', categorie: 'facturation', domaine: 'Factures', objet: 'ITM ' + so, sujet: 'Écart tournées',
+          message: 'ITM ' + so + ' (' + lib + ') : ' + ecarts.join(' ; '), cle: 'FACT_ITM|' + M + '|' + so + '|' + ecarts.join(';') });
+      }
+    });
+    res[M] = out;
+  });
+  return { mois: res, alertes: alertes };
 }
 
 /** Depuis le site : action 'payee' (Statut + Date_Paiement) ou 'relancee' (Derniere_Relance = aujourd'hui). */
@@ -580,6 +850,9 @@ function calculerAlertes_(ss, aujourdhui) {
         cle: 'RETARDS|' + moisCourant });
     }
   }
+
+  // 9. Factures clients déposées : facture oubliée, écarts de m³ / prix / tournées, indexation
+  try { alertes = alertes.concat(controleFactures_(ss, jour0).alertes); } catch (e) { console.warn('Contrôle factures : ' + e); }
 
   // 8. Plannings et litrages (Google Sheets reliés) : une erreur de lecture ne bloque pas les autres alertes
   var debutPlannings = debutPeriodePlannings_(jour0, nombre_(p.JOURS_MOIS_PRECEDENT, 10));
@@ -829,7 +1102,9 @@ function plannings_(ss) {
         lieu: col(function (h) { return h === 'LIEU DE LIVRAISON' || h === 'LIVRAISON'; }),
         contrat: col(function (h) { return h.indexOf('CONTRAT MANQUANT') === 0; }),
         camion: col(function (h) { return /^(CAMION|VEHICULE|IMMAT|TRACTEUR)/.test(h); }),
-        attente: col(function (h) { return h.indexOf('HEURES ATTENTE') === 0; })
+        attente: col(function (h) { return h.indexOf('HEURES ATTENTE') === 0; }),
+        m3: col(function (h) { return h === 'TOTAL'; }), prix: col(function (h) { return h === 'PRIX'; }),
+        lvn: col(function (h) { return h === 'LVN'; }), termeFixe: col(function (h) { return h === 'TERME FIXE'; })
       };
       var val = function (l, k) { return k >= 0 ? l[k] : ''; };
       if (!an) {   // onglet sans année (« AOUT ») : année la plus fréquente parmi ses dates
@@ -850,6 +1125,8 @@ function plannings_(ss) {
           chauffeur: chauffeur, client: String(val(l, c.client) || '').trim(), lieu: String(val(l, c.lieu) || '').trim(),
           ca: ca, km: nombre_(val(l, c.km), null), litres: nombre_(val(l, c.litres), null),
           attente: nombre_(val(l, c.attente), null), contratManquant: String(val(l, c.contrat) || '').trim(),
+          m3: nombre_(val(l, c.m3), null), prix: nombre_(val(l, c.prix), null), lvn: String(val(l, c.lvn) || '').replace(/\.0+$/, '').trim(),
+          termeFixe: nombre_(val(l, c.termeFixe), null),
           camionSaisi: /^#/.test(String(val(l, c.camion))) ? '' : plaque_(val(l, c.camion))
         });
       });

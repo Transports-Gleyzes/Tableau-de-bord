@@ -108,6 +108,15 @@ table.edition input.poste { min-width: 220px; }
 table.edition input.montant { text-align: right; min-width: 100px; }
 table.edition tr.terminee td { opacity: .55; }
 table.edition button.suppr { border: 0; background: none; color: var(--critical-text); font-size: 16px; padding: 2px 6px; }
+table.serre td:nth-child(-n+3) { white-space: normal; min-width: 90px; }
+.depot { border: 2px dashed var(--border); border-radius: 10px; padding: 22px; text-align: center; color: var(--text-2); cursor: pointer; }
+.depot.survol { border-color: var(--accent); background: var(--surface-2); }
+.fichier { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.fichier .nom { font-weight: 600; }
+.verif { background: var(--surface-2); border-radius: 8px; padding: 10px; margin: 6px 0 10px; width: 100%; }
+.verif .entete { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.verif label { font-size: 12px; color: var(--text-2); display: flex; flex-direction: column; gap: 3px; }
+.etat-ok { color: var(--good-text); font-weight: 600; }
 .carte.inter { border-top: 4px solid var(--s1); }
 .carte.carbu { border-top: 4px solid var(--s2); }
 .pastille-act { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
@@ -140,6 +149,7 @@ button.petit { padding: 2px 8px; font-size: 12px; }
   <button role="tab" data-onglet="activite">Activité</button>
   <button role="tab" data-onglet="conso">Consommation</button>
   <button role="tab" data-onglet="factures">Factures</button>
+  <button role="tab" data-onglet="facturation">Contrôle factures</button>
   <button role="tab" data-onglet="alertes">Alertes <span class="pastille" id="nbAlertes" hidden></span></button>
   <button role="tab" data-onglet="saisie">Saisie rapide</button>
 </nav>
@@ -330,6 +340,46 @@ button.petit { padding: 2px 8px; font-size: 12px; }
       <p class="note">« Relancé » note la relance d'aujourd'hui ; « Payée » sort la facture de la liste. Nouvelle facture : onglet Saisie rapide.</p>
       <div class="tableau"><table id="tabFact"></table></div>
       <p class="msg" id="msgFact"></p>
+    </div>
+  </section>
+
+  <!-- CONTRÔLE DES FACTURES CLIENTS (PDF INFORCE) -->
+  <section id="facturation" hidden>
+    <div class="carte">
+      <h2>Déposer des factures (PDF INFORCE)</h2>
+      <p class="note">Glissez ici un ou plusieurs PDF de factures clients. Le site les lit, les range dans Google Drive
+        (dossier « Tableau de bord - Factures clients ») et les compare aux plannings. Une facture redéposée remplace l'ancienne.</p>
+      <div class="depot" id="zoneDepot">📄 Glissez les PDF ici, ou cliquez pour les choisir
+        <input type="file" id="choixPdf" accept="application/pdf" multiple hidden></div>
+      <div id="listeDepot"></div>
+    </div>
+    <div class="barre"><label for="moisFact">Mois facturé</label><select id="moisFact"></select><span class="note" id="noteFact"></span></div>
+    <div class="tuiles" id="tuilesFact2"></div>
+    <div class="carte carbu">
+      <h2><span class="pastille-act" style="background:var(--s2)"></span>Contrôle Carburant</h2>
+      <p class="note">Chaque client du planning comparé à sa facture : m³, prix au m³, livraisons (LVN). Client reconnu par le lieu de livraison et les m³.</p>
+      <div class="tableau"><table id="tabCtrlCarbu" class="serre"></table></div>
+    </div>
+    <div class="carte inter">
+      <h2><span class="pastille-act" style="background:var(--s1)"></span>Contrôle Inter (ITM)</h2>
+      <p class="note">Nombre de tournées par terme fixe (286 €, 330 €, 540 €…) au planning et sur les factures ; montants pour information (la préfacture ITM fait foi).</p>
+      <div class="tableau"><table id="tabCtrlInter"></table></div>
+    </div>
+    <div class="grille">
+      <div class="carte">
+        <h2>Fiche indexation</h2>
+        <p class="note" id="noteIndex"></p>
+        <div class="legende" id="legIndex"></div>
+        <div class="graph"><canvas id="gIndex" aria-label="Indexation par mois"></canvas></div>
+      </div>
+      <div class="carte">
+        <h2>Indexation du mois par client</h2>
+        <div class="tableau"><table id="tabIndex"></table></div>
+      </div>
+    </div>
+    <div class="carte">
+      <h2>Factures déposées pour ce mois</h2>
+      <div class="tableau"><table id="tabFactDep"></table></div>
     </div>
   </section>
 
@@ -593,7 +643,7 @@ function afficherOnglet(nom) {
   try { localStorage.setItem('ongletTDB', nom); } catch (e) {}
   if (!D) return;
   ({ accueil: rendreAccueil, finances: rendreFinances, flotte: rendreFlotte, salaries: rendreSalaries,
-     activite: rendreActivite, conso: rendreConso, factures: rendreFactures, charges: rendreCharges, alertes: rendreAlertes, saisie: function () {} })[nom]();
+     activite: rendreActivite, conso: rendreConso, factures: rendreFactures, charges: rendreCharges, facturation: rendreFacturation, alertes: rendreAlertes, saisie: function () {} })[nom]();
 }
 
 function alertesFiltrees() {
@@ -755,6 +805,10 @@ function rendreAttention(al) {
   ajouter(par.contrats, pl((par.contrats || []).length, 'contrat manquant', 'contrats manquants') + ' dans le planning Inter');
   ajouter(par.conso, (par.conso || []).length === 1 ? 'Le camion ' + par.conso[0].objet + ' consomme trop ces derniers temps'
     : pl((par.conso || []).length, 'camion consomme', 'camions consomment') + ' trop ces derniers temps (' + (par.conso || []).map(function (a) { return a.objet; }).join(', ') + ')');
+  var fa = par.facturation || [];
+  var oublis = fa.filter(function (a) { return a.sujet === 'Facture oubliée'; }), ecarts = fa.filter(function (a) { return a.sujet !== 'Facture oubliée'; });
+  ajouter(oublis, oublis.length > 1 ? oublis.length + ' factures semblent oubliées' : '1 facture semble oubliée');
+  ajouter(ecarts, pl(ecarts.length, 'écart', 'écarts') + ' entre les factures et les plannings (m³, prix, livraisons, indexation)');
   ajouter(par.charges, pl((par.charges || []).length, 'contrat ou charge arrive', 'contrats ou charges arrivent') + ' à échéance (' +
     (par.charges || []).map(function (a) { return a.objet; }).join(', ') + ')');
   ajouter(par.taches, pl((par.taches || []).length, 'tâche du pense-bête arrive', 'tâches du pense-bête arrivent') + ' à échéance (' +
@@ -1186,6 +1240,362 @@ document.getElementById('enregCharges').addEventListener('click', function () {
   }).enregistrerCharges(brouillonCharges);
 });
 
+// ---------- lecture des factures PDF (INFORCE) ----------
+// Les PDF sont lus dans le navigateur (pdf.js) ; un scan sans texte est envoyé à Google Drive pour la reconnaissance de caractères.
+var PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+var pdfjsPret = null;
+function chargerPdfjs() {
+  if (pdfjsPret) return pdfjsPret;
+  var script = function (src) {
+    return new Promise(function (ok, ko) { var s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = function () { ko(new Error('Chargement impossible : ' + src)); }; document.head.appendChild(s); });
+  };
+  // Le « worker » est chargé dans la page elle-même : pdf.js l'utilise directement (pas de worker séparé, interdit dans le site Google)
+  pdfjsPret = script(PDFJS_URL + 'pdf.min.js').then(function () { return script(PDFJS_URL + 'pdf.worker.min.js'); }).then(function () {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_URL + 'pdf.worker.min.js';
+    return window.pdfjsLib;
+  });
+  return pdfjsPret;
+}
+
+/** Lignes de texte d'un PDF : [{ y, texte, segments: [{ x, texte }] }] et largeur de page (positions conservées). */
+function lignesPdf(buffer) {
+  return chargerPdfjs().then(function (pdfjsLib) {
+    return pdfjsLib.getDocument({ data: new Uint8Array(buffer), isEvalSupported: false }).promise;
+  }).then(function (doc) {
+    var pages = [];
+    for (var i = 1; i <= doc.numPages; i++) pages.push(doc.getPage(i));
+    return Promise.all(pages).then(function (ps) {
+      return Promise.all(ps.map(function (p) {
+        return p.getTextContent().then(function (tc) { return { largeur: p.getViewport({ scale: 1 }).width, items: tc.items }; });
+      }));
+    });
+  }).then(function (pages) {
+    var lignes = [], largeur = pages.length ? pages[0].largeur : 600;
+    pages.forEach(function (pg, np) {
+      var items = pg.items.filter(function (it) { return String(it.str).trim(); })
+        .map(function (it) { return { x: it.transform[4], y: it.transform[5], w: it.width, texte: it.str }; })
+        .sort(function (a, b) { return b.y - a.y || a.x - b.x; });
+      var courante = null;
+      items.forEach(function (it) {
+        if (!courante || Math.abs(courante.y - it.y) > 3) { courante = { y: it.y, page: np, segments: [] }; lignes.push(courante); }
+        courante.segments.push({ x: it.x, fin: it.x + it.w, texte: it.texte });
+      });
+    });
+    lignes.forEach(function (l) {
+      l.segments.sort(function (a, b) { return a.x - b.x; });
+      // Segments voisins fusionnés en blocs (un écart de plus de 25 points sépare deux colonnes)
+      var blocs = [];
+      l.segments.forEach(function (s) {
+        var b = blocs[blocs.length - 1];
+        if (b && s.x - b.fin < 25) { b.texte += (s.x - b.fin > 1.5 ? ' ' : '') + s.texte; b.fin = s.fin; }
+        else blocs.push({ x: s.x, fin: s.fin, texte: s.texte });
+      });
+      l.blocs = blocs.map(function (b) { return { x: b.x, texte: b.texte.replace(/\s+/g, ' ').trim() }; });
+      l.texte = l.blocs.map(function (b) { return b.texte; }).join('   ');
+    });
+    return { lignes: lignes, largeur: largeur };
+  });
+}
+
+var MOIS_FR = { JANVIER: 1, FEVRIER: 2, MARS: 3, AVRIL: 4, MAI: 5, JUIN: 6, JUILLET: 7, AOUT: 8, SEPTEMBRE: 9, OCTOBRE: 10, NOVEMBRE: 11, DECEMBRE: 12 };
+function sansAccents(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase(); }
+function nombreFr(s) { if (s === undefined || s === null || String(s).trim() === '') return null; var t = String(s).replace(/[\s  ]/g, '').replace(',', '.'); var n = Number(t); return isNaN(n) ? null : n; }
+
+/**
+ * Analyse le texte d'une facture INFORCE (lignes avec positions si PDF numérique, sans positions si scan).
+ * Renvoie { numero, date, mois, societe, client, refClient, activite, prefacture, netHT, tva, lignes: [...], avertissements: [...] }.
+ */
+function analyserFacture(lignes, largeur) {
+  var txt = lignes.map(function (l) { return l.texte; }), tout = sansAccents(txt.join('\n'));
+  var f = { lignes: [], avertissements: [] }, m;
+  f.societe = /LPB TRANSPORTS/.test(tout) ? 'LPB' : (/TRANSPORTS GLEYZES/.test(tout) ? 'Gleyzes' : '');
+  if ((m = tout.match(/FACTURE\s*N\s*[°O0]?\s*:?\s*([A-Z]{1,3}\s?\d{5,})/))) f.numero = m[1].replace(/\s/g, '');
+  if ((m = tout.match(/DATE\s*:?\s*(\d{2})\/(\d{2})\/(\d{4})/))) f.date = m[3] + '-' + m[2] + '-' + m[1];
+  if ((m = tout.match(/REF\.?\s*CLIENT\s*:?\s*(\d{4,6}\s*\/\s*\d{4,6})/))) f.refClient = m[1].replace(/\s/g, '').replace('/', ' / ');
+  if ((m = tout.match(/PREFACTURE\s*N\s*[°O0]?\s*(\d{6,})/))) f.prefacture = m[1];
+  var tot = function (re) { var x = tout.match(re); return x ? nombreFr(x[1]) : null; };
+  f.netHT = tot(/NET HT\s*:?\s*(-?[\d   ]+,\d{2})/);
+  f.tva = tot(/TOTAL TVA\s*:?\s*(-?[\d   ]+,\d{2})/);
+
+  // Client : bloc de droite de l'en-tête (PDF numérique), sinon ligne repérée par mots-clés
+  var iTable = txt.findIndex(function (t) { return /DESIGNATION/.test(sansAccents(t)); });
+  if (iTable < 0) iTable = Math.min(txt.length, 25);
+  if (lignes[0] && lignes[0].blocs) {
+    for (var i = 0; i < iTable && !f.client; i++) {
+      (lignes[i].blocs || []).forEach(function (b) {
+        var t = sansAccents(b.texte);
+        if (!f.client && b.x > largeur * 0.45 && /[A-Z]{3}/.test(t) && !/PAGE|HTTP|@|DATE|FACTURE|DEVISE|^\(|\d{5}\s/.test(t) && !/^\d/.test(t)) f.client = b.texte.trim();
+      });
+    }
+  }
+  // Ville du client (« 13600 LA CIOTAT ») : sert de lieu de livraison quand la facture n'indique pas de trajet
+  if (lignes[0] && lignes[0].blocs) {
+    for (var v = 0; v < iTable && !f.villeClient; v++) {
+      (lignes[v].blocs || []).forEach(function (b) {
+        var vm = sansAccents(b.texte).match(/^(\d{5})\s+([A-Z][A-Z' \-]+)$/);
+        if (!f.villeClient && vm && b.x > largeur * 0.45) f.villeClient = vm[2].trim();
+      });
+    }
+  }
+  if (!f.client && /\bITM\b/.test(tout)) f.client = 'ITM LAI';
+  if (!f.client) f.avertissements.push('Client non reconnu');
+
+  // Lignes chiffrées : « … Qté  Prix  TVA  Total » en fin de ligne ; les lignes sans chiffres suivantes sont leur description
+  var reChiffres = /(-?\d+(?:[.,]\d+)?)\s+(-?\d{1,3}(?:[   ]\d{3})*,\d{2})\s+(\d{1,2},\d{2})\s+(-?\d{1,3}(?:[   ]\d{3})*,\d{2})\s*$/;
+  var reTrajet = /^\s*([A-Z][A-Z' \-]+?)\s*\/\s*([A-Z][A-Z' \-]+?)\s*$/;
+  var elements = [];
+  txt.forEach(function (t) {
+    var u = sansAccents(t).replace(/\s+/g, ' ').trim();
+    var c = u.match(reChiffres);
+    if (c && !/BRUT HT|NET HT|TOTAL/.test(u)) elements.push({ type: 'prix', texte: u.slice(0, c.index).trim(), qte: nombreFr(c[1]), prix: nombreFr(c[2]), total: nombreFr(c[4]), desc: [] });
+    else if (reTrajet.test(u) && !/\d/.test(u)) elements.push({ type: 'trajet', lieu: u.match(reTrajet)[2].trim(), depart: u.match(reTrajet)[1].trim() });
+    else if (elements.length && !/MODE DE REGLEMENT|BRUT HT|MODALITES|PAPILLON/.test(u)) elements.push({ type: 'desc', texte: u });
+  });
+  // Trajet de chaque ligne : celui écrit juste au-dessus (depuis la ligne chiffrée précédente), sinon juste en dessous
+  var trajetAvant = null;
+  elements.forEach(function (e, k) {
+    if (e.type === 'trajet') { trajetAvant = e.lieu; return; }
+    if (e.type !== 'prix') return;
+    e.lieu = trajetAvant;
+    for (var j = k + 1; j < elements.length && elements[j].type !== 'prix'; j++) {
+      if (elements[j].type === 'desc') e.desc.push(elements[j].texte);
+      if (elements[j].type === 'trajet' && !e.lieu) e.lieu = elements[j].lieu;
+    }
+    trajetAvant = null;
+  });
+  var dernierLieu = null;
+  elements.filter(function (e) { return e.type === 'prix'; }).forEach(function (e) {
+    var tout2 = e.texte + ' ' + e.desc.join(' '), nature;
+    if (/INDEXATION/.test(tout2)) nature = 'INDEXATION';
+    else if (/PEAGE/.test(tout2)) nature = 'PEAGE';
+    else if (/TERME FIXE/.test(tout2)) nature = 'TERME_FIXE';
+    else if (/TERME VARIABLE/.test(tout2)) nature = 'TERME_VARIABLE';
+    else if (e.total < 0 || /AVOIR|AVOR\b/.test(tout2)) nature = 'AVOIR';
+    else if (/DEPOTAGE/.test(tout2)) nature = 'DEPOTAGE';
+    else if (/TRANSPORTS? CARBURANTS?/.test(tout2)) nature = 'TRANSPORT';
+    else nature = 'AUTRE';
+    var l = { nature: nature, lieu: nature === 'TRANSPORT' ? (e.lieu || dernierLieu || f.villeClient || '') : (e.lieu || ''), quantite: e.qte, prix: e.prix, montant: e.total };
+    if (nature === 'TRANSPORT' && l.lieu) dernierLieu = l.lieu;
+    var lv = tout2.match(/LVN\s*N?\s*[°O]?\s*(\d+)\s*DU\s*(\d{1,2})\/(\d{1,2})/);
+    if (lv) { l.lvn = lv[1]; l.dateLvn = ('0' + lv[2]).slice(-2) + '/' + ('0' + lv[3]).slice(-2); }
+    var pc = tout2.match(/([+-]?\s*\d{1,2}[.,]\d{1,2})\s*%/);
+    if (nature === 'INDEXATION' && pc) l.indexPct = nombreFr(pc[1].replace(/\s/g, ''));
+    if (nature === 'TRANSPORT' && !l.lieu) f.avertissements.push('Lieu de livraison non trouvé pour une ligne de ' + e.qte + ' m³');
+    f.lignes.push(l);
+  });
+
+  // Activité et mois facturé
+  f.activite = (f.prefacture || /TERME FIXE|\bITM\b/.test(tout)) ? 'Inter' : 'Carburant';
+  var moisTexte = tout.match(/(?:MOIS DE|GO DE|GO|CARBURANT|POUR)\s+(?:LE MOIS DE\s+)?(JANVIER|FEVRIER|MARS|AVRIL|MAI|JUIN|JUILLET|AOUT|SEPTEMBRE|OCTOBRE|NOVEMBRE|DECEMBRE)/);
+  if (f.date) {
+    var an = +f.date.slice(0, 4), mo = +f.date.slice(5, 7), jo = +f.date.slice(8, 10);
+    if (moisTexte) { var mt = MOIS_FR[moisTexte[1]]; if (mt > mo + 1) an--; mo = mt; }
+    else if (jo <= 10) { mo--; if (!mo) { mo = 12; an--; } }   // facture du début de mois : mois précédent
+    f.mois = an + '-' + ('0' + mo).slice(-2);
+  }
+  if (!f.numero) f.avertissements.push('Numéro de facture non trouvé');
+  if (!f.lignes.length) f.avertissements.push('Aucune ligne chiffrée lue');
+  var somme = f.lignes.reduce(function (t, l) { return t + (l.montant || 0); }, 0);
+  if (f.netHT !== null && f.lignes.length && Math.abs(somme - f.netHT) > 0.05) f.avertissements.push('Total des lignes (' + somme.toFixed(2) + ') différent du Net HT (' + f.netHT.toFixed(2) + ')');
+  return f;
+}
+
+/** Texte brut (scan lu par Google Drive) -> lignes sans positions. */
+function lignesTexte(texte) { return String(texte || '').split(/\r?\n/).filter(function (t) { return t.trim(); }).map(function (t) { return { texte: t }; }); }
+
+// ---------- onglet Contrôle factures ----------
+function base64Depuis(buffer) {
+  var octets = new Uint8Array(buffer), morceaux = [], pas = 0x8000;
+  for (var i = 0; i < octets.length; i += pas) morceaux.push(String.fromCharCode.apply(null, octets.subarray(i, i + pas)));
+  return btoa(morceaux.join(''));
+}
+function appelServeur(fonction) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  return new Promise(function (ok, ko) {
+    if (!(window.google && google.script && google.script.run)) { ko(new Error('Mode démonstration : rien n\'est enregistré.')); return; }
+    var r = google.script.run.withSuccessHandler(ok).withFailureHandler(ko);
+    r[fonction].apply(r, args);
+  });
+}
+var enAttenteVerif = {};   // factures lues mais à vérifier avant enregistrement (scan, information manquante)
+function ligneDepot(id, nom) {
+  var d = document.createElement('div'); d.className = 'fichier'; d.id = 'dep-' + id;
+  d.innerHTML = '<span class="nom">' + txt(nom) + '</span><span class="msg">Lecture…</span>';
+  document.getElementById('listeDepot').prepend(d);
+  return d;
+}
+function etatDepot(el, html, classe) { var m = el.querySelector('.msg'); m.className = 'msg ' + (classe || ''); m.innerHTML = html; }
+function traiterFichiers(fichiers) {
+  var liste = Array.prototype.slice.call(fichiers).filter(function (f) { return /\.pdf$/i.test(f.name) || f.type === 'application/pdf'; });
+  var suite = Promise.resolve();
+  liste.forEach(function (fichier, k) {
+    suite = suite.then(function () { return traiterFichier(fichier, Date.now() + '-' + k); });
+  });
+  suite.then(function () { if (liste.length) charger(); });
+}
+function traiterFichier(fichier, id) {
+  var el = ligneDepot(id, fichier.name), buffer, b64, scan = false;
+  return fichier.arrayBuffer().then(function (b) {
+    buffer = b; b64 = base64Depuis(b);
+    return lignesPdf(b.slice(0));
+  }).then(function (r) {
+    var texte = r.lignes.map(function (l) { return l.texte; }).join(' ');
+    if (texte.replace(/\s/g, '').length > 80) return analyserFacture(r.lignes, r.largeur);
+    scan = true;
+    etatDepot(el, 'Scan sans texte : lecture par Google Drive…');
+    return appelServeur('lireScanFacture', b64, fichier.name).then(function (t) { return analyserFacture(lignesTexte(t), 600); });
+  }).then(function (f) {
+    if (scan) f.avertissements.unshift('Facture scannée : vérifiez la lecture');
+    if (f.avertissements.length) { enAttenteVerif[id] = { f: f, b64: b64, nom: fichier.name }; afficherVerif(id); return; }
+    return enregistrerFacture(id, f, b64, fichier.name);
+  }).catch(function (e) { etatDepot(el, '⚠ ' + txt(e.message), 'err'); });
+}
+function resumeFacture(f) {
+  var ht = f.lignes.filter(function (l) { return l.nature !== 'INDEXATION'; }).reduce(function (t, l) { return t + (l.montant || 0); }, 0);
+  var ix = f.lignes.filter(function (l) { return l.nature === 'INDEXATION'; }).reduce(function (t, l) { return t + (l.montant || 0); }, 0);
+  return txt(f.numero || '?') + ' · ' + txt(f.client || '?') + ' (' + txt(f.societe || '?') + ', ' + txt(f.activite) + ') · ' + (f.mois ? nomMois(f.mois) : '?') +
+    ' · ' + fmtEur2.format(ht) + ' HT' + (ix ? ' + indexation ' + fmtEur2.format(ix) : '');
+}
+function enregistrerFacture(id, f, b64, nom) {
+  var el = document.getElementById('dep-' + id);
+  etatDepot(el, 'Enregistrement…');
+  return appelServeur('deposerFacture', f, b64, nom).then(function (r) {
+    delete enAttenteVerif[id];
+    var v = el.querySelector('.verif'); if (v) v.remove();
+    etatDepot(el, '<span class="etat-ok">✓</span> ' + resumeFacture(f) + (r.url ? ' · <a href="' + txt(r.url) + '" target="_blank">PDF</a>' : ''), 'ok');
+  }).catch(function (e) { etatDepot(el, '⚠ ' + txt(e.message), 'err'); });
+}
+var NATURES = [['TRANSPORT', 'Transport carburant (m³)'], ['TERME_FIXE', 'Terme fixe'], ['TERME_VARIABLE', 'Terme variable'], ['PEAGE', 'Péage'],
+  ['INDEXATION', 'Indexation'], ['DEPOTAGE', 'Double dépotage'], ['AVOIR', 'Avoir'], ['AUTRE', 'Autre']];
+function afficherVerif(id) {
+  var a = enAttenteVerif[id], f = a.f, el = document.getElementById('dep-' + id);
+  etatDepot(el, '⚠ À vérifier : ' + txt(f.avertissements.join(' ; ')), 'err');
+  var v = el.querySelector('.verif') || el.appendChild(document.createElement('div'));
+  v.className = 'verif';
+  var champ = function (k, lib, val, type) { return '<label>' + lib + '<input data-f="' + k + '" ' + (type ? 'type="' + type + '"' : '') + ' value="' + txt(val === undefined || val === null ? '' : val) + '"></label>'; };
+  v.innerHTML = '<div class="entete">' + champ('numero', 'N° facture', f.numero) + champ('date', 'Date', f.date, 'date') + champ('mois', 'Mois facturé (AAAA-MM)', f.mois) +
+    '<label>Société<select data-f="societe"><option' + (f.societe === 'Gleyzes' ? ' selected' : '') + '>Gleyzes</option><option' + (f.societe === 'LPB' ? ' selected' : '') + '>LPB</option></select></label>' +
+    champ('client', 'Client', f.client) + champ('refClient', 'Réf. client', f.refClient) +
+    '<label>Activité<select data-f="activite"><option' + (f.activite === 'Carburant' ? ' selected' : '') + '>Carburant</option><option' + (f.activite === 'Inter' ? ' selected' : '') + '>Inter</option></select></label></div>' +
+    '<table class="edition"><thead><tr><th>Nature</th><th>Lieu</th><th class="n">Qté / m³</th><th class="n">Prix unit.</th><th class="n">Montant HT</th><th class="n">Index. %</th><th>LVN</th><th></th></tr></thead><tbody>' +
+    f.lignes.map(function (l, i) {
+      return '<tr data-i="' + i + '"><td><select data-l="nature">' + NATURES.map(function (n) { return '<option value="' + n[0] + '"' + (l.nature === n[0] ? ' selected' : '') + '>' + n[1] + '</option>'; }).join('') + '</select></td>' +
+        ['lieu', 'quantite', 'prix', 'montant', 'indexPct', 'lvn'].map(function (k) { return '<td><input data-l="' + k + '" value="' + txt(l[k] === undefined || l[k] === null ? '' : l[k]) + '"></td>'; }).join('') +
+        '<td><button class="suppr" data-sl="' + i + '">✕</button></td></tr>';
+    }).join('') + '</tbody></table>' +
+    '<div class="barre" style="margin-top:8px"><button data-a="ligne">+ Ligne</button><button class="primaire" data-a="ok">Enregistrer cette facture</button><button data-a="non">Ne pas enregistrer</button></div>';
+  var lire = function () {
+    v.querySelectorAll('[data-f]').forEach(function (x) { f[x.dataset.f] = x.value.trim(); });
+    v.querySelectorAll('tr[data-i]').forEach(function (tr) {
+      var l = f.lignes[+tr.dataset.i];
+      tr.querySelectorAll('[data-l]').forEach(function (x) { var k = x.dataset.l; l[k] = ['quantite', 'prix', 'montant', 'indexPct'].indexOf(k) >= 0 ? nombreFr(x.value) : x.value.trim(); });
+    });
+  };
+  v.querySelectorAll('[data-sl]').forEach(function (b) { b.onclick = function () { lire(); f.lignes.splice(+b.dataset.sl, 1); afficherVerif(id); }; });
+  v.querySelector('[data-a=ligne]').onclick = function () { lire(); f.lignes.push({ nature: 'AUTRE', lieu: '', quantite: 1, prix: null, montant: null }); afficherVerif(id); };
+  v.querySelector('[data-a=non]').onclick = function () { delete enAttenteVerif[id]; el.remove(); };
+  v.querySelector('[data-a=ok]').onclick = function () { lire(); f.avertissements = []; enregistrerFacture(id, f, a.b64, a.nom).then(function () { charger(); }); };
+}
+(function () {
+  var zone = document.getElementById('zoneDepot'), choix = document.getElementById('choixPdf');
+  zone.addEventListener('click', function (e) { if (e.target !== choix) choix.click(); });
+  choix.addEventListener('change', function () { traiterFichiers(choix.files); choix.value = ''; });
+  ['dragenter', 'dragover'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.add('survol'); }); });
+  ['dragleave', 'drop'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.remove('survol'); }); });
+  zone.addEventListener('drop', function (e) { traiterFichiers(e.dataTransfer.files); });
+})();
+
+function rendreFacturation() {
+  var fact = (D.FACTURES_CLIENTS || []).filter(function (l) { return garderSociete(l.Societe); });
+  var mois = {};
+  fact.forEach(function (l) { if (l.Mois) mois[String(l.Mois).slice(0, 7)] = 1; });
+  Object.keys(D.CONTROLE || {}).forEach(function (m) { mois[m] = 1; });
+  var sel = document.getElementById('moisFact'), ancien = sel.value, liste = Object.keys(mois).sort().reverse();
+  sel.innerHTML = liste.map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
+  if (liste.indexOf(ancien) >= 0) sel.value = ancien;
+  var M = sel.value, ctrl = (D.CONTROLE || {})[M] || { carburant: [], inter: [], indexation: [] };
+  var fM = fact.filter(function (l) { return String(l.Mois).slice(0, 7) === M; });
+  var an = (M || aujourdhui()).slice(0, 4);
+  var htM = fM.filter(function (l) { return l.Nature !== 'INDEXATION'; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0);
+  var ixM = fM.filter(function (l) { return l.Nature === 'INDEXATION'; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0);
+  var ixAn = fact.filter(function (l) { return l.Nature === 'INDEXATION' && String(l.Mois).slice(0, 4) === an; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0);
+  var aVerifier = ctrl.carburant.filter(function (x) { return x.etats && x.etats.length && garderSociete(x.societe); }).length +
+    ctrl.inter.filter(function (x) { return x.etats && x.etats.length && garderSociete(x.societe); }).length;
+  var nbFact = {}; fM.forEach(function (l) { nbFact[l.N_Facture] = 1; });
+  document.getElementById('noteFact').textContent = M ? Object.keys(nbFact).length + ' facture(s) déposée(s) pour ' + nomMois(M) : 'Aucune facture déposée pour l\'instant.';
+  document.getElementById('tuilesFact2').innerHTML =
+    tuile('Facturé ' + (M ? nomMois(M) : ''), fmtEur.format(htM), 'HT, hors indexation') +
+    tuile('Indexation ' + (M ? nomMois(M) : ''), fmtEur.format(ixM), htM ? fmtNb.format(ixM / htM * 100) + ' % du facturé' : '') +
+    tuile('Indexation ' + an, fmtEur.format(ixAn), 'depuis janvier') +
+    tuile('Points à vérifier', '<span class="' + (aVerifier ? 'neg' : '') + '">' + aVerifier + '</span>', aVerifier ? 'voir les tableaux ci-dessous' : 'tout correspond');
+
+  var etat = function (x) {
+    if (!x.etats || !x.etats.length) return badge('ok', 'Conforme');
+    return x.etats.map(function (e) {
+      var niv = e === 'à facturer' ? 'a_prevoir' : (e === 'prix' || e === 'absent du planning') ? 'a_prevoir' : 'urgent';
+      var lib = { 'm³': 'Écart m³', prix: 'Écart prix', livraisons: 'Livraisons manquantes', 'non facturé': 'Non facturé', 'à facturer': 'À facturer', 'absent du planning': 'Hors planning', tournees: 'Écart tournées', 'tournées': 'Écart tournées' }[e] || e;
+      return badge(niv, lib);
+    }).join(' ');
+  };
+  var gravite = function (x) {
+    var e = x.etats || [];
+    return e.indexOf('non facturé') >= 0 || e.indexOf('m³') >= 0 || e.indexOf('livraisons') >= 0 ? 0 : e.indexOf('absent du planning') >= 0 ? 1 : e.indexOf('prix') >= 0 ? 2 : e.length ? 3 : 4;
+  };
+  var c = ctrl.carburant.filter(function (x) { return garderSociete(x.societe); }).sort(function (a, b) { return gravite(a) - gravite(b) || String(a.clientPlanning || a.clientFacture).localeCompare(String(b.clientPlanning || b.clientFacture)); });
+  var v = function (x) { return x === undefined || x === null || x === '' ? '<span class="nd">—</span>' : txt(x); };
+  document.getElementById('tabCtrlCarbu').innerHTML = '<thead><tr><th>Client planning</th><th>Client facture</th><th>Lieu</th><th>Soc.</th><th class="n">Livr.</th><th class="n">m³ plan.</th><th class="n">m³ fact.</th><th class="n">Prix plan.</th><th class="n">Prix fact.</th><th class="n">CA planning</th><th class="n">Facturé HT</th><th>État</th></tr></thead><tbody>' +
+    (c.length ? c.map(function (x) {
+      return '<tr><td>' + v(x.clientPlanning) + '</td><td>' + v(x.clientFacture) + '</td><td>' + v(x.lieu) + '</td><td>' + v(x.societe) + '</td><td class="n">' + v(x.n) +
+        '</td><td class="n">' + v(x.m3Plan) + '</td><td class="n' + (x.m3Plan !== undefined && x.m3Fact !== undefined && Math.abs(x.m3Plan - x.m3Fact) > 0.5 ? ' neg' : '') + '">' + v(x.m3Fact) +
+        '</td><td class="n">' + v(x.prixPlan) + '</td><td class="n' + ((x.etats || []).indexOf('prix') >= 0 ? ' neg' : '') + '">' + v(x.prixFact) +
+        '</td><td class="n">' + (x.caPlan !== undefined ? eur(x.caPlan) : '<span class="nd">—</span>') + '</td><td class="n">' + (x.montantFact !== undefined ? eur(x.montantFact) : '<span class="nd">—</span>') +
+        '</td><td title="' + txt(x.factures || '') + '">' + etat(x) + (x.lvnManquants ? '<div class="note">Manquent : ' + txt(x.lvnManquants) + '</div>' : '') + '</td></tr>';
+    }).join('') : '<tr><td colspan="12" class="vide">Rien à contrôler pour ce mois</td></tr>') + '</tbody>';
+  var it = ctrl.inter.filter(function (x) { return garderSociete(x.societe); });
+  document.getElementById('tabCtrlInter').innerHTML = '<thead><tr><th>Société</th><th>Tournées par terme fixe (planning / facturé)</th><th class="n">CA planning</th><th class="n">Terme fixe</th><th class="n">Terme variable</th><th class="n">Indexation</th><th class="n">Péages</th><th class="n">Facturé (hors péages)</th><th>Factures</th><th>État</th></tr></thead><tbody>' +
+    (it.length ? it.map(function (x) {
+      return '<tr><td>' + txt(x.societe) + '</td><td>' + (x.detail || []).map(function (d) {
+        return '<span class="' + (d.plan !== d.fact ? 'neg' : '') + '">' + fmtNb.format(d.prix) + ' € : ' + d.plan + ' / ' + d.fact + '</span>';
+      }).join('<br>') + '</td><td class="n">' + eur(x.caPlan) + '</td><td class="n">' + eur(x.termeFixe) + '</td><td class="n">' + eur(x.termeVariable) + '</td><td class="n">' + eur(x.indexation) +
+        '</td><td class="n">' + eur(x.peage) + '</td><td class="n">' + eur(x.facture) + '</td><td>' + v(x.factures) + '</td><td>' + etat(x) + '</td></tr>';
+    }).join('') : '<tr><td colspan="10" class="vide">Rien à contrôler pour ce mois</td></tr>') + '</tbody>';
+
+  // Fiche indexation : par mois de l'année (Gleyzes / LPB) et par client pour le mois choisi
+  var moisAn = []; for (var k = 1; k <= 12; k++) moisAn.push(an + '-' + ('0' + k).slice(-2));
+  var parMoisSoc = function (m, so) { return fact.filter(function (l) { return l.Nature === 'INDEXATION' && String(l.Mois).slice(0, 7) === m && l.Societe === so; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0); };
+  var avecIndex = moisAn.filter(function (m) { return parMoisSoc(m, 'Gleyzes') || parMoisSoc(m, 'LPB'); });
+  var ixG = fact.filter(function (l) { return l.Nature === 'INDEXATION' && String(l.Mois).slice(0, 4) === an && l.Societe === 'Gleyzes'; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0);
+  document.getElementById('noteIndex').textContent = 'Total ' + an + ' : ' + fmtEur.format(ixAn) + ' (Gleyzes ' + fmtEur.format(ixG) + ', LPB ' + fmtEur.format(ixAn - ixG) + '), d\'après les factures déposées';
+  legende('legIndex', [['Gleyzes', css('--s1')], ['LPB', css('--s2')]]);
+  dessiner('gIndex', { type: 'bar', data: { labels: avecIndex.map(nomMois), datasets: [
+    barre('Gleyzes', avecIndex.map(function (m) { return parMoisSoc(m, 'Gleyzes') || null; }), css('--s1')),
+    barre('LPB', avecIndex.map(function (m) { return parMoisSoc(m, 'LPB') || null; }), css('--s2'))] }, options: optionsCommunes(false) });
+  tableTriable('tabIndex', [['Client', 'client', 'txt'], ['Activité', 'activite', 'txt'], ['Société', 'societe', 'txt'], ['Base facturée', 'base', 'eur'], ['Taux %', 'pct', 'nb'], ['Indexation', 'montant', 'eur'], ['Factures', 'factures', 'txt']],
+    (ctrl.indexation || []).filter(function (x) { return garderSociete(x.societe) && x.montant; }), function (o, k) { return o[k]; });
+
+  // Factures déposées du mois
+  var parN = {};
+  fM.forEach(function (l) {
+    var x = parN[l.N_Facture] = parN[l.N_Facture] || { n: l.N_Facture, date: l.Date_Facture, client: l.Client, societe: l.Societe, activite: l.Activite, ht: 0, ix: 0, url: l.Fichier };
+    if (l.Nature === 'INDEXATION') x.ix += num(l.Montant_HT) || 0; else x.ht += num(l.Montant_HT) || 0;
+  });
+  var lf = Object.keys(parN).sort().map(function (k) { return parN[k]; });
+  var t = document.getElementById('tabFactDep');
+  t.innerHTML = '<thead><tr><th>N°</th><th>Date</th><th>Client</th><th>Société</th><th>Activité</th><th class="n">HT (hors index.)</th><th class="n">Indexation</th><th></th><th></th></tr></thead><tbody>' +
+    (lf.length ? lf.map(function (x) {
+      return '<tr><td>' + txt(x.n) + '</td><td>' + dateFr(x.date) + '</td><td>' + txt(x.client) + '</td><td>' + txt(x.societe) + '</td><td>' + txt(x.activite) +
+        '</td><td class="n">' + eur(x.ht) + '</td><td class="n">' + (x.ix ? eur(x.ix) : '') + '</td><td>' + (x.url ? '<a href="' + txt(x.url) + '" target="_blank">PDF</a>' : '') +
+        '</td><td><button class="petit" data-supf="' + txt(x.n) + '">Supprimer</button></td></tr>';
+    }).join('') : '<tr><td colspan="9" class="vide">Aucune facture déposée pour ce mois</td></tr>') + '</tbody>';
+  t.querySelectorAll('[data-supf]').forEach(function (b) {
+    b.onclick = function () {
+      if (!confirm('Supprimer la facture ' + b.dataset.supf + ' du contrôle (le PDF part à la corbeille Drive) ?')) return;
+      b.disabled = true;
+      appelServeur('supprimerFactureClient', b.dataset.supf).then(charger).catch(function (e) { b.disabled = false; alert(e.message); });
+    };
+  });
+}
+
 // ---------- consommation (fichier Litrages) ----------
 function rendreConso() {
   var lit = (D.LITRAGES || []).filter(function (l) { return garderSociete(societeCamion(l.immat)); });
@@ -1274,6 +1684,7 @@ document.getElementById('filtreSociete').addEventListener('change', function () 
 document.getElementById('moisFin').addEventListener('change', rendreFinances);
 document.getElementById('moisAct').addEventListener('change', rendreActivite);
 document.getElementById('choixCamion').addEventListener('change', rendreConso);
+document.getElementById('moisFact').addEventListener('change', rendreFacturation);
 document.getElementById('filtreNiveau').addEventListener('change', rendreAlertes);
 ['filtreCatV', 'filtreEtatV'].forEach(function (id) { document.getElementById(id).addEventListener('change', rendreFlotte); });
 document.getElementById('filtreEtatS').addEventListener('change', rendreSalaries);
