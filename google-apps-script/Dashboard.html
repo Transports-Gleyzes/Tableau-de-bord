@@ -1006,7 +1006,13 @@ function rendreActivite() {
   // (même règle que maj_mensuelle_flotte.py), puis part de chaque chauffeur répartie sur ses camions au prorata de ses lignes
   var normSoc = function (x) { var k = String(x || '').toUpperCase(); return k.indexOf('LPB') >= 0 ? 'LPB' : (k.indexOf('GLEYZES') >= 0 ? 'Gleyzes' : ''); };
   var chargesMut = {};
-  (D.CHARGES_MUTUALISEES || []).forEach(function (c) { var so = normSoc(c['Société']), m = num(c.Montant_Mensuel); if (so && m !== null) chargesMut[so] = (chargesMut[so] || 0) + m; });
+  // Une charge compte pour le mois si elle a commencé avant sa fin et n'est pas terminée avant son début (colonnes Debut / Fin facultatives)
+  var debutMois = mois + '-01', finMois = mois + '-' + ('0' + new Date(+mois.slice(0, 4), +mois.slice(5, 7), 0).getDate()).slice(-2);
+  var chargesDuMois = (D.CHARGES_MUTUALISEES || []).filter(function (c) {
+    var d = String(c.Debut || '').slice(0, 10), f = String(c.Fin || '').slice(0, 10);
+    return (!d || d <= finMois) && (!f || f >= debutMois);
+  });
+  chargesDuMois.forEach(function (c) { var so = normSoc(c['Société']), m = num(c.Montant_Mensuel); if (so && m !== null) chargesMut[so] = (chargesMut[so] || 0) + m; });
   var tousMois = (D.PLANNING || []).filter(function (l) { return l.date.slice(0, 7) === mois; });   // tous, filtre société ignoré pour compter les chauffeurs
   var chSoc = {}, lignesCh = {};
   tousMois.forEach(function (l) {

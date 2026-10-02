@@ -39,7 +39,7 @@ var FEUILLES = {
   FACTURES: ['N_Facture', 'Client', 'Date_Facture', 'Echeance', 'Montant_TTC', 'Statut', 'Date_Paiement',
              'Derniere_Relance', 'Remarque'],
   HEURES: ['Date', 'Salarié', 'Heures', 'Remarque'],
-  CHARGES_MUTUALISEES: ['Poste', 'Société', 'Montant_Mensuel'],
+  CHARGES_MUTUALISEES: ['Poste', 'Société', 'Montant_Mensuel', 'Debut', 'Fin'],
   JOURNAL_ALERTES: ['Date_Envoi', 'Clé', 'Niveau', 'Message']
 };
 
@@ -57,7 +57,7 @@ var COLONNES_DATE = {
   FLOTTE: ['Prochain_CT', 'Prochain_Entretien', 'Echeance_Assurance', 'Controle_Tachygraphe', 'Indisponible_Jusqu_Au'],
   SALARIES: ['Fin_Validite_Permis', 'Fin_FIMO_FCO', 'Prochaine_Visite_Medicale', 'Fin_Carte_Conducteur', 'Date_Formation'],
   FACTURES: ['Date_Facture', 'Echeance', 'Date_Paiement', 'Derniere_Relance'],
-  HEURES: ['Date'], LIVRAISONS: ['Date'], CARBURANT: ['Date'], ABSENCES: ['Début', 'Fin']
+  HEURES: ['Date'], LIVRAISONS: ['Date'], CARBURANT: ['Date'], ABSENCES: ['Début', 'Fin'], CHARGES_MUTUALISEES: ['Debut', 'Fin']
 };
 
 var PARAMETRES_DEFAUT = [
