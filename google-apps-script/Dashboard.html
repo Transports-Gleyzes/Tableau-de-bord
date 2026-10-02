@@ -150,6 +150,7 @@ button.petit { padding: 2px 8px; font-size: 12px; }
   <button role="tab" data-onglet="conso">Consommation</button>
   <button role="tab" data-onglet="factures">Factures</button>
   <button role="tab" data-onglet="facturation">Contrôle factures</button>
+  <button role="tab" data-onglet="compta">Comptabilité</button>
   <button role="tab" data-onglet="alertes">Alertes <span class="pastille" id="nbAlertes" hidden></span></button>
   <button role="tab" data-onglet="saisie">Saisie rapide</button>
 </nav>
@@ -384,6 +385,50 @@ button.petit { padding: 2px 8px; font-size: 12px; }
   </section>
 
   <!-- ALERTES -->
+  <!-- COMPTABILITÉ (balances déposées) -->
+  <section id="compta" hidden>
+    <div class="carte">
+      <h2>Déposer une balance générale</h2>
+      <p class="note">Glissez le PDF de la balance (depuis le 1er janvier jusqu'à la fin du mois), ou collez-la plus bas. Le site la lit, reconnaît la société et la période,
+        affecte à chaque camion les comptes qui portent son immatriculation (carburant, péages, entretien, leasing) et calcule le résultat. Une balance redéposée à la même date remplace l'ancienne.</p>
+      <div class="depot" id="zoneBalance">📊 Glissez le PDF de la balance ici, ou cliquez pour le choisir
+        <input type="file" id="choixBalance" accept="application/pdf" hidden></div>
+      <details style="margin-top:10px"><summary>… ou coller la balance (copier-coller depuis le logiciel comptable ou Excel)</summary>
+        <textarea id="texteBalance" rows="8" style="width:100%;margin-top:8px;font-family:monospace" placeholder="COMPTE   NOM DU COMPTE   DEBIT   CREDIT ..."></textarea>
+        <div class="barre" style="margin-top:6px"><button id="lireBalance" class="primaire">Lire la balance collée</button></div>
+      </details>
+      <div id="listeBalance"></div>
+    </div>
+    <div class="barre"><label for="socCompta">Société</label><select id="socCompta"></select><span class="note" id="noteCompta"></span></div>
+    <div class="tuiles" id="tuilesCompta"></div>
+    <div class="carte" id="carteCptPoints">
+      <h2>Points à vérifier avec le comptable</h2>
+      <p class="note">Soldes anormaux qui faussent le résultat : à corriger avant d'en tirer des conclusions.</p>
+      <div id="cptPoints"></div>
+    </div>
+    <div class="grille">
+      <div class="carte">
+        <h2>Charges par poste</h2>
+        <p class="note" id="noteCptPostes"></p>
+        <div class="tableau"><table id="tabCptPostes"></table></div>
+      </div>
+    </div>
+    <div class="carte">
+      <h2>Coûts par camion</h2>
+      <p class="note">Comptes portant l'immatriculation du camion (hors salaires et charges mutualisées). « Non affecté » : comptes sans immatriculation (à répartir dans « Détail des comptes »).
+        CA / mois : moyenne des tournées des chauffeurs de la société dans les plannings, sur la même période (mois disponibles).</p>
+      <div class="tableau"><table id="tabCptCamions"></table></div>
+    </div>
+    <div class="carte">
+      <details><summary><b>Détail des comptes</b> : vérifier ou changer le poste et le camion d'un compte</summary>
+        <p class="note">Ex. : un compte « CARBURANT » sans immatriculation peut être affecté à un camion en tapant son immatriculation. Puis « Enregistrer les affectations ».</p>
+        <div class="tableau"><table id="tabCptLignes" class="edition serre"></table></div>
+        <div class="barre" style="margin-top:8px"><button id="enregAffect" class="primaire">Enregistrer les affectations</button><span class="msg" id="msgAffect"></span></div>
+      </details>
+      <p class="note" id="histoCompta" style="margin-top:10px"></p>
+    </div>
+  </section>
+
   <section id="alertes" hidden>
     <div class="barre">
       <label for="filtreNiveau">Afficher</label>
@@ -643,7 +688,7 @@ function afficherOnglet(nom) {
   try { localStorage.setItem('ongletTDB', nom); } catch (e) {}
   if (!D) return;
   ({ accueil: rendreAccueil, finances: rendreFinances, flotte: rendreFlotte, salaries: rendreSalaries,
-     activite: rendreActivite, conso: rendreConso, factures: rendreFactures, charges: rendreCharges, facturation: rendreFacturation, alertes: rendreAlertes, saisie: function () {} })[nom]();
+     activite: rendreActivite, conso: rendreConso, factures: rendreFactures, charges: rendreCharges, facturation: rendreFacturation, compta: rendreCompta, alertes: rendreAlertes, saisie: function () {} })[nom]();
 }
 
 function alertesFiltrees() {
@@ -809,6 +854,11 @@ function rendreAttention(al) {
   var oublis = fa.filter(function (a) { return a.sujet === 'Facture oubliée'; }), ecarts = fa.filter(function (a) { return a.sujet !== 'Facture oubliée'; });
   ajouter(oublis, oublis.length > 1 ? oublis.length + ' factures semblent oubliées' : '1 facture semble oubliée');
   ajouter(ecarts, pl(ecarts.length, 'écart', 'écarts') + ' entre les factures et les plannings (m³, prix, livraisons, indexation)');
+  (function () {
+    var c = par.compta || [], socs = {};
+    c.forEach(function (a) { socs[a.objet] = 1; });
+    ajouter(c, pl(c.length, 'point de la comptabilité', 'points de la comptabilité') + ' à vérifier avec le comptable (balance ' + Object.keys(socs).join(' et ') + ')');
+  })();
   ajouter(par.charges, pl((par.charges || []).length, 'contrat ou charge arrive', 'contrats ou charges arrivent') + ' à échéance (' +
     (par.charges || []).map(function (a) { return a.objet; }).join(', ') + ')');
   ajouter(par.taches, pl((par.taches || []).length, 'tâche du pense-bête arrive', 'tâches du pense-bête arrivent') + ' à échéance (' +
@@ -908,7 +958,7 @@ function tableTriable(id, colonnes, lignes, valeur) {
     }).join('') + '</tr></thead><tbody>' + (tri.length ? tri.map(function (l) {
       return '<tr>' + colonnes.map(function (c) {
         var v = valeur(l, c[1]);
-        var h = c[2] === 'eur2' ? (v === null ? '<span class="nd">N/D</span>' : fmtEur2.format(v)) : c[2] === 'eur' ? eur(v) : c[2] === 'pct' ? pct(v) : c[2] === 'nb' ? (v === null ? '<span class="nd">N/D</span>' : fmtNb.format(v)) : txt(v);
+        var h = c[2] === 'eurv' ? (v === null ? '<span class="nd">—</span>' : eur(v)) : c[2] === 'eur2' ? (v === null ? '<span class="nd">N/D</span>' : fmtEur2.format(v)) : c[2] === 'eur' ? eur(v) : c[2] === 'pct' ? pct(v) : c[2] === 'nb' ? (v === null ? '<span class="nd">N/D</span>' : fmtNb.format(v)) : txt(v);
         return '<td class="' + (c[2] === 'txt' ? '' : 'n') + '">' + h + '</td>';
       }).join('') + '</tr>';
     }).join('') : '<tr><td colspan="' + colonnes.length + '" class="vide">Aucune donnée</td></tr>') + '</tbody>';
@@ -1604,6 +1654,241 @@ function rendreFacturation() {
 }
 
 // ---------- consommation (fichier Litrages) ----------
+// ---------- comptabilité : lecture et affichage des balances ----------
+var POSTES_BAL = ['Carburant', 'Péages', 'Entretien', 'Leasing', 'Locations', 'Assurances', 'Sous-traitance', 'Personnel', 'Frais bancaires', 'Honoraires',
+  'Déplacements', 'Frais généraux', 'Impôts et taxes', 'Charges financières', 'Charges exceptionnelles', 'Amortissements', 'Autres charges',
+  'Chiffre d\'affaires', 'Subventions', 'Autres produits', 'Bilan'];
+function plaqueLibelle(lib) { var m = sansAccents(lib).match(/(?:^|[^A-Z0-9])([A-Z]{2})[ -]?(\d{3})[ -]?([A-Z]{2})(?![A-Z0-9])/); return m ? m[1] + m[2] + m[3] : ''; }
+function posteCompte(c, lib) {
+  var l = sansAccents(lib); c = String(c);
+  if (/^[1-5]/.test(c)) return 'Bilan';
+  if (/^606[12]/.test(c)) return /FOURNIT/.test(l) ? 'Entretien' : 'Carburant';
+  if (/^606/.test(c)) return 'Entretien';
+  var t = [[/^611/, 'Sous-traitance'], [/^612/, 'Leasing'], [/^613/, 'Locations'], [/^615/, 'Entretien'], [/^616/, 'Assurances'], [/^6253/, 'Péages'],
+    [/^625/, 'Déplacements'], [/^622/, 'Honoraires'], [/^627/, 'Frais bancaires'], [/^62/, 'Frais généraux'], [/^63/, 'Impôts et taxes'], [/^64/, 'Personnel'],
+    [/^66/, 'Charges financières'], [/^67/, 'Charges exceptionnelles'], [/^68/, 'Amortissements'], [/^6/, 'Autres charges'], [/^70/, 'Chiffre d\'affaires'],
+    [/^74/, 'Subventions'], [/^7/, 'Autres produits']];
+  if (/PEAGE/.test(l) && /^6/.test(c)) return 'Péages';
+  for (var i = 0; i < t.length; i++) if (t[i][0].test(c)) return t[i][1];
+  return 'Autre';
+}
+var RE_MONTANT = /-?\d{1,3}(?:[   ]\d{3})*[.,]\d{2}(?!\d)/g;
+function montantsDe(t) { return (String(t).match(RE_MONTANT) || []).map(function (x) { return nombreFr(x); }); }
+/** Lit une balance (lignes de texte du PDF, de la reconnaissance de caractères ou d'un copier-coller). */
+function analyserBalance(lignes) {
+  var b = { societe: '', du: '', au: '', lignes: [], avertissements: [] }, attente = [], totaux = null;
+  var tout = sansAccents(lignes.map(function (l) { return l.texte; }).join('\n'));
+  if (/LP\s*TRANSPORTS|\bLPB\b|L\.?P\.?B/.test(tout)) b.societe = 'LPB'; else if (/GLEYZES/.test(tout)) b.societe = 'Gleyzes';
+  var per = tout.match(/(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})\s*(?:-|AU|A)\s*(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})/);
+  var iso = function (j, m, a) { a = +a < 100 ? 2000 + +a : +a; return a + '-' + ('0' + m).slice(-2) + '-' + ('0' + j).slice(-2); };
+  if (per) { b.du = iso(per[1], per[2], per[3]); b.au = iso(per[4], per[5], per[6]); }
+  // Les montants d'un compte peuvent être sur sa ligne (PDF, copier-coller) ou sur les lignes suivantes (scan) :
+  // on les distribue dans l'ordre aux comptes en attente (débit, crédit, puis le solde = |débit − crédit| est sauté).
+  var aSauter = 0, totauxEnCours = null;
+  var consommer = function (n) {
+    if (totauxEnCours) { totauxEnCours.push(n); if (totauxEnCours.length >= 2) { totaux = totauxEnCours; totauxEnCours = null; aSauter = 2; } return; }
+    if (aSauter > 0) { aSauter--; return; }
+    var a = attente[0]; if (!a) return;
+    if (a.debit === null) { a.debit = n; return; }
+    if (a.credit === null) { a.credit = n; return; }
+    var s = Math.abs(a.debit - a.credit);
+    if (!a.soldeVu && Math.abs(n - s) < 0.015) { a.soldeVu = 1; return; }
+    if (a.soldeVu === 1 && s < 0.005 && n === 0) { a.soldeVu = 2; return; }
+    attente.shift(); consommer(n);
+  };
+  lignes.forEach(function (l) {
+    var t = String(l.texte).replace(/\t/g, '  ').trim(), T = sansAccents(t);
+    if (/^TOTAUX?\s+BALANCE/.test(T)) { var mt = montantsDe(t); if (mt.length >= 2) totaux = mt; else { totauxEnCours = mt; } attente = []; return; }
+    if (/^TOTAUX?\b/.test(T)) { var nt = montantsDe(t).length; aSauter = Math.max(0, 4 - nt); attente = attente.filter(function (a) { return a.credit === null; }); return; }
+    var m = t.match(/^(\d{6,8})\b\s*(.*)$/);
+    if (m) {
+      var reste = m[2], idx = reste.search(RE_MONTANT);
+      var lib = (idx >= 0 ? reste.slice(0, idx) : reste).trim(), mts = idx >= 0 ? montantsDe(reste.slice(idx)) : [];
+      var ligne = { compte: m[1], libelle: lib, debit: null, credit: null };
+      b.lignes.push(ligne);
+      if (mts.length >= 2) { ligne.debit = mts[0]; ligne.credit = mts[1]; ligne.soldeVu = 2; }
+      else { attente.push(ligne); mts.forEach(consommer); }
+      return;
+    }
+    var nums = montantsDe(t), texteSeul = T.replace(RE_MONTANT, '').replace(/[\s|€.]/g, '');
+    if (!nums.length && texteSeul) {   // libellé seul sur sa ligne (scan) : pour le dernier compte sans libellé
+      var sansLib = b.lignes.filter(function (x) { return !x.libelle; })[0]; if (sansLib) sansLib.libelle = t;
+      return;
+    }
+    if (!texteSeul) nums.forEach(consommer);
+  });
+  attente = b.lignes.filter(function (l) { return l.debit === null || l.credit === null; });
+  b.lignes.forEach(function (l) { l.poste = posteCompte(l.compte, l.libelle); l.camion = plaqueLibelle(l.libelle); if (l.debit === null) l.debit = 0; if (l.credit === null) l.credit = 0; });
+  var d = 0, c = 0; b.lignes.forEach(function (l) { d += l.debit; c += l.credit; });
+  b.totalDebit = Math.round(d * 100) / 100; b.totalCredit = Math.round(c * 100) / 100;
+  if (!b.lignes.length) b.avertissements.push('Aucun compte lu');
+  if (attente.length) b.avertissements.push(attente.length + ' compte(s) sans montant : ' + attente.slice(0, 5).map(function (l) { return l.compte; }).join(', '));
+  if (totaux && (Math.abs(totaux[0] - d) > 0.05 || Math.abs(totaux[1] - c) > 0.05)) b.avertissements.push('Total lu ' + fmtEur2.format(d) + ' / ' + fmtEur2.format(c) + ' au lieu de ' + fmtEur2.format(totaux[0]) + ' / ' + fmtEur2.format(totaux[1]) + ' (TOTAUX BALANCE)');
+  else if (!totaux && Math.abs(d - c) > 0.05) b.avertissements.push('Débit (' + fmtEur2.format(d) + ') ≠ crédit (' + fmtEur2.format(c) + ')');
+  if (!b.societe) b.avertissements.push('Société non reconnue');
+  if (!b.au) b.avertissements.push('Période non trouvée');
+  return b;
+}
+var balanceEnCours = {};
+function deposerBalance(b, id) {
+  var el = document.getElementById('bal-' + id);
+  etatDepot(el, 'Enregistrement…');
+  return appelServeur('enregistrerBalance', { societe: b.societe, du: b.du, au: b.au, lignes: b.lignes }).then(function (r) {
+    etatDepot(el, '✓ Balance ' + txt(r.societe) + ' au ' + dateFr(r.au) + ' : ' + r.lignes + ' comptes enregistrés', 'ok');
+    var v = el.querySelector('.verif'); if (v) v.remove();
+    charger();
+  }).catch(function (e) { etatDepot(el, '⚠ ' + txt(e.message), 'err'); });
+}
+function verifBalance(id) {
+  var b = balanceEnCours[id], el = document.getElementById('bal-' + id);
+  var ok = !b.avertissements.length;
+  etatDepot(el, (ok ? '✓ Lue : ' : '⚠ À vérifier : ' + txt(b.avertissements.join(' ; ')) + ' — ') + b.lignes.length + ' comptes, débit ' + fmtEur2.format(b.totalDebit) + ', crédit ' + fmtEur2.format(b.totalCredit), ok ? 'ok' : 'err');
+  var v = el.querySelector('.verif') || el.appendChild(document.createElement('div'));
+  v.className = 'verif';
+  v.innerHTML = '<div class="entete"><label>Société<select data-b="societe"><option></option><option' + (b.societe === 'Gleyzes' ? ' selected' : '') + '>Gleyzes</option><option' + (b.societe === 'LPB' ? ' selected' : '') + '>LPB</option></select></label>' +
+    '<label>Du<input type="date" data-b="du" value="' + txt(b.du) + '"></label><label>Au<input type="date" data-b="au" value="' + txt(b.au) + '"></label></div>' +
+    '<details' + (ok ? '' : ' open') + '><summary>Voir / corriger les ' + b.lignes.length + ' comptes lus</summary><div class="tableau"><table class="edition serre"><thead><tr><th>Compte</th><th>Libellé</th><th class="n">Débit</th><th class="n">Crédit</th><th>Poste</th><th>Camion</th><th></th></tr></thead><tbody>' +
+    b.lignes.map(function (l, i) {
+      return '<tr data-i="' + i + '">' + ['compte', 'libelle', 'debit', 'credit'].map(function (k) { return '<td><input data-l="' + k + '" value="' + txt(l[k]) + '"></td>'; }).join('') +
+        '<td><select data-l="poste">' + POSTES_BAL.map(function (p) { return '<option' + (p === l.poste ? ' selected' : '') + '>' + txt(p) + '</option>'; }).join('') + '</select></td>' +
+        '<td><input data-l="camion" value="' + txt(l.camion) + '" size="9"></td><td><button class="suppr" data-sl="' + i + '">✕</button></td></tr>';
+    }).join('') + '</tbody></table></div></details>' +
+    '<div class="barre" style="margin-top:8px"><button class="primaire" data-a="ok">Enregistrer la balance</button><button data-a="non">Annuler</button></div>';
+  var lire = function () {
+    v.querySelectorAll('[data-b]').forEach(function (x) { b[x.dataset.b] = x.value.trim(); });
+    v.querySelectorAll('tr[data-i]').forEach(function (tr) {
+      var l = b.lignes[+tr.dataset.i];
+      tr.querySelectorAll('[data-l]').forEach(function (x) { var k = x.dataset.l; l[k] = k === 'debit' || k === 'credit' ? (nombreFr(x.value) || 0) : x.value.trim(); });
+    });
+  };
+  v.querySelectorAll('[data-sl]').forEach(function (x) { x.onclick = function () { lire(); b.lignes.splice(+x.dataset.sl, 1); verifBalance(id); }; });
+  v.querySelector('[data-a=non]').onclick = function () { delete balanceEnCours[id]; el.remove(); };
+  v.querySelector('[data-a=ok]').onclick = function () { lire(); deposerBalance(b, id); };
+}
+function traiterBalance(source, nom) {
+  var id = String(Date.now()), d = document.createElement('div');
+  d.className = 'fichier'; d.id = 'bal-' + id; d.innerHTML = '<span class="nom">' + txt(nom) + '</span><span class="msg">Lecture…</span>';
+  document.getElementById('listeBalance').prepend(d);
+  var lecture;
+  if (typeof source === 'string') lecture = Promise.resolve(analyserBalance(lignesTexte(source)));
+  else {
+    var b64;
+    lecture = source.arrayBuffer().then(function (buf) { b64 = base64Depuis(buf); return lignesPdf(buf.slice(0)); }).then(function (r) {
+      var texte = r.lignes.map(function (l) { return l.texte; }).join(' ');
+      if (texte.replace(/\s/g, '').length > 200) return analyserBalance(r.lignes);
+      etatDepot(d, 'Scan sans texte : lecture par Google Drive…');
+      return appelServeur('lireScanFacture', b64, nom).then(function (t) { var b = analyserBalance(lignesTexte(t)); b.avertissements.unshift('Balance scannée : vérifiez les montants'); return b; });
+    });
+  }
+  return lecture.then(function (b) {
+    balanceEnCours[id] = b;
+    // lecture exacte (totaux identiques, société et période trouvées) : enregistrement direct, sinon vérification
+    if (!b.avertissements.length) return deposerBalance(b, id).then(function () { verifBalance(id); etatDepot(d, '✓ Balance ' + b.societe + ' au ' + dateFr(b.au) + ' enregistrée (' + b.lignes.length + ' comptes)', 'ok'); });
+    verifBalance(id);
+  }).catch(function (e) { etatDepot(d, '⚠ ' + txt(e.message), 'err'); });
+}
+(function () {
+  var zone = document.getElementById('zoneBalance'), choix = document.getElementById('choixBalance');
+  zone.addEventListener('click', function (e) { if (e.target !== choix) choix.click(); });
+  choix.addEventListener('change', function () { if (choix.files[0]) traiterBalance(choix.files[0], choix.files[0].name); choix.value = ''; });
+  ['dragenter', 'dragover'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.add('survol'); }); });
+  ['dragleave', 'drop'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.remove('survol'); }); });
+  zone.addEventListener('drop', function (e) { var f = e.dataTransfer.files[0]; if (f) traiterBalance(f, f.name); });
+  document.getElementById('lireBalance').onclick = function () {
+    var t = document.getElementById('texteBalance').value;
+    if (t.trim()) { traiterBalance(t, 'Balance collée'); document.getElementById('texteBalance').value = ''; }
+  };
+  document.getElementById('socCompta').onchange = function () { rendreCompta(); };
+})();
+
+function rendreCompta() {
+  var liste = (D.COMPTA || []).filter(function (b) { return garderSociete(b.societe); });
+  var sel = document.getElementById('socCompta'), ancien = sel.value;
+  sel.innerHTML = liste.map(function (b) { return '<option>' + txt(b.societe) + '</option>'; }).join('');
+  if (liste.some(function (b) { return b.societe === ancien; })) sel.value = ancien;
+  var B = liste.filter(function (b) { return b.societe === sel.value; })[0];
+  ['carteCptPoints'].forEach(function (k) { document.getElementById(k).hidden = !B; });
+  if (!B) {
+    document.getElementById('noteCompta').textContent = 'Aucune balance déposée' + (societe() ? ' pour ' + societe() : '') + '.';
+    ['tuilesCompta', 'tabCptPostes', 'tabCptCamions', 'tabCptLignes'].forEach(function (k) { document.getElementById(k).innerHTML = ''; });
+    document.getElementById('histoCompta').textContent = '';
+    return;
+  }
+  var mois = B.nbMois || 1, parMois = function (v) { return v / mois; };
+  document.getElementById('noteCompta').textContent = 'Balance du ' + dateFr(B.du) + ' au ' + dateFr(B.au) + (B.nbMois ? ' (' + fmtNb.format(B.nbMois) + ' mois)' : '');
+  var marge = B.produits ? B.resultat / B.produits * 100 : null;
+  document.getElementById('tuilesCompta').innerHTML =
+    tuile('Chiffre d\'affaires', eur(B.ca), fmtEur.format(parMois(B.ca)) + ' / mois') +
+    tuile('Résultat', eur(B.resultat), (marge === null ? '' : fmtNb.format(Math.round(marge * 10) / 10) + ' % des produits') + (B.points.some(function (p) { return p.niveau === 'urgent'; }) ? ' · ⚠ à fiabiliser' : '')) +
+    tuile('Trésorerie', eur(B.tresorerie), 'banques + caisse au ' + dateFr(B.au)) +
+    tuile('Clients', eur(B.clients), B.clients < 0 ? '⚠ solde créditeur (anormal)' : 'reste à encaisser') +
+    tuile('Fournisseurs', eur(B.fournisseurs), 'reste à payer') +
+    tuile('TVA', eur(B.tva), 'à décaisser');
+  document.getElementById('cptPoints').innerHTML = B.points.length ? B.points.map(function (p) { return '<div style="margin:4px 0">' + badge(p.niveau) + ' ' + txt(p.message.charAt(0).toUpperCase() + p.message.slice(1)) + '</div>'; }).join('')
+    : '<div class="vide">Aucun solde anormal.</div>';
+  // Charges par poste
+  var postes = Object.keys(B.postes).filter(function (p) { return ['Chiffre d\'affaires', 'Subventions', 'Autres produits'].indexOf(p) < 0 && Math.abs(B.postes[p]) >= 0.5; })
+    .sort(function (a, b) { return B.postes[b] - B.postes[a]; });
+  var max = Math.max.apply(null, postes.map(function (p) { return B.postes[p]; }).concat([1]));
+  document.getElementById('noteCptPostes').textContent = 'Total des charges ' + fmtEur.format(B.charges) + ' · en % du chiffre d\'affaires';
+  document.getElementById('tabCptPostes').innerHTML = '<thead><tr><th>Poste</th><th class="n">Montant</th><th class="n">Par mois</th><th class="n">% CA</th><th></th></tr></thead><tbody>' +
+    postes.map(function (p) {
+      var v = B.postes[p];
+      return '<tr><td>' + txt(p) + '</td><td class="n">' + eur(v) + '</td><td class="n">' + eur(parMois(v)) + '</td><td class="n">' + (B.ca ? fmtNb.format(Math.round(v / B.ca * 1000) / 10) + ' %' : '') +
+        '</td><td style="width:30%"><div style="height:8px;border-radius:4px;background:var(--s1);width:' + Math.max(1, Math.round(v / max * 100)) + '%"></div></td></tr>';
+    }).join('') + '</tbody>';
+  // Coûts par camion, rapprochés du CA des plannings sur la même période
+  var socB = String(B.societe).toUpperCase();
+  var pl = (D.PLANNING || []).filter(function (l) { return l.date >= B.du && l.date <= B.au; }), moisPl = {}, caCam = {};
+  pl = pl.filter(function (l) { return String(l.societeChauffeur || l.societe || '').toUpperCase().indexOf(socB) === 0; });   // tournées des chauffeurs de la société
+  pl.forEach(function (l) { moisPl[l.date.slice(0, 7)] = 1; if (l.camion) caCam[l.camion] = (caCam[l.camion] || 0) + (num(l.ca) || 0); });
+  var nbMoisPl = Object.keys(moisPl).length;
+  var cols = ['Carburant', 'Péages', 'Entretien', 'Leasing'];
+  var lignesCam = Object.keys(B.camions).map(function (k) {
+    var c = B.camions[k], o = { camion: k, autres: null, total: 0 };
+    Object.keys(c).forEach(function (p) { if (!c[p]) return; if (cols.indexOf(p) >= 0) o[p] = c[p]; else o.autres = (o.autres || 0) + c[p]; o.total += c[p]; });
+    o.mois = o.total / mois;
+    o.caMois = nbMoisPl && caCam[k] ? caCam[k] / nbMoisPl : null;
+    o.ecart = o.caMois === null ? null : o.caMois - o.mois;
+    return o;
+  });
+  var na = B.nonAffecte || {}, naTot = cols.reduce(function (t, p) { return t + (na[p] || 0); }, 0);
+  if (naTot) { var o = { camion: 'Non affecté', autres: null, total: naTot, mois: naTot / mois, caMois: null, ecart: null }; cols.forEach(function (p) { o[p] = na[p] || null; }); lignesCam.push(o); }
+  var tc = document.getElementById('tabCptCamions'); if (!tc._tri) tc._tri = { k: 'total', sens: -1 };
+  tableTriable('tabCptCamions', [['Camion', 'camion', 'txt'], ['Carburant', 'Carburant', 'eurv'], ['Péages', 'Péages', 'eurv'], ['Entretien', 'Entretien', 'eurv'], ['Leasing', 'Leasing', 'eurv'],
+    ['Autres', 'autres', 'eurv'], ['Total', 'total', 'eur'], ['Coût / mois', 'mois', 'eur'], ['CA / mois (plannings)', 'caMois', 'eurv'], ['CA − coûts / mois', 'ecart', 'eurv']],
+    lignesCam.sort(function (a, b) { return b.total - a.total; }), function (o, k) { return o[k] === undefined ? null : o[k]; });
+  // Détail des comptes (classes 6 et 7) avec affectation modifiable
+  var det = B.lignes.map(function (l, i) { return { l: l, i: i }; }).filter(function (x) { return /^[67]/.test(x.l.compte); });
+  document.getElementById('tabCptLignes').innerHTML = '<thead><tr><th>Compte</th><th>Libellé</th><th class="n">Solde</th><th>Poste</th><th>Camion</th></tr></thead><tbody>' +
+    det.map(function (x) {
+      var l = x.l;
+      return '<tr data-i="' + x.i + '"><td>' + txt(l.compte) + '</td><td>' + txt(l.libelle) + '</td><td class="n">' + eur(l.debit - l.credit) + '</td>' +
+        '<td><select data-l="poste">' + POSTES_BAL.map(function (p) { return '<option' + (p === l.poste ? ' selected' : '') + '>' + txt(p) + '</option>'; }).join('') + '</select></td>' +
+        '<td><input data-l="camion" value="' + txt(l.camion) + '" size="9"></td></tr>';
+    }).join('') + '</tbody>';
+  document.getElementById('enregAffect').onclick = function () {
+    var lignes = B.lignes.map(function (l) { return { compte: l.compte, libelle: l.libelle, debit: l.debit, credit: l.credit, poste: l.poste, camion: l.camion }; });
+    document.querySelectorAll('#tabCptLignes tr[data-i]').forEach(function (tr) {
+      var l = lignes[+tr.dataset.i];
+      l.poste = tr.querySelector('[data-l=poste]').value; l.camion = tr.querySelector('[data-l=camion]').value.trim().toUpperCase().replace(/[\s-]/g, '');
+    });
+    var m = document.getElementById('msgAffect'); m.textContent = 'Enregistrement…';
+    appelServeur('enregistrerBalance', { societe: B.societe, du: B.du, au: B.au, lignes: lignes }).then(function () { m.textContent = '✓ Enregistré'; charger(); })
+      .catch(function (e) { m.textContent = '⚠ ' + e.message; });
+  };
+  var h = B.historique || [];
+  document.getElementById('histoCompta').innerHTML = 'Balances ' + txt(B.societe) + ' déposées : ' + h.map(function (a) {
+    return dateFr(a) + ' <button class="suppr" data-supbal="' + a + '" title="Supprimer cette balance">✕</button>';
+  }).join(' · ');
+  document.querySelectorAll('[data-supbal]').forEach(function (x) {
+    x.onclick = function () {
+      if (!confirm('Supprimer la balance ' + B.societe + ' au ' + dateFr(x.dataset.supbal) + ' ?')) return;
+      appelServeur('supprimerBalance', B.societe, x.dataset.supbal).then(function () { charger(); }).catch(function (e) { alert(e.message); });
+    };
+  });
+}
+
 function rendreConso() {
   var lit = (D.LITRAGES || []).filter(function (l) { return garderSociete(societeCamion(l.immat)); });
   var p = D.parametres, seuil = p.SEUIL_CONSO_L100, hausse = p.SEUIL_HAUSSE_CONSO_PCT;

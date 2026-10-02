@@ -40,6 +40,7 @@ var FEUILLES = {
              'Derniere_Relance', 'Remarque'],
   HEURES: ['Date', 'Salarié', 'Heures', 'Remarque'],
   CHARGES_MUTUALISEES: ['Poste', 'Société', 'Montant_Mensuel', 'Debut', 'Fin', 'Echeance'],
+  BALANCE: ['Societe', 'Du', 'Au', 'Compte', 'Libelle', 'Debit', 'Credit', 'Poste', 'Camion', 'Importe_Le'],
   CORRESPONDANCES: ['Type', 'Sur_la_facture', 'Sur_le_planning', 'Remarque'],
   FACTURES_CLIENTS: ['N_Facture', 'Date_Facture', 'Mois', 'Societe', 'Client', 'Ref_Client', 'Activite', 'Nature', 'Lieu',
                      'Quantite', 'Prix_Unitaire', 'Montant_HT', 'Indexation_Pct', 'LVN', 'Date_LVN', 'Prefacture',
@@ -274,6 +275,7 @@ function getDonnees() {
     SEUIL_HAUSSE_CONSO_PCT: nombre_(params.SEUIL_HAUSSE_CONSO_PCT, 15),
     NB_SEMAINES_CONSO: Math.max(1, nombre_(params.NB_SEMAINES_CONSO, 2))
   };
+  try { d.COMPTA = balances_(ss).map(syntheseBalance_); } catch (e) { d.COMPTA = []; d.erreurs.push('Balance comptable : ' + e.message); }
   try { d.CONTROLE = controleFactures_(ss, minuit_(new Date())).mois; } catch (e) { d.CONTROLE = {}; d.erreurs.push('Contrôle des factures : ' + e.message); }
   d.alertes = calculerAlertes_(ss, new Date());
   d.genereLe = Utilities.formatDate(new Date(), FUSEAU, "dd/MM/yyyy 'à' HH:mm");
@@ -805,6 +807,150 @@ function majFacture(numero, action) {
  * Catégories (regroupement du bloc ATTENTION du site) : documents, relances, marge, vehicules,
  * retards, conso, donnees.
  */
+// ---------------------------------------------------------------------------
+// Comptabilité : balances générales déposées sur le site (une par société et par date de fin)
+// ---------------------------------------------------------------------------
+
+/** Immatriculation contenue dans un libellé de compte (« CARBURANT GR544ZJ », « GE 606 BF », « BV-741-WX »), sinon ''. */
+function plaqueLibelle_(libelle) {
+  var m = cle_(libelle).match(/(?:^|[^A-Z0-9])([A-Z]{2})[ -]?(\d{3})[ -]?([A-Z]{2})(?![A-Z0-9])/);
+  return m ? m[1] + m[2] + m[3] : '';
+}
+
+/** Poste d'analyse d'un compte du plan comptable (classes 6 et 7 ; « Bilan » pour les classes 1 à 5). */
+function posteCompte_(compte, libelle) {
+  var c = String(compte || ''), l = cle_(libelle);
+  if (/^[1-5]/.test(c)) return 'Bilan';
+  if (/^606[12]/.test(c)) return /FOURNIT/.test(l) ? 'Entretien' : 'Carburant';
+  if (/^606/.test(c)) return 'Entretien';
+  if (/^611/.test(c)) return 'Sous-traitance';
+  if (/^612/.test(c)) return 'Leasing';
+  if (/^613/.test(c)) return 'Locations';
+  if (/^615/.test(c)) return 'Entretien';
+  if (/^616/.test(c)) return 'Assurances';
+  if (/^6253/.test(c) || /PEAGE/.test(l)) return 'Péages';
+  if (/^625/.test(c)) return 'Déplacements';
+  if (/^622/.test(c)) return 'Honoraires';
+  if (/^627/.test(c)) return 'Frais bancaires';
+  if (/^6[2]/.test(c)) return 'Frais généraux';
+  if (/^63/.test(c)) return 'Impôts et taxes';
+  if (/^64/.test(c)) return 'Personnel';
+  if (/^66/.test(c)) return 'Charges financières';
+  if (/^67/.test(c)) return 'Charges exceptionnelles';
+  if (/^68/.test(c)) return 'Amortissements';
+  if (/^6/.test(c)) return 'Autres charges';
+  if (/^70/.test(c)) return 'Chiffre d\'affaires';
+  if (/^74/.test(c)) return 'Subventions';
+  if (/^7/.test(c)) return 'Autres produits';
+  return 'Autre';
+}
+
+function dateFrTexte_(iso) { var p = String(iso || '').split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : String(iso || ''); }
+
+/**
+ * Enregistre une balance lue sur le site : { societe, du, au, lignes: [{ compte, libelle, debit, credit, poste, camion }] }.
+ * Une balance de la même société à la même date de fin est remplacée.
+ */
+function enregistrerBalance(b) {
+  if (!b || !Array.isArray(b.lignes) || !b.lignes.length) throw new Error('Balance vide');
+  var soc = cle_(b.societe);
+  soc = soc.indexOf('LPB') >= 0 || soc.indexOf('LP TRANS') >= 0 ? 'LPB' : (soc.indexOf('GLEYZES') >= 0 ? 'Gleyzes' : '');
+  if (!soc) throw new Error('Choisissez la société (Gleyzes ou LPB)');
+  var du = dateDepuisTexte_(b.du), au = dateDepuisTexte_(b.au);
+  if (!au) throw new Error('Date de fin de la balance invalide');
+  var auTxt = Utilities.formatDate(au, FUSEAU, 'yyyy-MM-dd'), maintenant = new Date();
+  var propre = function (x) { return String(x === undefined || x === null ? '' : x).trim().replace(/^[=+\-@]/, "'$&").slice(0, 120); };
+  var lignes = b.lignes.map(function (l, i) {
+    var compte = String(l.compte || '').replace(/\D/g, '');
+    if (compte.length < 3) throw new Error('Ligne ' + (i + 1) + ' : numéro de compte invalide');
+    var debit = nombre_(l.debit, 0), credit = nombre_(l.credit, 0);
+    return [soc, du || '', au, compte, propre(l.libelle), debit, credit, propre(l.poste) || posteCompte_(compte, l.libelle),
+      plaque_(l.camion === undefined ? plaqueLibelle_(l.libelle) : l.camion), maintenant];
+  });
+  var verrou = LockService.getScriptLock();
+  verrou.waitLock(10000);
+  try {
+    var ss = classeur_(), sh = ss.getSheetByName('BALANCE');
+    if (!sh) { sh = ss.insertSheet('BALANCE'); sh.getRange(1, 1, 1, FEUILLES.BALANCE.length).setValues([FEUILLES.BALANCE]).setFontWeight('bold'); sh.setFrozenRows(1); }
+    var garder = lireTable_(sh).filter(function (r) {
+      var a = r.Au instanceof Date ? Utilities.formatDate(r.Au, FUSEAU, 'yyyy-MM-dd') : String(r.Au);
+      return !(r.Societe === soc && a === auTxt);
+    }).map(function (r) { return FEUILLES.BALANCE.map(function (h) { return r[h] === undefined ? '' : r[h]; }); });
+    var tout = garder.concat(lignes);
+    if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(FEUILLES.BALANCE.length, sh.getLastColumn())).clearContent();
+    sh.getRange(1, 1, 1, FEUILLES.BALANCE.length).setValues([FEUILLES.BALANCE]);
+    sh.getRange(2, 1, tout.length, FEUILLES.BALANCE.length).setValues(tout);
+  } finally {
+    verrou.releaseLock();
+  }
+  return { societe: soc, au: auTxt, lignes: lignes.length };
+}
+
+/** Supprime la balance d'une société à une date de fin. */
+function supprimerBalance(societe, au) {
+  var sh = classeur_().getSheetByName('BALANCE'); if (!sh) return 0;
+  var v = sh.getDataRange().getValues(), n = 0;
+  for (var i = v.length - 1; i >= 1; i--) {
+    var a = v[i][2] instanceof Date ? Utilities.formatDate(v[i][2], FUSEAU, 'yyyy-MM-dd') : String(v[i][2]);
+    if (v[i][0] === societe && a === au) { sh.deleteRow(i + 1); n++; }
+  }
+  return n;
+}
+
+/** Dernière balance de chaque société (et liste des balances déposées). */
+function balances_(ss) {
+  var sh = ss.getSheetByName('BALANCE'), par = {};
+  (sh ? lireTable_(sh) : []).forEach(function (r) {
+    var au = r.Au instanceof Date ? Utilities.formatDate(r.Au, FUSEAU, 'yyyy-MM-dd') : String(r.Au || '');
+    var du = r.Du instanceof Date ? Utilities.formatDate(r.Du, FUSEAU, 'yyyy-MM-dd') : String(r.Du || '');
+    if (!r.Societe || !au) return;
+    var s = par[r.Societe] = par[r.Societe] || {}, b = s[au] = s[au] || { societe: r.Societe, du: du, au: au, lignes: [] };
+    b.lignes.push({ compte: String(r.Compte), libelle: String(r.Libelle || ''), debit: nombre_(r.Debit, 0), credit: nombre_(r.Credit, 0),
+      poste: String(r.Poste || '') || posteCompte_(r.Compte, r.Libelle), camion: plaque_(r.Camion) });
+  });
+  return Object.keys(par).sort().map(function (soc) {
+    var dates = Object.keys(par[soc]).sort(), b = par[soc][dates[dates.length - 1]];
+    b.historique = dates;
+    return b;
+  });
+}
+
+/** Résultat, trésorerie, postes, charges par camion et points anormaux d'une balance. */
+function syntheseBalance_(b) {
+  var r2 = function (x) { return Math.round(x * 100) / 100; };
+  var solde = function (motif) { return b.lignes.filter(function (l) { return motif.test(l.compte); }).reduce(function (t, l) { return t + l.debit - l.credit; }, 0); };
+  var postes = {}, camions = {}, nonAffecte = {}, produits = 0, charges = 0;
+  b.lignes.forEach(function (l) {
+    var s = l.debit - l.credit;
+    if (/^6/.test(l.compte)) {
+      charges += s; postes[l.poste] = (postes[l.poste] || 0) + s;
+      if (l.camion) { var c = camions[l.camion] = camions[l.camion] || {}; c[l.poste] = (c[l.poste] || 0) + s; }
+      else if (['Carburant', 'Péages', 'Entretien', 'Leasing'].indexOf(l.poste) >= 0) nonAffecte[l.poste] = (nonAffecte[l.poste] || 0) + s;
+    } else if (/^7/.test(l.compte)) { produits -= s; postes[l.poste] = (postes[l.poste] || 0) - s; }
+  });
+  var d1 = b.du ? new Date(b.du + 'T00:00:00') : null, d2 = new Date(b.au + 'T00:00:00');
+  var nbMois = d1 ? Math.max(1, Math.round(((d2.getFullYear() - d1.getFullYear()) * 12 + d2.getMonth() - d1.getMonth() + 1) * 10) / 10) : null;
+  var tresorerie = solde(/^(512|514|517|53)/) + solde(/^519/);
+  var clients = solde(/^41[1-8]/), fournisseurs = -solde(/^40[1-8]/), tva = -solde(/^4455/);
+  var pts = [], euros = function (x) { return euros_(Math.abs(x)); };
+  var point = function (code, niveau, sujet, message) { pts.push({ code: code, niveau: niveau, sujet: sujet, message: message }); };
+  if (clients < -500) point('CLIENTS', 'urgent', 'Clients créditeur', 'compte clients créditeur de ' + euros(clients) + ' : des encaissements sont enregistrés sans leurs factures (ventes non saisies ?). Le CA et le résultat sont sans doute sous-estimés');
+  var s421 = solde(/^421/); if (s421 > 500) point('PAIES', 'urgent', 'Salaires', 'salaires versés supérieurs de ' + euros(s421) + ' aux salaires comptabilisés (paies non saisies ?) : les charges de personnel sont sous-estimées');
+  var s43 = solde(/^43/); if (s43 > 500) point('SOCIAL', 'a_prevoir', 'Charges sociales', 'charges sociales payées supérieures de ' + euros(s43) + ' à celles comptabilisées');
+  var s471 = solde(/^47[1-5]/); if (Math.abs(s471) > 500) point('ATTENTE', 'a_prevoir', 'Comptes d\'attente', euros(s471) + ' en comptes d\'attente, non encore affectés');
+  var s468 = solde(/^468/); if (s468 < -500) point('PAR', 'a_prevoir', 'Produits à recevoir', 'produits à recevoir au crédit (' + euros(s468) + ') : écriture à vérifier');
+  var s16 = solde(/^16/); if (s16 > 500) point('EMPRUNT', 'a_prevoir', 'Emprunt', 'emprunt au débit (' + euros(s16) + ') : le capital emprunté ne semble pas enregistré');
+  var s58 = solde(/^58/); if (Math.abs(s58) > 500) point('VIREMENTS', 'a_prevoir', 'Virements internes', 'virements internes non soldés : ' + euros(s58));
+  var pen = solde(/^6713/); if (pen > 0) point('PENALITES', 'a_prevoir', 'Pénalités de retard', 'pénalités de retard payées : ' + euros(pen));
+  var dD = 0, dC = 0; b.lignes.forEach(function (l) { dD += l.debit; dC += l.credit; });
+  if (Math.abs(dD - dC) > 1) point('EQUILIBRE', 'urgent', 'Balance déséquilibrée', 'total débit ' + euros_(dD) + ' ≠ total crédit ' + euros_(dC) + ' : une ligne a sans doute été mal lue');
+  var arr = function (o) { var x = {}; Object.keys(o).forEach(function (k) { x[k] = r2(o[k]); }); return x; };
+  Object.keys(camions).forEach(function (k) { camions[k] = arr(camions[k]); });
+  return { societe: b.societe, du: b.du, au: b.au, historique: b.historique, nbMois: nbMois, produits: r2(produits), charges: r2(charges), resultat: r2(produits - charges),
+    ca: r2(-solde(/^70/)), tresorerie: r2(tresorerie), clients: r2(clients), fournisseurs: r2(fournisseurs), tva: r2(tva),
+    postes: arr(postes), camions: camions, nonAffecte: arr(nonAffecte), points: pts, lignes: b.lignes };
+}
+
 function calculerAlertes_(ss, aujourdhui) {
   var p = lireParametres_(ss);
   var preavis = nombre_(p.JOURS_PREAVIS, 30), urgent = nombre_(p.JOURS_URGENT, 7);
@@ -995,6 +1141,16 @@ function calculerAlertes_(ss, aujourdhui) {
     alertes = alertes.concat(alertesConsoHebdo_(litrages_(ss), jour0, nombre_(p.SEUIL_CONSO_L100, 38), nombre_(p.SEUIL_HAUSSE_CONSO_PCT, 15),
       Math.max(1, nombre_(p.NB_SEMAINES_CONSO, 2))));
   } catch (e) { console.warn('Litrages : ' + e); }
+
+  // 9. Comptabilité : points anormaux de la dernière balance de chaque société
+  try {
+    balances_(ss).forEach(function (b) {
+      syntheseBalance_(b).points.forEach(function (pt) {
+        alertes.push({ niveau: pt.niveau, categorie: 'compta', domaine: 'Comptabilité', objet: b.societe, sujet: pt.sujet,
+          message: 'Balance ' + b.societe + ' au ' + dateFrTexte_(b.au) + ' : ' + pt.message, cle: 'COMPTA|' + b.societe + '|' + b.au + '|' + pt.code });
+      });
+    });
+  } catch (e) { console.warn('Balance : ' + e); }
 
   var ordre = { depasse: 0, urgent: 1, a_prevoir: 2 };
   alertes.sort(function (a, b) {
