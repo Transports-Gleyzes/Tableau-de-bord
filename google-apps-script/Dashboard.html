@@ -1421,12 +1421,14 @@ function analyserFacture(lignes, largeur) {
   var reChiffres = /(-?\d+(?:[.,]\d+)?)\s+(-?\d{1,3}(?:[   ]\d{3})*,\d{2,3})\s*€?\s+(\d{1,2}(?:,\d{2})?)\s*%?\s+(-?\d{1,3}(?:[   ]\d{3})*,\d{2})\s*€?\s*$/;
   var reSite = /^ITM\s+([A-Z][A-Z' \-]+?)(?:\s+\d{2,3})?$/;   // en-tête de site des factures faites hors INFORCE (« ITM SALERNES 83 »)
   var reTrajet = /^\s*([A-Z][A-Z' \-]+?)\s*\/\s*([A-Z][A-Z' \-]+?)\s*$/;
-  var elements = [];
+  var elements = [], precedente = '';
   txt.forEach(function (t) {
-    var u = sansAccents(t).replace(/\s+/g, ' ').trim();
+    var u = sansAccents(t).replace(/\s+/g, ' ').trim(), apresChargement = /^CHARGEMENT\b/.test(precedente);
+    precedente = u;
     var c = u.match(reChiffres);
     if (c && !/BRUT HT|NET HT|TOTAL/.test(u)) elements.push({ type: 'prix', texte: u.slice(0, c.index).trim(), qte: nombreFr(c[1]), prix: nombreFr(c[2]), total: nombreFr(c[4]), desc: [] });
     else if (reSite.test(u)) elements.push({ type: 'trajet', lieu: u.match(reSite)[1].trim(), depart: '', site: true });
+    else if (apresChargement && /^[A-Z][A-Z' \-]+(?:\s+\d{2,3})?$/.test(u)) elements.push({ type: 'trajet', lieu: u.replace(/\s+\d{2,3}$/, ''), depart: '', site: true });   // « SALERNES » sous « Chargement : … »
     else if (reTrajet.test(u) && !/\d/.test(u)) elements.push({ type: 'trajet', lieu: u.match(reTrajet)[2].trim(), depart: u.match(reTrajet)[1].trim() });
     else if (elements.length && !/MODE DE REGLEMENT|BRUT HT|MODALITES|PAPILLON/.test(u)) elements.push({ type: 'desc', texte: u });
   });

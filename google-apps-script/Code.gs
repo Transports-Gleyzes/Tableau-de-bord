@@ -1053,10 +1053,12 @@ function genererFactureScaped(mois) {
   var infos = {}, prixDD = null, siteCourant = null;
   mv.forEach(function (l, i) {
     var t = cle_(l[0]);
-    if (/^ITM\b/.test(t)) {
-      var lieuTxt = t.replace(/^ITM\s+/, '').replace(/\s+\d{2,3}$/, '');
+    var apresChargement = i > 0 && cle_(mv[i - 1][0]).indexOf('CHARGEMENT') === 0;
+    if (t && (/^ITM\b/.test(t) || apresChargement) && !/TRANSPORT|DEPOTAGE|\bKM\b/.test(t)) {
+      // en-tête de site : « ITM SALERNES 83 » ou « SALERNES » sous la ligne « Chargement » ; écrit désormais « SALERNES »
+      var lieuTxt = t.replace(/^ITM\s+/, '').replace(/\s+\d{2,3}$/, '').trim();
       siteCourant = infos[lieuTxt] = infos[lieuTxt] || { entete: [], km: '', prix: null };
-      siteCourant.entete = (cle_(mv[i - 1][0]).indexOf('CHARGEMENT') === 0 ? [String(mv[i - 1][0])] : []).concat([String(l[0])]);
+      siteCourant.entete = (apresChargement ? [String(mv[i - 1][0])] : []).concat([lieuTxt]);
     } else if (siteCourant && /\bKM\b.*\bTK\b/.test(t)) siteCourant.km = siteCourant.km || String(l[0]);
     else if (siteCourant && t.indexOf('TRANSPORT') === 0 && siteCourant.prix === null) siteCourant.prix = nombre_(l[4], null);
     if (t.indexOf('DOUBLE DEPOTAGE') === 0) prixDD = nombre_(l[4], null);
@@ -1071,7 +1073,7 @@ function genererFactureScaped(mois) {
     (parSite[connu] = parSite[connu] || []).push(l);
   });
   var sites = ordre.filter(function (k) { return parSite[k]; }).map(function (k) {
-    var inf = infos[k] || { entete: ['Chargement : DPF FOS CODE 13011', 'ITM ' + k], km: '', prix: null };
+    var inf = infos[k] || { entete: ['Chargement : DPF FOS CODE 13011', k], km: '', prix: null };
     if (!infos[k]) avert.push('Nouveau lieu ' + k + ' : vérifiez son en-tête et ajoutez la ligne « KM - TK - TF »');
     var prixPl = parSite[k].map(function (l) { return l.prix; }).filter(function (x) { return x; });
     var pp = prixPl.length ? prixPl.sort(function (a, b) { return prixPl.filter(function (x) { return x === b; }).length - prixPl.filter(function (x) { return x === a; }).length; })[0] : null;
@@ -1108,11 +1110,11 @@ function genererFactureScaped(mois) {
       if (t.indexOf('FACTURE N') === 0) sh.getRange(base + k, 2).setValue(numero);
     }
   };
-  var pageNoDe = function (srcDebut, n) {   // case du n° de page (« 1/5 ») : une date au format j/m sous le TOTAL
+  var pageNoDe = function (srcDebut, n) {   // case du n° de page (« 1/5 ») : une date au format j/m (ou ce texte) sous le TOTAL
     for (var k = n - 1; k > 0; k--) {
       var l = mv[srcDebut + k] || [];
       if (cle_(l[0]).indexOf('DATE') === 0) break;   // remonté jusqu'à l'en-tête : pas de n° de page
-      for (var c2 = 1; c2 < l.length; c2++) if (l[c2] instanceof Date) return [k, c2];
+      for (var c2 = 1; c2 < l.length; c2++) if (l[c2] instanceof Date || /^\d{1,2}\/\d{1,2}$/.test(String(l[c2]).trim())) return [k, c2];
     }
     return null;
   };
