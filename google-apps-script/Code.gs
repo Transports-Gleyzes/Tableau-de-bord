@@ -232,6 +232,9 @@ function getDonnees() {
     var sh = ss.getSheetByName(nom);
     d[nom] = (nom === 'FACTURES_CLIENTS' ? facturesClients_(ss) : sh ? lireTable_(sh) : []).map(serialiser_);
   });
+  var srcFin = finances_(ss);
+  d.FINANCES = srcFin.lignes.map(serialiser_);
+  d.financesCalculees = srcFin.calcule; d.financesMoisReels = srcFin.mois || {};
   d.FINANCES.forEach(function (l) { l.Mois = moisTexte_(l.Mois); });
   d.FLOTTE = d.FLOTTE.filter(estActif_);
   d.SALARIES = d.SALARIES.filter(estActif_);
@@ -1013,9 +1016,9 @@ function calculerAlertes_(ss, aujourdhui) {
   alertes = alertes.concat(taches_(ss, jour0));
 
   // 2. Finances : dernier mois importé
-  var shF = ss.getSheetByName('FINANCES');
-  if (shF) {
-    var fin = lireTable_(shF);
+  var srcFin = finances_(ss);
+  if (srcFin.lignes.length) {
+    var fin = srcFin.lignes;
     var mois = fin.map(function (l) { return moisTexte_(l.Mois); }).filter(String).sort();
     var dernier = mois[mois.length - 1];
     if (dernier) {
@@ -1034,6 +1037,7 @@ function calculerAlertes_(ss, aujourdhui) {
       Object.keys(parCamion).forEach(function (id) {
         var c = parCamion[id];
         if (c.ca === null) {
+          if (srcFin.calcule) return;   // finances calculées : camion sans tournée au planning ce mois-là
           alertes.push({ niveau: 'a_prevoir', categorie: 'donnees', domaine: 'Finances', objet: id, sujet: 'CA manquant',
             message: 'CA non renseigné pour ' + id + ' en ' + dernier, cle: 'CA_MANQUANT|' + id + '|' + dernier });
           return;
@@ -1106,10 +1110,10 @@ function calculerAlertes_(ss, aujourdhui) {
   }
 
   // 6. Marge par activité en baisse : dernier mois comparé aux 3 mois précédents
-  if (shF) {
+  if (srcFin.lignes.length && (!srcFin.calcule || srcFin.moisReels >= 4)) {
     var activiteCamion = {};
     flotte.forEach(function (l) { if (l.Activite) activiteCamion[l.Camion_ID] = String(l.Activite).trim(); });
-    alertes = alertes.concat(baissesMarge_(lireTable_(shF), activiteCamion, nombre_(p.SEUIL_BAISSE_MARGE_PTS, 5)));
+    alertes = alertes.concat(baissesMarge_(srcFin.lignes, activiteCamion, nombre_(p.SEUIL_BAISSE_MARGE_PTS, 5)));
   }
 
   // 7. Taux de retards du mois en cours
@@ -1157,6 +1161,110 @@ function calculerAlertes_(ss, aujourdhui) {
     return (ordre[a.niveau] - ordre[b.niveau]) || ((a.jours === undefined ? 999 : a.jours) - (b.jours === undefined ? 999 : b.jours));
   });
   return alertes;
+}
+
+/**
+ * Lignes de finances par mois et par camion. Si l'onglet FINANCES (import du classeur Excel) est rempli, il fait foi ;
+ * sinon elles sont calculées :
+ *  - CA et km : tournées des plannings (Inter + Carburant) par camion ;
+ *  - charges : balances déposées. Entre deux balances du même exercice, la différence est répartie sur les mois écoulés
+ *    (balance au 30/09 puis au 31/10 = charges d'octobre) ; une balance seule est ramenée à la moyenne mensuelle.
+ *    Comptes portant une immatriculation -> camion ; les autres -> ligne « STRUCTURE » (charges non affectées).
+ * Renvoie { lignes, calcule, moisReels, mois: { 'AAAA-MM': 'reel' | 'moyenne' } }.
+ */
+function finances_(ss) {
+  var sh = ss.getSheetByName('FINANCES'), importees = sh ? lireTable_(sh) : [];
+  if (importees.length) return { lignes: importees, calcule: false, moisReels: 99 };
+  var shB = ss.getSheetByName('BALANCE'), par = {};
+  var iso = function (v) { return v instanceof Date ? Utilities.formatDate(v, FUSEAU, 'yyyy-MM-dd') : String(v || ''); };
+  (shB ? lireTable_(shB) : []).forEach(function (r) {
+    var au = iso(r.Au); if (!r.Societe || !au) return;
+    var b = (par[r.Societe] = par[r.Societe] || {})[au] = par[r.Societe][au] || { du: iso(r.Du), au: au, comptes: {} };
+    b.comptes[String(r.Compte)] = { solde: nombre_(r.Debit, 0) - nombre_(r.Credit, 0), poste: String(r.Poste || '') || posteCompte_(r.Compte, r.Libelle), camion: plaque_(r.Camion) };
+  });
+  var colonne = function (poste) {
+    return { 'Carburant': 'Carburant', 'Péages': 'Peages', 'Entretien': 'Entretien', 'Personnel': 'Salaires', 'Leasing': 'Charges_Fixes', 'Locations': 'Charges_Fixes',
+      'Assurances': 'Charges_Fixes', 'Impôts et taxes': 'Charges_Fixes' }[poste] || 'Charges_Mutualisees';
+  };
+  var moisEntre = function (debut, fin) {   // 'AAAA-MM' de debut à fin inclus
+    var res = [], a = +debut.slice(0, 4), m = +debut.slice(5, 7);
+    while (a * 100 + m <= +fin.slice(0, 4) * 100 + +fin.slice(5, 7)) { res.push(a + '-' + ('0' + m).slice(-2)); m++; if (m > 12) { m = 1; a++; } }
+    return res;
+  };
+  var charges = {}, socCamion = {}, typeMois = {};   // charges[M][soc|camion][colonne]
+  Object.keys(par).forEach(function (soc) {
+    var prev = null;
+    Object.keys(par[soc]).sort().forEach(function (au) {
+      var b = par[soc][au], memeExercice = prev && prev.du === b.du;
+      var debut = memeExercice ? moisEntre(prev.au.slice(0, 7), au.slice(0, 7))[1] : (b.du || au).slice(0, 7);
+      var mois = debut ? moisEntre(debut, au.slice(0, 7)) : [];
+      if (!mois.length) { prev = b; return; }
+      Object.keys(b.comptes).forEach(function (cpt) {
+        if (!/^6/.test(cpt)) return;
+        var c = b.comptes[cpt], delta = c.solde - (memeExercice && prev.comptes[cpt] ? prev.comptes[cpt].solde : 0);
+        if (!delta) return;
+        var cible = c.camion || 'STRUCTURE', col = colonne(c.poste);
+        if (c.camion) socCamion[c.camion] = soc;
+        mois.forEach(function (M) {
+          var x = ((charges[M] = charges[M] || {})[soc + '|' + cible] = charges[M][soc + '|' + cible] || {});
+          x[col] = (x[col] || 0) + delta / mois.length;
+          typeMois[M] = mois.length === 1 ? 'reel' : (typeMois[M] === 'reel' ? 'reel' : 'moyenne');
+        });
+      });
+      prev = b;
+    });
+  });
+  var moisCompta = Object.keys(charges).sort();
+  if (!moisCompta.length) return { lignes: [], calcule: true, moisReels: 0, mois: {} };
+  // CA et km des plannings, par camion (société du camion : celle de la balance qui porte ses comptes, sinon FLOTTE, sinon chauffeurs)
+  var pl = []; try { pl = plannings_(ss); } catch (e) { /* plannings non reliés */ }
+  var flotteSoc = {}, shFl = ss.getSheetByName('FLOTTE');
+  (shFl ? lireTable_(shFl) : []).forEach(function (f) { if (f['Société']) flotteSoc[plaque_(f.Camion_ID)] = /LPB/i.test(f['Société']) ? 'LPB' : 'Gleyzes'; });
+  var votes = {}, prod = {}, connues = {}, corrige = {};
+  Object.keys(socCamion).concat(Object.keys(flotteSoc)).forEach(function (k) { connues[k] = 1; });
+  try { Object.keys(immatsConnues_(ss)).forEach(function (k) { connues[k] = 1; }); } catch (e) { /* échéances non reliées */ }
+  var plaqueSure = function (p) {   // faute de frappe d'un caractère (GB042ZC pour GD042ZC) corrigée
+    if (!p || connues[p]) return p;
+    if (!(p in corrige)) corrige[p] = procheConnue_(p, connues) || p;
+    return corrige[p];
+  };
+  pl.forEach(function (l) {
+    var M = Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM'); if (!charges[M]) return;
+    var cam = plaqueSure(plaque_(l.camion)) || 'STRUCTURE', sc = l.societeChauffeur || l.societe || '';
+    if (cam !== 'STRUCTURE' && sc) { var v = votes[cam] = votes[cam] || {}; v[sc] = (v[sc] || 0) + 1; }
+    var k = M + '|' + cam + '|' + (cam === 'STRUCTURE' ? sc : '');
+    var x = prod[k] = prod[k] || { ca: 0, km: null };
+    x.ca += l.ca || 0; if (l.km) x.km = (x.km || 0) + l.km;
+  });
+  var societeDe = function (cam) {
+    if (socCamion[cam]) return socCamion[cam];
+    if (flotteSoc[cam]) return flotteSoc[cam];
+    var v = votes[cam] || {}; return Object.keys(v).sort(function (a, b) { return v[b] - v[a]; })[0] || '';
+  };
+  var r2 = function (x) { return x === null || x === undefined ? '' : Math.round(x * 100) / 100; };
+  var lignes = [];
+  moisCompta.forEach(function (M) {
+    var vus = {};   // 'société|camion' : une ligne par société pour un camion qui a des comptes dans les deux balances
+    Object.keys(charges[M]).forEach(function (k) { vus[k] = 1; });
+    Object.keys(prod).forEach(function (k) {
+      var p = k.split('|'); if (p[0] !== M) return;
+      vus[(p[1] === 'STRUCTURE' ? p[2] : societeDe(p[1])) + '|' + p[1]] = 1;
+    });
+    Object.keys(vus).sort().forEach(function (id) {
+      var soc = id.split('|')[0], cam = id.split('|')[1], structure = cam === 'STRUCTURE';
+      var ch = charges[M][id] || null;
+      // le CA du camion va sur la ligne de sa société principale
+      var pr = structure ? prod[M + '|STRUCTURE|' + soc] : (societeDe(cam) === soc ? prod[M + '|' + cam + '|'] : null);
+      var avecCompta = Object.keys(charges[M]).some(function (k) { return k.indexOf(soc + '|') === 0; });   // la société a une balance ce mois-là
+      var ligne = { Mois: M, Camion_ID: structure ? 'Non affecté (' + (soc || '?') + ')' : cam, 'Société': soc, CA: pr ? r2(pr.ca) : (avecCompta ? 0 : ''), KM: pr && pr.km ? pr.km : '' };
+      ['Carburant', 'Peages', 'Salaires', 'Entretien', 'Charges_Fixes', 'Charges_Mutualisees'].forEach(function (c) {
+        ligne[c] = ch ? r2(ch[c] || 0) : (avecCompta ? 0 : '');   // société avec balance : pas de compte = 0 €
+      });
+      lignes.push(ligne);
+    });
+  });
+  var reels = Object.keys(typeMois).filter(function (m) { return typeMois[m] === 'reel'; }).length;
+  return { lignes: lignes, calcule: true, moisReels: reels, mois: typeMois };
 }
 
 /**

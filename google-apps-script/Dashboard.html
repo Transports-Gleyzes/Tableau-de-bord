@@ -164,7 +164,7 @@ button.petit { padding: 2px 8px; font-size: 12px; }
     <div class="grille">
       <div class="carte">
         <h2>CA et charges par mois</h2>
-        <p class="note">12 derniers mois importés depuis le classeur Excel (onglet FINANCES)</p>
+        <p class="note">12 derniers mois : CA des plannings, charges des balances comptables</p>
         <div class="legende" id="legCaCharges"></div>
         <div class="graph"><canvas id="gCaCharges" aria-label="CA et charges par mois"></canvas></div>
       </div>
@@ -180,6 +180,7 @@ button.petit { padding: 2px 8px; font-size: 12px; }
   <section id="finances" hidden>
     <div class="barre"><label for="moisFin">Mois</label><select id="moisFin"></select></div>
     <div class="tuiles" id="tuilesFin"></div>
+    <p class="note" id="noteFin"></p>
     <div class="grille">
       <div class="carte">
         <h2>Résultat par camion</h2>
@@ -636,6 +637,12 @@ function totauxFinances(lignes) {
   return t;
 }
 function financesFiltrees() { return D.FINANCES.filter(function (l) { return garderSociete(l['Société']); }); }
+/** Pour les totaux : en finances calculées, une société sans balance ce mois-là (CA sans charges) est écartée. */
+function financesComptables() {
+  var fin = financesFiltrees(); if (!D.financesCalculees) return fin;
+  var ok = {}; fin.forEach(function (l) { if (num(l.Carburant) !== null) ok[l.Mois + '|' + l['Société']] = 1; });
+  return fin.filter(function (l) { return ok[l.Mois + '|' + l['Société']]; });
+}
 
 // ---------- graphiques ----------
 function optionsCommunes(empile, horizontal) {
@@ -752,7 +759,7 @@ function rendreAccueil() {
   var tauxR = nbLiv ? somme(liv, 'Nb_Retards') / nbLiv * 100 : null, tauxRP = nbLivP ? somme(livP, 'Nb_Retards') / nbLivP * 100 : null;
 
   var mf = moisFinances(), dernier = mf[mf.length - 1], avant = mf[mf.length - 2];
-  var fin = financesFiltrees();
+  var fin = financesComptables();
   var tD = dernier ? totauxFinances(fin.filter(function (l) { return l.Mois === dernier; })) : null;
   var tA = avant ? totauxFinances(fin.filter(function (l) { return l.Mois === avant; })) : null;
 
@@ -913,12 +920,22 @@ function rendreFinances() {
   var mois = document.getElementById('moisFin').value;
   var fin = financesFiltrees();
   var lignes = fin.filter(function (l) { return l.Mois === mois; });
-  var t = totauxFinances(lignes);
-  document.getElementById('tuilesFin').innerHTML = !mois ? '<div class="vide">Aucune donnée financière : importez FINANCES_EXPORT.csv (voir le guide).</div>' :
-    tuile('Chiffre d\'affaires', eur(t.ca), nomMois(mois)) + tuile('Charges totales', eur(t.charges)) +
+  // Finances calculées : une société sans balance ce mois-là n'a que du CA ; elle est montrée mais pas comptée dans le résultat
+  var socCompta = {}, exclues = {};
+  lignes.forEach(function (l) { if (num(l.Carburant) !== null) socCompta[l['Société']] = 1; });
+  var lignesTot = !D.financesCalculees ? lignes : lignes.filter(function (l) { if (socCompta[l['Société']]) return true; exclues[l['Société'] || '?'] = 1; return false; });
+  var t = totauxFinances(lignesTot);
+  var horsTotal = Object.keys(exclues).length ? 'Sans ' + Object.keys(exclues).join(', ') + ' (pas de balance)' : '';
+  document.getElementById('tuilesFin').innerHTML = !mois ? '<div class="vide">Aucune donnée financière : déposez une balance comptable dans l\'onglet Comptabilité.</div>' :
+    tuile('Chiffre d\'affaires', eur(t.ca), nomMois(mois) + (horsTotal ? ' · ' + horsTotal : '')) + tuile('Charges totales', eur(t.charges), horsTotal) +
     tuile('Résultat', eur(t.resultat), incomplet(t)) + tuile('Marge', pct(t.marge), incomplet(t)) +
     tuile('Coût au km', t.coutKm === null ? '<span class="nd">N/D</span>' : fmtEur2.format(t.coutKm), t.km ? fmtNb.format(t.km) + ' km' : '');
 
+  var typeM = (D.financesMoisReels || {})[mois];
+  document.getElementById('noteFin').innerHTML = !D.financesCalculees || !mois ? '' :
+    'CA : tournées des plannings. Charges : balances comptables' + (typeM === 'moyenne'
+      ? ' — <b>moyenne mensuelle</b> de la balance (déposez une balance chaque fin de mois pour avoir les charges réelles du mois)' : ' (différence avec la balance du mois précédent)') +
+    '. Comptes sans immatriculation, salaires compris : ligne « Non affecté ». N/D : pas encore de balance pour cette société.';
   // Par camion
   var ids = {}; lignes.forEach(function (l) { (ids[l.Camion_ID] = ids[l.Camion_ID] || []).push(l); });
   var parCamion = Object.keys(ids).sort().map(function (id) {

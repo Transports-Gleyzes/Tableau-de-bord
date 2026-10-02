@@ -5,7 +5,7 @@ Site privé pour suivre la santé de l'entreprise en temps réel, construit sur 
 | Onglet du site | Ce qu'il montre | D'où viennent les données |
 |---|---|---|
 | **Accueil** | CA, marge, livraisons, retards, véhicules indisponibles, factures en attente, heures chauffeurs, puis le bloc **🔴 ATTENTION** (documents qui expirent, clients à relancer, marge d'une activité en baisse…) | tout ce qui suit |
-| **Finances** | CA, charges par poste, résultat, marge et coût au km, par camion et par société | onglet `FINANCES` (importé depuis `TABLEAU_DE_BORD_FLOTTE.xlsx`) |
+| **Finances** | CA, charges par poste, résultat, marge et coût au km, par camion et par société | calculé : CA des plannings par camion, charges des balances déposées dans **Comptabilité** (différence entre deux balances = charges du mois ; une seule balance = moyenne mensuelle). Si l'onglet `FINANCES` est rempli (import du classeur Excel), il fait foi |
 | **Flotte** | Contrôle technique, entretien, assurance, chronotachygraphe | onglet `FLOTTE` (saisie manuelle) |
 | **Salariés** | Permis, FIMO/FCO, visite médicale, carte conducteur, formations, absences | onglets `SALARIES` et `ABSENCES` |
 | **Carburant & livraisons** | Livraisons par jour, CA des tournées, litres, consommation L/100 km | onglets `LIVRAISONS` et `CARBURANT` |
