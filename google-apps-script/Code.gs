@@ -166,7 +166,14 @@ function installer() {
   } catch (e) {
     synchro = '\n\nTableau « Échéances flotte » illisible : ' + e.message;
   }
-  if (classeurParam_(ss, 'ID_PLANNING_INTER') || classeurParam_(ss, 'ID_PLANNING_CARBURANT')) {
+  // Vérifie chaque lien de fichier et l'indique clairement s'il ne fonctionne pas
+  var liensOk = [];
+  ['ID_PLANNING_INTER', 'ID_PLANNING_CARBURANT', 'ID_LITRAGES'].forEach(function (k) {
+    try { var f = classeurParam_(ss, k); if (f) liensOk.push(f.getName()); }
+    catch (e) { synchro += '\n\n⚠ ' + e.message; }
+  });
+  if (liensOk.length) synchro += '\n\nFichiers reliés : ' + liensOk.join(', ') + '.';
+  if (lireParametres_(ss).ID_PLANNING_INTER || lireParametres_(ss).ID_PLANNING_CARBURANT) {
     synchro += '\n\nÉtape suivante : menu Tableau de bord > Remplir la colonne CAMION des plannings.';
   }
   try {
@@ -571,10 +578,25 @@ function classeurEcheances_(ss) { return classeurParam_(ss, 'ID_CLASSEUR_ECHEANC
 function classeurParam_(ss, nomParam) {
   var v = String(lireParametres_(ss)[nomParam] || '').trim();
   if (!v) return null;
-  var m = v.match(/\/d\/([a-zA-Z0-9_-]{20,})/);
-  var id = m ? m[1] : v;
-  if (!CACHE_EXTERNE_[id]) CACHE_EXTERNE_[id] = SpreadsheetApp.openById(id);
-  return CACHE_EXTERNE_[id];
+  if (CACHE_EXTERNE_[v]) return CACHE_EXTERNE_[v];
+  var m = v.match(/\/d\/([a-zA-Z0-9_-]{20,})/), id = m ? m[1] : (/^[a-zA-Z0-9_-]{25,}$/.test(v) ? v : null);
+  if (!id) {
+    // Un nom de fichier a été écrit au lieu du lien : on le cherche dans Google Drive (Google Sheets uniquement)
+    var it = DriveApp.getFilesByName(v), trouve = null;
+    while (it.hasNext()) {
+      var f = it.next();
+      if (!f.isTrashed() && f.getMimeType() === MimeType.GOOGLE_SHEETS && (!trouve || f.getLastUpdated() > trouve.getLastUpdated())) trouve = f;
+    }
+    if (!trouve) throw new Error('fichier « ' + v + ' » introuvable dans Google Drive (PARAMETRES > ' + nomParam +
+      ') : collez plutôt le lien complet du fichier (https://docs.google.com/spreadsheets/d/…), ou vérifiez qu\'il est bien au format Google Sheets.');
+    id = trouve.getId();
+  }
+  try {
+    CACHE_EXTERNE_[v] = SpreadsheetApp.openById(id);
+  } catch (e) {
+    throw new Error('impossible d\'ouvrir le fichier indiqué dans PARAMETRES > ' + nomParam + ' (' + e.message + ')');
+  }
+  return CACHE_EXTERNE_[v];
 }
 
 /** Premier onglet du tableau « Échéances flotte » dont le nom (sans accents, en majuscules) correspond au motif. */
@@ -814,7 +836,9 @@ function immatsConnues_(ss) {
 }
 
 function preparerCamionsManuel() {
-  var msg = preparerCamionsPlannings_(classeur_());
+  var msg;
+  try { msg = preparerCamionsPlannings_(classeur_()); }
+  catch (e) { SpreadsheetApp.getUi().alert('Problème : ' + e.message); return; }
   SpreadsheetApp.getUi().alert(msg ? msg.trim() : 'Renseignez d\'abord ID_PLANNING_INTER et ID_PLANNING_CARBURANT dans PARAMETRES.');
 }
 
