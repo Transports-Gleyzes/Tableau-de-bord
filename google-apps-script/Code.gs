@@ -66,6 +66,7 @@ var PARAMETRES_DEFAUT = [
   ['ID_PLANNING_CARBURANT', '', 'Lien du Google Sheet « Planning Carburant » : CA et livraisons lus directement'],
   ['ID_LITRAGES', '', 'Lien du Google Sheet « Litrages véhicules » : consommation par semaine lue directement'],
   ['SEUIL_HAUSSE_CONSO_PCT', 15, 'Alerte si la consommation récente dépasse de ce % la moyenne habituelle du camion'],
+  ['JOURS_MOIS_PRECEDENT', 10, 'Pendant ces premiers jours du mois, les alertes des plannings portent aussi sur le mois précédent (ensuite : mois en cours seulement)'],
   ['NB_SEMAINES_CONSO', 2, 'Nombre de dernières semaines regroupées pour juger la consommation (1 = très réactif mais beaucoup de fausses alertes)'],
   ['JOURS_PREAVIS', 30, 'Une échéance passe « à prévoir » ce nombre de jours avant la date'],
   ['JOURS_URGENT', 7, 'Une échéance passe « urgente » ce nombre de jours avant la date'],
@@ -507,8 +508,9 @@ function calculerAlertes_(ss, aujourdhui) {
   }
 
   // 8. Plannings et litrages (Google Sheets reliés) : une erreur de lecture ne bloque pas les autres alertes
-  try { alertes = alertes.concat(alertesPlannings_(plannings_(ss), jour0)); } catch (e) { console.warn('Plannings : ' + e); }
-  try { alertes = alertes.concat(alertesCamionsPlannings_(ss, plannings_(ss), jour0)); } catch (e) { console.warn('Camions des plannings : ' + e); }
+  var debutPlannings = debutPeriodePlannings_(jour0, nombre_(p.JOURS_MOIS_PRECEDENT, 10));
+  try { alertes = alertes.concat(alertesPlannings_(plannings_(ss), jour0, debutPlannings)); } catch (e) { console.warn('Plannings : ' + e); }
+  try { alertes = alertes.concat(alertesCamionsPlannings_(ss, plannings_(ss), jour0, debutPlannings)); } catch (e) { console.warn('Camions des plannings : ' + e); }
   try {
     alertes = alertes.concat(alertesConsoHebdo_(litrages_(ss), jour0, nombre_(p.SEUIL_CONSO_L100, 38), nombre_(p.SEUIL_HAUSSE_CONSO_PCT, 15),
       Math.max(1, nombre_(p.NB_SEMAINES_CONSO, 2))));
@@ -1036,12 +1038,12 @@ function attribuerCamions_(ss, lignes) {
 }
 
 /**
- * Contrôles sur les camions des plannings (60 derniers jours) :
+ * Contrôles sur les camions des plannings (mois en cours, et mois précédent en début de mois) :
  *  - immatriculation inconnue (ni dans FLOTTE ni dans le tableau des échéances), avec la correction probable ;
  *  - camion utilisé alors que son contrôle technique était expiré.
  */
-function alertesCamionsPlannings_(ss, lignes, jour0) {
-  var depuis = new Date(jour0.getTime() - 60 * 86400000), res = [];
+function alertesCamionsPlannings_(ss, lignes, jour0, depuis) {
+  var res = [];
   var connues = immatsConnues_(ss), ct = {};
   try {
     echeances_(ss).forEach(function (e) { if (e.domaine === 'Flotte' && e.date && /CONTROLE TECHNIQUE/.test(cle_(e.document))) ct[e.nom] = e.date; });
@@ -1076,9 +1078,19 @@ function alertesCamionsPlannings_(ss, lignes, jour0) {
   return res;
 }
 
+/**
+ * Début de la période surveillée dans les plannings : le 1er du mois en cours, ou le 1er du mois précédent
+ * pendant les premiers jours du mois (le 2 octobre on regarde encore septembre, plus août).
+ */
+function debutPeriodePlannings_(jour0, joursMoisPrecedent) {
+  return jour0.getDate() <= joursMoisPrecedent
+    ? new Date(jour0.getFullYear(), jour0.getMonth() - 1, 1)
+    : new Date(jour0.getFullYear(), jour0.getMonth(), 1);
+}
+
 /** Contrats manquants (Inter) et livraisons sans prix (Carburant) des 60 derniers jours. */
-function alertesPlannings_(lignes, jour0) {
-  var depuis = new Date(jour0.getTime() - 60 * 86400000), res = [], sansPrix = {};
+function alertesPlannings_(lignes, jour0, depuis) {
+  var res = [], sansPrix = {};
   lignes.forEach(function (l) {
     if (l.date < depuis || l.date > jour0) return;
     var dateTxt = Utilities.formatDate(l.date, FUSEAU, 'dd/MM/yyyy');
