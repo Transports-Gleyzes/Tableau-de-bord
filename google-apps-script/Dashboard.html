@@ -1393,6 +1393,11 @@ function analyserFacture(lignes, largeur) {
     if (moisTexte) { var mt = MOIS_FR[moisTexte[1]]; if (mt > mo + 1) an--; mo = mt; }
     else if (jo <= 10) { mo--; if (!mo) { mo = 12; an--; } }   // facture du début de mois : mois précédent
     f.mois = an + '-' + ('0' + mo).slice(-2);
+    // Mois des LVN s'il y en a (factures à la quinzaine datées du mois suivant)
+    var parMois = {};
+    f.lignes.forEach(function (l) { if (l.dateLvn) { var m2 = +l.dateLvn.slice(3, 5); parMois[m2] = (parMois[m2] || 0) + 1; } });
+    var mLvn = Object.keys(parMois).sort(function (a, b) { return parMois[b] - parMois[a]; })[0];
+    if (mLvn) { var an2 = +f.date.slice(0, 4), mo2 = +f.date.slice(5, 7); if (+mLvn > mo2 + 6) an2--; f.mois = an2 + '-' + ('0' + mLvn).slice(-2); }
   }
   if (!f.numero) f.avertissements.push('Numéro de facture non trouvé');
   if (!f.lignes.length) f.avertissements.push('Aucune ligne chiffrée lue');
@@ -1546,7 +1551,7 @@ function rendreFacturation() {
   var v = function (x) { return x === undefined || x === null || x === '' ? '<span class="nd">—</span>' : txt(x); };
   document.getElementById('tabCtrlCarbu').innerHTML = '<thead><tr><th>Client planning</th><th>Client facture</th><th>Lieu</th><th>Soc.</th><th class="n">Livr.</th><th class="n">m³ plan.</th><th class="n">m³ fact.</th><th class="n">Prix plan.</th><th class="n">Prix fact.</th><th class="n">CA planning</th><th class="n">Facturé HT</th><th>État</th></tr></thead><tbody>' +
     (c.length ? c.map(function (x) {
-      return '<tr><td>' + v(x.clientPlanning) + '</td><td>' + v(x.clientFacture) + '</td><td>' + v(x.lieu) + (x.lieuFacture && x.lieu && sansAccents(x.lieuFacture) !== sansAccents(x.lieu) && (x.etats || []).indexOf('lieu') >= 0 ? '<div class="note">facturé : ' + txt(x.lieuFacture) + '</div>' : '') + '</td><td>' + v(x.societe) + '</td><td class="n">' + v(x.n) +
+      return '<tr><td>' + v(x.clientPlanning) + '</td><td>' + v(x.clientFacture) + '</td><td>' + v(x.lieu) + (x.lieuFacture && x.lieu && sansAccents(x.lieuFacture) !== sansAccents(x.lieu) && (x.etats || []).indexOf('lieu') >= 0 ? '<div class="note">facturé : ' + txt(x.lieuFacture) + '</div>' : '') + (x.periode ? '<div class="note">' + txt(x.periode) + '</div>' : '') + '</td><td>' + v(x.societe) + '</td><td class="n">' + v(x.n) +
         '</td><td class="n">' + v(x.m3Plan) + '</td><td class="n' + (x.m3Plan !== undefined && x.m3Fact !== undefined && Math.abs(x.m3Plan - x.m3Fact) > 0.5 ? ' neg' : '') + '">' + v(x.m3Fact) +
         '</td><td class="n">' + v(x.prixPlan) + '</td><td class="n' + ((x.etats || []).indexOf('prix') >= 0 ? ' neg' : '') + '">' + v(x.prixFact) +
         '</td><td class="n">' + (x.caPlan !== undefined ? eur(x.caPlan) : '<span class="nd">—</span>') + '</td><td class="n">' + (x.montantFact !== undefined ? eur(x.montantFact) : '<span class="nd">—</span>') +

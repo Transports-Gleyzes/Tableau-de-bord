@@ -498,6 +498,22 @@ function controleFactures_(ss, jour0) {
   try { pl = plannings_(ss); } catch (e) { /* plannings non reliés */ }
   var moisCourant = Utilities.formatDate(jour0, FUSEAU, 'yyyy-MM');
   var prec = Utilities.formatDate(new Date(jour0.getFullYear(), jour0.getMonth() - 1, 1), FUSEAU, 'yyyy-MM');
+  // Jour/mois d'une date de LVN (« jj/mm » écrit tel quel, ou converti en date par Sheets)
+  var jmLvn = function (v) {
+    if (v instanceof Date) return [v.getDate(), v.getMonth() + 1];
+    var m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})/); return m ? [+m[1], +m[2]] : null;
+  };
+  // Mois d'une facture : celui de la majorité de ses LVN quand elles y sont (factures à la quinzaine datées du mois suivant)
+  var moisLvn = {};
+  fact.forEach(function (l) {
+    var jm = jmLvn(l.Date_LVN), m = moisTexte_(l.Mois); if (!jm || !m) return;
+    var an = +m.slice(0, 4) + (jm[1] - +m.slice(5, 7) > 6 ? -1 : jm[1] - +m.slice(5, 7) < -6 ? 1 : 0);
+    var c = moisLvn[l.N_Facture] = moisLvn[l.N_Facture] || {}, k = an + '-' + ('0' + jm[1]).slice(-2); c[k] = (c[k] || 0) + 1;
+  });
+  fact.forEach(function (l) {
+    var c = moisLvn[l.N_Facture]; if (!c) return;
+    l.Mois = Object.keys(c).sort(function (a, b) { return c[b] - c[a]; })[0];
+  });
   var aControler = {};
   fact.forEach(function (l) { var m = moisTexte_(l.Mois); if (m) aControler[m] = 1; });
   if (jour0.getDate() >= jourCtrl) aControler[prec] = 1;
@@ -522,7 +538,8 @@ function controleFactures_(ss, jour0) {
     var groupes = {};
     plM.filter(function (l) { return l.activite === 'Carburant' && (l.ca || l.litres || l.m3); }).forEach(function (l) {
       var k = cle_(l.client) + '|' + cle_(l.lieu);
-      var g = groupes[k] = groupes[k] || { societe: l.societe, client: l.client, lieu: l.lieu, n: 0, m3: 0, ca: 0, prix: {}, lvns: [] };
+      var g = groupes[k] = groupes[k] || { societe: l.societe, client: l.client, lieu: l.lieu, n: 0, m3: 0, ca: 0, prix: {}, lvns: [], lignes: [] };
+      g.lignes.push(l);
       g.n++; g.m3 += l.m3 || Math.round((l.litres || 0) / 1000); g.ca += l.ca || 0;
       if (l.prix) g.prix[r2(l.prix)] = (g.prix[r2(l.prix)] || 0) + 1;
       if (l.lvn) g.lvns.push({ lvn: String(l.lvn), date: Utilities.formatDate(l.date, FUSEAU, 'dd/MM'), m3: l.m3 });
@@ -542,10 +559,11 @@ function controleFactures_(ss, jour0) {
       if (l.Nature !== 'TRANSPORT' || regul) return;
       c.transport = true;
       var k = kc + '|' + cle_(l.Lieu);
-      var a = facturees[k] = facturees[k] || { societe: l.Societe, client: l.Client, ref: l.Ref_Client, lieu: l.Lieu, qte: 0, montant: 0, prix: {}, lvns: [], factures: {} };
+      var a = facturees[k] = facturees[k] || { societe: l.Societe, client: l.Client, ref: l.Ref_Client, lieu: l.Lieu, qte: 0, montant: 0, prix: {}, lvns: [], factures: {}, quinzaines: {} };
       a.qte += nombre_(l.Quantite, 0); a.montant += montant; a.factures[l.N_Facture] = 1;
       if (pu !== null) a.prix[r2(pu)] = 1;
       if (l.LVN) a.lvns.push(String(l.LVN).replace(/\.0+$/, ''));
+      var jm = jmLvn(l.Date_LVN); if (jm) a.quinzaines[jm[0] <= 15 ? 1 : 2] = 1;
     });
     var pris = {}, alias = {};   // alias : réf. client de la facture -> nom du client au planning (appris sur les correspondances sûres)
     var lieuOk = function (lf, lp) {
@@ -556,12 +574,29 @@ function controleFactures_(ss, jour0) {
     };
     var clientPlanningDe = function (a) { var t = regleDe(a); return t ? cle_(t[1]) : (alias[a.ref] || null); };
     var lieuOkPour = function (a, g) { var t = regleDe(a); return lieuOk(a.lieu, g.lieu) || !!(t && t[2] && memeLieu_(t[2], g.lieu)); };
+    var sousGroupe = function (g, lignes) {
+      var s2 = { societe: g.societe, client: g.client, lieu: g.lieu, n: 0, m3: 0, ca: 0, prix: {}, lvns: [], lignes: lignes };
+      lignes.forEach(function (l) {
+        s2.n++; s2.m3 += l.m3 || Math.round((l.litres || 0) / 1000); s2.ca += l.ca || 0;
+        if (l.prix) s2.prix[r2(l.prix)] = (s2.prix[r2(l.prix)] || 0) + 1;
+        if (l.lvn) s2.lvns.push({ lvn: String(l.lvn), date: Utilities.formatDate(l.date, FUSEAU, 'dd/MM'), m3: l.m3 });
+      });
+      return s2;
+    };
+    var resteQuinzaine = [];
     var rapprocher = function (a, k, lieuDifferent) {
       var g = groupes[k]; pris[k] = 1; alias[a.ref] = cle_(g.client);
+      // Facture à la quinzaine : on ne compare qu'à la quinzaine facturée, l'autre attend sa propre facture
+      var qz = Object.keys(a.quinzaines), periodeF = null;
+      if (qz.length === 1) {
+        var dans = g.lignes.filter(function (l) { return (l.date.getDate() <= 15 ? '1' : '2') === qz[0]; });
+        var hors = g.lignes.filter(function (l) { return dans.indexOf(l) < 0; });
+        if (dans.length && hors.length) { periodeF = qz[0] === '1' ? '1re quinzaine (1-15)' : '2e quinzaine (16-fin)'; g = sousGroupe(g, dans); var reste = sousGroupe(g, hors); reste.societe = a.societe; resteQuinzaine.push({ g: reste, q: qz[0] === '1' ? 2 : 1 }); }
+      }
       var prixF = Object.keys(a.prix).map(Number), facts = Object.keys(a.factures).join(', ');
       var prixP = Object.keys(g.prix).map(Number).sort(function (x, y) { return g.prix[y] - g.prix[x]; });
       var etats = [], ligne = { societe: a.societe, clientFacture: a.client, clientPlanning: g.client, lieu: g.lieu, lieuFacture: a.lieu, n: g.n, m3Plan: g.m3, m3Fact: a.qte,
-        prixPlan: prixP.join(' / '), prixFact: prixF.join(' / '), caPlan: r2(g.ca), montantFact: r2(a.montant), factures: facts, etats: etats };
+        prixPlan: prixP.join(' / '), prixFact: prixF.join(' / '), caPlan: r2(g.ca), montantFact: r2(a.montant), factures: facts, etats: etats, periode: periodeF };
       if (lieuDifferent) {
         etats.push('lieu');
         alertes.push({ niveau: 'a_prevoir', categorie: 'facturation', domaine: 'Factures', objet: g.client, sujet: 'Lieu différent',
@@ -619,6 +654,14 @@ function controleFactures_(ss, jour0) {
       out.carburant.push({ societe: a.societe, clientFacture: a.client, lieu: a.lieu, m3Fact: a.qte, prixFact: prixF.join(' / '), montantFact: r2(a.montant), factures: facts, etats: ['absent du planning'] });
       alertes.push({ niveau: 'a_prevoir', categorie: 'facturation', domaine: 'Factures', objet: a.client, sujet: 'Facturé hors planning',
         message: a.client + ' — ' + a.lieu + ' (' + lib + ') : ' + a.qte + ' m³ facturés (' + facts + ') mais aucune livraison correspondante au planning', cle: 'FACT_HORS|' + M + '|' + a.ref + '|' + a.lieu });
+    });
+    resteQuinzaine.forEach(function (r) {
+      var g = r.g, q = r.q === 1 ? '1re quinzaine (1-15)' : '2e quinzaine (16-fin)';
+      out.carburant.push({ societe: g.societe, clientPlanning: g.client, lieu: g.lieu, periode: q, n: g.n, m3Plan: g.m3, caPlan: r2(g.ca),
+        prixPlan: Object.keys(g.prix).join(' / '), etats: [oubliOk ? 'non facturé' : 'à facturer'] });
+      if (oubliOk) alertes.push({ niveau: 'urgent', categorie: 'facturation', domaine: 'Factures', objet: g.client, sujet: 'Facture oubliée',
+        message: 'Facture ' + deLib + ' non déposée : ' + g.client + ' ' + g.lieu + ', ' + q + ' (' + g.societe + ', ' + g.n + ' livraisons, ' + g.m3 + ' m³, ' + euros_(g.ca) + ' au planning)',
+        cle: 'FACT_OUBLI|' + M + '|' + g.societe + '|' + g.client + '|' + g.lieu + '|Q' + r.q });
     });
     Object.keys(groupes).filter(function (k) { return !pris[k]; }).forEach(function (k) {
       var g = groupes[k];
