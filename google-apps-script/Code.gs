@@ -846,8 +846,10 @@ function preparerCamionsManuel() {
  * Pour chaque planning (Inter, Carburant) :
  *  1. crée / complète l'onglet CAMIONS (chauffeur -> camion habituel), proposé d'après le camion le plus utilisé ;
  *  2. dans les onglets du mois en cours et des mois suivants, ajoute la colonne CAMION (après CHAUFFEUR) si besoin
- *     et met dans chaque case vide une formule qui va chercher le camion habituel du chauffeur ;
- *  3. fige les jours passés (formule remplacée par sa valeur) : changer plus tard le camion habituel ne réécrit pas l'historique.
+ *     et écrit le camion habituel dans chaque case vide d'une ligne qui a un chauffeur (simple valeur, pas de
+ *     formule : une formule écrite par script échoue en #ERROR! selon la langue du classeur) ;
+ *  3. installe un déclencheur « à la modification » sur le planning : dès qu'un chauffeur est tapé, son camion
+ *     habituel est écrit tout de suite (surModifPlanning).
  * Une case où un camion a été tapé à la main n'est jamais modifiée.
  */
 function preparerCamionsPlannings_(ss) {
@@ -910,9 +912,9 @@ function preparerCamionsPlannings_(ss) {
     });
     if (ajouts.length) shC.getRange(shC.getLastRow() + 1, 1, ajouts.length, 3).setValues(ajouts);
 
-    // 2. et 3. Colonne CAMION : formules sur le mois en cours et les suivants, valeurs figées pour les jours passés
+    // 2. Colonne CAMION remplie avec le camion habituel (valeurs), mois en cours et suivants (et mois précédent si vide)
     var nbFormules = 0, nbFiges = 0, nbColonnes = 0;
-    console.log('Planning ' + src[1] + ' : onglet CAMIONS à jour');
+    var hab = habituelsPlanning_(ext);
     onglets.filter(function (o) { return o.rang >= courant - 1; }).forEach(function (o) {
       if (tropLong()) { interrompu = true; return; }
       var sh = o.sh;
@@ -928,49 +930,84 @@ function preparerCamionsPlannings_(ss) {
         nbColonnes++;
         v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
       }
-      // Formules sur les lignes existantes, et au moins 300 lignes d'avance pour un mois qui commence
-      var n = Math.min(sh.getMaxRows(), Math.max(sh.getLastRow(), o.rang >= courant ? st.entete + 1 + 300 : 0)) - st.entete - 1;
+      var n = sh.getLastRow() - st.entete - 1;
       if (n <= 0) return;
       var rng = sh.getRange(st.entete + 2, st.camion + 1, n, 1);
-      var formules = rng.getFormulas(), valeurs = rng.getValues(), lettre = colonneLettre_(st.chauffeur + 1);
-      var hab = habituelsPlanning_(ext);
-      // Chaque case : 'f' = (ré)écrire la formule, 'v' = écrire une valeur figée, null = ne pas toucher
+      var formules = rng.getFormulas(), valeurs = rng.getValues();
+      // Chaque case : nouvelle valeur, ou null = ne pas toucher
       var actions = valeurs.map(function (x, i) {
-        var ligne = v[st.entete + 1 + i] || [], r = st.entete + 2 + i, val = x[0] === undefined ? '' : x[0];
-        var attendue = '=IF(TRIM(' + lettre + r + ')="","",IFERROR(VLOOKUP(TRIM(' + lettre + r + '),CAMIONS!$A:$B,2,FALSE),""))';
-        var dt = ligne[st.date] instanceof Date ? ligne[st.date] : dateDepuisTexte_(ligne[st.date]);
-        var chauffeur = String(ligne[st.chauffeur] || '').trim(), enErreur = /^#/.test(String(val));
-        if (formules[i][0]) {
-          if (dt && minuit_(dt) < auj && chauffeur) {   // jour passé : on fige le camion
-            nbFiges++;
-            return { t: 'v', x: enErreur ? (hab[cle_(chauffeur)] || '') : val };
-          }
-          if (formules[i][0] === attendue && !enErreur) return null;
-          nbFormules++;
-          return { t: 'f', x: attendue };               // formule absente ou cassée : on la (ré)écrit
+        var ligne = v[st.entete + 1 + i] || [], val = x[0] === undefined ? '' : x[0];
+        var chauffeur = String(ligne[st.chauffeur] || '').trim(), attendu = chauffeur ? (hab[cle_(chauffeur)] || '') : '';
+        if (formules[i][0]) {   // ancienne formule (souvent en #ERROR!) : remplacée par une valeur
+          nbFiges++;
+          return { x: !/^#/.test(String(val)) && String(val).trim() ? val : attendu };
         }
-        if (String(val).trim() !== '' || o.rang < courant) return null;   // saisi à la main, ou mois terminé
+        if (String(val).trim() !== '' || !attendu) return null;   // saisi à la main, ou pas de chauffeur
         nbFormules++;
-        return { t: 'f', x: attendue };
+        return { x: attendu };
       });
-      // Écriture par blocs : setFormulas comprend la syntaxe anglaise quelle que soit la langue du fichier
-      // (setValues interpréterait « , » selon la langue : en français il faut « ; », d'où des #ERROR!)
       var i = 0;
       while (i < actions.length) {
         if (!actions[i]) { i++; continue; }
-        var j = i, t = actions[i].t;
-        while (j < actions.length && actions[j] && actions[j].t === t) j++;
-        var bloc = sh.getRange(st.entete + 2 + i, st.camion + 1, j - i, 1), donnees = actions.slice(i, j).map(function (a) { return [a.x]; });
-        if (t === 'f') bloc.setFormulas(donnees); else bloc.setValues(donnees);
+        var j = i;
+        while (j < actions.length && actions[j]) j++;
+        sh.getRange(st.entete + 2 + i, st.camion + 1, j - i, 1).setValues(actions.slice(i, j).map(function (a) { return [a.x]; }));
         i = j;
       }
       console.log('Planning ' + src[1] + ' : onglet ' + sh.getName() + ' traité');
     });
+    // 3. Remplissage instantané à la saisie
+    var declencheur = installerDeclencheurPlanning_(ext);
     msgs.push('Planning ' + src[1] + ' : ' + (ajouts.length ? ajouts.length + ' chauffeur(s) ajouté(s) dans l\'onglet CAMIONS, ' : '') +
-      (nbColonnes ? nbColonnes + ' colonne(s) CAMION ajoutée(s), ' : '') + nbFormules + ' case(s) CAMION automatisée(s), ' + nbFiges + ' jour(s) passé(s) figé(s).');
+      (nbColonnes ? nbColonnes + ' colonne(s) CAMION ajoutée(s), ' : '') + nbFormules + ' case(s) CAMION remplie(s)' +
+      (nbFiges ? ', ' + nbFiges + ' ancienne(s) formule(s) remplacée(s)' : '') + '. ' + declencheur);
   });
   if (interrompu) msgs.push('Pas tout à fait fini (limite de temps de Google) : relancez « Remplir la colonne CAMION des plannings », il reprendra où il s\'est arrêté.');
   return msgs.length ? '\n\n' + msgs.join('\n') : '';
+}
+
+/** Installe (une seule fois) le déclencheur « à la modification » du planning. */
+function installerDeclencheurPlanning_(ext) {
+  var id = ext.getId();
+  var existe = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === 'surModifPlanning' && t.getTriggerSourceId() === id;
+  });
+  if (existe) return 'Remplissage automatique déjà actif.';
+  ScriptApp.newTrigger('surModifPlanning').forSpreadsheet(id).onEdit().create();
+  return 'Remplissage automatique activé.';
+}
+
+/**
+ * Déclencheur : quand un ou plusieurs chauffeurs sont tapés (ou collés) dans un onglet mensuel d'un planning,
+ * écrit le camion habituel dans la colonne CAMION si la case est vide, ou si elle contenait le camion habituel
+ * de l'ancien chauffeur (changement de chauffeur). Un camion tapé à la main n'est jamais remplacé.
+ */
+function surModifPlanning(e) {
+  try {
+    var r = e.range, sh = r.getSheet();
+    if (!moisOnglet_(sh.getName())) return;
+    var haut = sh.getRange(1, 1, Math.min(6, sh.getLastRow()), sh.getLastColumn()).getValues(), st = structurePlanning_(haut);
+    if (!st || st.camion < 0) return;
+    var colCh = st.chauffeur + 1;
+    if (r.getColumn() > colCh || r.getLastColumn() < colCh) return;   // la modification ne touche pas la colonne CHAUFFEUR
+    var premiere = Math.max(r.getRow(), st.entete + 2), derniere = r.getLastRow();
+    if (derniere < premiere) return;
+    var hab = habituelsPlanning_(e.source);
+    var n = derniere - premiere + 1;
+    var chauffeurs = sh.getRange(premiere, colCh, n, 1).getValues(), camions = sh.getRange(premiere, st.camion + 1, n, 1).getValues();
+    var ancien = n === 1 && e.oldValue !== undefined ? (hab[cle_(e.oldValue)] || '') : null;
+    var change = false;
+    var sortie = camions.map(function (c, i) {
+      var actuel = String(c[0] || '').trim(), nouveau = hab[cle_(chauffeurs[i][0])] || '';
+      if (actuel && !/^#/.test(actuel) && !(ancien !== null && actuel === ancien)) return [c[0]];
+      if (actuel === nouveau) return [c[0]];
+      change = true;
+      return [nouveau];
+    });
+    if (change) sh.getRange(premiere, st.camion + 1, n, 1).setValues(sortie);
+  } catch (err) {
+    console.error('surModifPlanning : ' + err);
+  }
 }
 
 /**
