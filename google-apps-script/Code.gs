@@ -531,12 +531,15 @@ function controleFactures_(ss, jour0) {
     var facturees = {}, parClient = {};
     fM.filter(function (l) { return l.Activite === 'Carburant'; }).forEach(function (l) {
       var kc = l.Societe + '|' + l.Ref_Client;
-      var c = parClient[kc] = parClient[kc] || { societe: l.Societe, client: l.Client, ref: l.Ref_Client, base: 0, index: 0, pct: null, factures: {}, transport: false };
+      var c = parClient[kc] = parClient[kc] || { societe: l.Societe, client: l.Client, ref: l.Ref_Client, base: 0, index: 0, pct: null, factures: {}, transport: false, ajustements: [] };
       c.factures[l.N_Facture] = 1;
       var montant = nombre_(l.Montant_HT, 0), pu = nombre_(l.Prix_Unitaire, null);
       if (l.Nature === 'INDEXATION') { c.index += montant; if (nombre_(l.Indexation_Pct, null) !== null) c.pct = nombre_(l.Indexation_Pct, null); return; }
       c.base += montant;
-      if (l.Nature !== 'TRANSPORT' || (pu !== null && pu > 60)) return;
+      var regul = l.Nature === 'REGUL' || (l.Nature === 'TRANSPORT' && pu !== null && pu > 60);
+      if (regul) c.regul = (c.regul || 0) + montant;
+      if (regul || l.Nature === 'AVOIR') c.ajustements.push({ libelle: regul ? 'Régularisation' : 'Avoir', montant: r2(montant), facture: l.N_Facture });
+      if (l.Nature !== 'TRANSPORT' || regul) return;
       c.transport = true;
       var k = kc + '|' + cle_(l.Lieu);
       var a = facturees[k] = facturees[k] || { societe: l.Societe, client: l.Client, ref: l.Ref_Client, lieu: l.Lieu, qte: 0, montant: 0, prix: {}, lvns: [], factures: {} };
@@ -625,11 +628,19 @@ function controleFactures_(ss, jour0) {
         message: 'Facture ' + deLib + ' non déposée : ' + g.client + ' ' + g.lieu + ' (' + g.societe + ', ' + g.n + ' livraisons, ' + g.m3 + ' m³, ' + euros_(g.ca) + ' au planning)',
         cle: 'FACT_OUBLI|' + M + '|' + g.societe + '|' + g.client + '|' + g.lieu });
     });
+    // Régularisations / avoirs : affichés sous la 1re ligne du client, hors m³ et hors contrôle des prix
+    Object.keys(parClient).forEach(function (kc) {
+      var c = parClient[kc]; if (!c.ajustements.length) return;
+      var lg = out.carburant.filter(function (x) { return x.clientFacture === c.client && x.societe === c.societe; })[0];
+      if (lg) lg.ajustements = c.ajustements;
+      else out.carburant.push({ societe: c.societe, clientFacture: c.client, montantFact: r2(c.ajustements.reduce(function (t, j) { return t + j.montant; }, 0)),
+        factures: Object.keys(c.factures).join(', '), ajustements: c.ajustements, etats: [] });
+    });
     // --- Indexation par client (Carburant)
     Object.keys(parClient).forEach(function (kc) {
       var c = parClient[kc];
       out.indexation.push({ activite: 'Carburant', societe: c.societe, client: c.client, base: r2(c.base), pct: c.pct, montant: r2(c.index), factures: Object.keys(c.factures).join(', ') });
-      if (c.transport && c.index && c.pct !== null && Math.abs(c.base * c.pct / 100 - c.index) > 1) {
+      if (c.transport && c.index && c.pct !== null && Math.abs(c.base * c.pct / 100 - c.index) > 1 && Math.abs((c.base - (c.regul || 0)) * c.pct / 100 - c.index) > 1) {
         alertes.push({ niveau: 'a_prevoir', categorie: 'facturation', domaine: 'Factures', objet: c.client, sujet: 'Indexation',
           message: c.client + ' (' + lib + ') : indexation facturée ' + fmt(c.index) + ' € alors que ' + fmt(c.pct) + ' % de ' + fmt(c.base) + ' € = ' + fmt(c.base * c.pct / 100) + ' €',
           cle: 'FACT_INDEX|' + M + '|' + c.ref + '|' + r2(c.index) });

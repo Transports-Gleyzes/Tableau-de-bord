@@ -1370,9 +1370,10 @@ function analyserFacture(lignes, largeur) {
     else if (/PEAGE/.test(tout2)) nature = 'PEAGE';
     else if (/TERME FIXE/.test(tout2)) nature = 'TERME_FIXE';
     else if (/TERME VARIABLE/.test(tout2)) nature = 'TERME_VARIABLE';
+    else if (/REGUL/.test(tout2)) nature = 'REGUL';
     else if (e.total < 0 || /AVOIR|AVOR\b/.test(tout2)) nature = 'AVOIR';
     else if (/DEPOTAGE/.test(tout2)) nature = 'DEPOTAGE';
-    else if (/TRANSPORTS? CARBURANTS?/.test(tout2) && !(e.prix > 60)) nature = 'TRANSPORT';   // plus de 60 €/m³ : forfait, pas des m³
+    else if (/TRANSPORTS? CARBURANTS?/.test(tout2)) nature = e.prix > 60 ? 'REGUL' : 'TRANSPORT';   // plus de 60 €/m³ : régularisation, pas des m³
     else nature = 'AUTRE';
     var l = { nature: nature, lieu: nature === 'TRANSPORT' ? (e.lieu || dernierLieu || f.villeClient || '') : (e.lieu || ''), quantite: e.qte, prix: e.prix, montant: e.total };
     if (nature === 'TRANSPORT' && l.lieu) dernierLieu = l.lieu;
@@ -1466,7 +1467,7 @@ function enregistrerFacture(id, f, b64, nom) {
   }).catch(function (e) { etatDepot(el, '⚠ ' + txt(e.message), 'err'); });
 }
 var NATURES = [['TRANSPORT', 'Transport carburant (m³)'], ['TERME_FIXE', 'Terme fixe'], ['TERME_VARIABLE', 'Terme variable'], ['PEAGE', 'Péage'],
-  ['INDEXATION', 'Indexation'], ['DEPOTAGE', 'Double dépotage'], ['AVOIR', 'Avoir'], ['AUTRE', 'Autre']];
+  ['INDEXATION', 'Indexation'], ['DEPOTAGE', 'Double dépotage'], ['AVOIR', 'Avoir'], ['REGUL', 'Régularisation'], ['AUTRE', 'Autre']];
 function afficherVerif(id) {
   var a = enAttenteVerif[id], f = a.f, el = document.getElementById('dep-' + id);
   etatDepot(el, '⚠ À vérifier : ' + txt(f.avertissements.join(' ; ')), 'err');
@@ -1549,7 +1550,8 @@ function rendreFacturation() {
         '</td><td class="n">' + v(x.m3Plan) + '</td><td class="n' + (x.m3Plan !== undefined && x.m3Fact !== undefined && Math.abs(x.m3Plan - x.m3Fact) > 0.5 ? ' neg' : '') + '">' + v(x.m3Fact) +
         '</td><td class="n">' + v(x.prixPlan) + '</td><td class="n' + ((x.etats || []).indexOf('prix') >= 0 ? ' neg' : '') + '">' + v(x.prixFact) +
         '</td><td class="n">' + (x.caPlan !== undefined ? eur(x.caPlan) : '<span class="nd">—</span>') + '</td><td class="n">' + (x.montantFact !== undefined ? eur(x.montantFact) : '<span class="nd">—</span>') +
-        '</td><td title="' + txt(x.factures || '') + '">' + etat(x) + (x.lvnManquants ? '<div class="note">Manquent : ' + txt(x.lvnManquants) + '</div>' : '') + '</td></tr>';
+        '</td><td title="' + txt(x.factures || '') + '">' + etat(x) + (x.lvnManquants ? '<div class="note">Manquent : ' + txt(x.lvnManquants) + '</div>' : '') +
+        (x.ajustements ? '<div class="note">' + x.ajustements.map(function (j) { return txt(j.libelle) + ' ' + (j.montant > 0 ? '+' : '') + eur(j.montant); }).join(' · ') + ' (hors m³)</div>' : '') + '</td></tr>';
     }).join('') : '<tr><td colspan="12" class="vide">Rien à contrôler pour ce mois</td></tr>') + '</tbody>';
   var it = ctrl.inter.filter(function (x) { return garderSociete(x.societe); });
   document.getElementById('tabCtrlInter').innerHTML = '<thead><tr><th>Société</th><th>Tournées par terme fixe (planning / facturé)</th><th class="n">CA planning</th><th class="n">Terme fixe</th><th class="n">Terme variable</th><th class="n">Indexation</th><th class="n">Péages</th><th class="n">Facturé (hors péages)</th><th>Factures</th><th>État</th></tr></thead><tbody>' +
