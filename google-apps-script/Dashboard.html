@@ -1390,6 +1390,7 @@ function analyserFacture(lignes, largeur) {
   if ((m = tout.match(/PREFACTURE\s*N\s*[°O0]?\s*(\d{6,})/))) f.prefacture = m[1];
   var tot = function (re) { var x = tout.match(re); return x ? nombreFr(x[1]) : null; };
   f.netHT = tot(/NET HT\s*:?\s*(-?[\d   ]+,\d{2})/);
+  if (f.netHT === null) f.netHT = tot(/(?:^|\s)H\.T\s*:?\s*(-?\d[   \d]*,\d{2})/);
   f.tva = tot(/TOTAL TVA\s*:?\s*(-?[\d   ]+,\d{2})/);
 
   // Client : bloc de droite de l'en-tête (PDF numérique), sinon ligne repérée par mots-clés
@@ -1416,25 +1417,29 @@ function analyserFacture(lignes, largeur) {
   if (!f.client) f.avertissements.push('Client non reconnu');
 
   // Lignes chiffrées : « … Qté  Prix  TVA  Total » en fin de ligne ; les lignes sans chiffres suivantes sont leur description
-  var reChiffres = /(-?\d+(?:[.,]\d+)?)\s+(-?\d{1,3}(?:[   ]\d{3})*,\d{2})\s+(\d{1,2},\d{2})\s+(-?\d{1,3}(?:[   ]\d{3})*,\d{2})\s*$/;
+  // (formats INFORCE « 34  11,00  20,00  374,00 » et Google Sheets « 34  14,79€  20%  562,02€ »)
+  var reChiffres = /(-?\d+(?:[.,]\d+)?)\s+(-?\d{1,3}(?:[   ]\d{3})*,\d{2,3})\s*€?\s+(\d{1,2}(?:,\d{2})?)\s*%?\s+(-?\d{1,3}(?:[   ]\d{3})*,\d{2})\s*€?\s*$/;
+  var reSite = /^ITM\s+([A-Z][A-Z' \-]+?)(?:\s+\d{2,3})?$/;   // en-tête de site des factures faites hors INFORCE (« ITM SALERNES 83 »)
   var reTrajet = /^\s*([A-Z][A-Z' \-]+?)\s*\/\s*([A-Z][A-Z' \-]+?)\s*$/;
   var elements = [];
   txt.forEach(function (t) {
     var u = sansAccents(t).replace(/\s+/g, ' ').trim();
     var c = u.match(reChiffres);
     if (c && !/BRUT HT|NET HT|TOTAL/.test(u)) elements.push({ type: 'prix', texte: u.slice(0, c.index).trim(), qte: nombreFr(c[1]), prix: nombreFr(c[2]), total: nombreFr(c[4]), desc: [] });
+    else if (reSite.test(u)) elements.push({ type: 'trajet', lieu: u.match(reSite)[1].trim(), depart: '', site: true });
     else if (reTrajet.test(u) && !/\d/.test(u)) elements.push({ type: 'trajet', lieu: u.match(reTrajet)[2].trim(), depart: u.match(reTrajet)[1].trim() });
     else if (elements.length && !/MODE DE REGLEMENT|BRUT HT|MODALITES|PAPILLON/.test(u)) elements.push({ type: 'desc', texte: u });
   });
   // Trajet de chaque ligne : celui écrit juste au-dessus (depuis la ligne chiffrée précédente), sinon juste en dessous
-  var trajetAvant = null;
+  // (facture par site « ITM SALERNES 83 » : le site vaut pour toutes les lignes qui le suivent)
+  var trajetAvant = null, site = null;
   elements.forEach(function (e, k) {
-    if (e.type === 'trajet') { trajetAvant = e.lieu; return; }
+    if (e.type === 'trajet') { if (e.site) site = e.lieu; else trajetAvant = e.lieu; return; }
     if (e.type !== 'prix') return;
-    e.lieu = trajetAvant;
+    e.lieu = trajetAvant || site;
     for (var j = k + 1; j < elements.length && elements[j].type !== 'prix'; j++) {
       if (elements[j].type === 'desc') e.desc.push(elements[j].texte);
-      if (elements[j].type === 'trajet' && !e.lieu) e.lieu = elements[j].lieu;
+      if (elements[j].type === 'trajet' && !elements[j].site && !e.lieu) e.lieu = elements[j].lieu;
     }
     trajetAvant = null;
   });
@@ -1457,11 +1462,13 @@ function analyserFacture(lignes, largeur) {
     var pc = tout2.match(/([+-]?\s*\d{1,2}[.,]\d{1,2})\s*%/);
     if (nature === 'INDEXATION' && pc) l.indexPct = nombreFr(pc[1].replace(/\s/g, ''));
     if (nature === 'TRANSPORT' && !l.lieu) f.avertissements.push('Lieu de livraison non trouvé pour une ligne de ' + e.qte + ' m³');
+    if (['TRANSPORT', 'DEPOTAGE'].indexOf(nature) >= 0 && e.qte && e.prix && Math.abs(e.qte * e.prix - e.total) > 1)
+      f.avertissements.push('Montant faux' + (l.lvn ? ' (LVN ' + l.lvn + ')' : '') + ' : ' + e.qte + ' × ' + String(e.prix).replace('.', ',') + ' = ' + (Math.round(e.qte * e.prix * 100) / 100).toFixed(2).replace('.', ',') + ' € et non ' + e.total.toFixed(2).replace('.', ',') + ' €');
     f.lignes.push(l);
   });
 
   // Activité et mois facturé
-  f.activite = (f.prefacture || /TERME FIXE|\bITM\b/.test(tout)) ? 'Inter' : 'Carburant';
+  f.activite = (f.prefacture || /TERME FIXE/.test(tout)) ? 'Inter' : (/TRANSPORTS? CARBURANT/.test(tout) ? 'Carburant' : (/\bITM\b/.test(tout) ? 'Inter' : 'Carburant'));
   var moisTexte = tout.match(/(?:MOIS DE|GO DE|GO|CARBURANT|POUR)\s+(?:LE MOIS DE\s+)?(JANVIER|FEVRIER|MARS|AVRIL|MAI|JUIN|JUILLET|AOUT|SEPTEMBRE|OCTOBRE|NOVEMBRE|DECEMBRE)/);
   if (f.date) {
     var an = +f.date.slice(0, 4), mo = +f.date.slice(5, 7), jo = +f.date.slice(8, 10);
