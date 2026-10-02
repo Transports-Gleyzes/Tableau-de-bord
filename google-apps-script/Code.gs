@@ -229,7 +229,7 @@ function getDonnees() {
   var d = {};
   ['FINANCES', 'FLOTTE', 'SALARIES', 'ABSENCES', 'CARBURANT', 'LIVRAISONS', 'FACTURES', 'HEURES', 'CHARGES_MUTUALISEES', 'FACTURES_CLIENTS'].forEach(function (nom) {
     var sh = ss.getSheetByName(nom);
-    d[nom] = sh ? lireTable_(sh).map(serialiser_) : [];
+    d[nom] = (nom === 'FACTURES_CLIENTS' ? facturesClients_(ss) : sh ? lireTable_(sh) : []).map(serialiser_);
   });
   d.FINANCES.forEach(function (l) { l.Mois = moisTexte_(l.Mois); });
   d.FLOTTE = d.FLOTTE.filter(estActif_);
@@ -485,6 +485,28 @@ function memeLieu_(a, b) {
   return x === y || (' ' + y + ' ').indexOf(' ' + x + ' ') >= 0 || (' ' + x + ' ').indexOf(' ' + y + ' ') >= 0;
 }
 
+/** Jour et mois d'une date de LVN (« jj/mm » écrit tel quel, ou converti en date par Sheets). */
+function jmLvn_(v) {
+  if (v instanceof Date) return [v.getDate(), v.getMonth() + 1];
+  var m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})/); return m ? [+m[1], +m[2]] : null;
+}
+
+/** Lignes de FACTURES_CLIENTS ; le mois d'une facture est celui de la majorité de ses LVN quand elles y sont
+ *  (facture à la quinzaine datée du début du mois suivant). */
+function facturesClients_(ss) {
+  var sh = ss.getSheetByName('FACTURES_CLIENTS');
+  var fact = sh ? lireTable_(sh) : [], moisLvn = {};
+  fact.forEach(function (l) {
+    var jm = jmLvn_(l.Date_LVN), m = moisTexte_(l.Mois); if (!jm || !m) return;
+    var an = +m.slice(0, 4) + (jm[1] - +m.slice(5, 7) > 6 ? -1 : jm[1] - +m.slice(5, 7) < -6 ? 1 : 0);
+    var c = moisLvn[l.N_Facture] = moisLvn[l.N_Facture] || {}, k = an + '-' + ('0' + jm[1]).slice(-2); c[k] = (c[k] || 0) + 1;
+  });
+  fact.forEach(function (l) {
+    var c = moisLvn[l.N_Facture]; if (c) l.Mois = Object.keys(c).sort(function (a, b) { return c[b] - c[a]; })[0];
+  });
+  return fact;
+}
+
 /**
  * Rapproche, mois par mois, les factures déposées (FACTURES_CLIENTS) et les plannings.
  * Mois contrôlés : ceux qui ont des factures déposées, plus le mois précédent à partir du JOUR_CONTROLE_FACTURES.
@@ -492,28 +514,12 @@ function memeLieu_(a, b) {
  */
 function controleFactures_(ss, jour0) {
   var p = lireParametres_(ss), jourCtrl = nombre_(p.JOUR_CONTROLE_FACTURES, 7);
-  var sh = ss.getSheetByName('FACTURES_CLIENTS');
-  var fact = sh ? lireTable_(sh) : [];
+  var fact = facturesClients_(ss);
   var pl = [];
   try { pl = plannings_(ss); } catch (e) { /* plannings non reliés */ }
   var moisCourant = Utilities.formatDate(jour0, FUSEAU, 'yyyy-MM');
   var prec = Utilities.formatDate(new Date(jour0.getFullYear(), jour0.getMonth() - 1, 1), FUSEAU, 'yyyy-MM');
-  // Jour/mois d'une date de LVN (« jj/mm » écrit tel quel, ou converti en date par Sheets)
-  var jmLvn = function (v) {
-    if (v instanceof Date) return [v.getDate(), v.getMonth() + 1];
-    var m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})/); return m ? [+m[1], +m[2]] : null;
-  };
-  // Mois d'une facture : celui de la majorité de ses LVN quand elles y sont (factures à la quinzaine datées du mois suivant)
-  var moisLvn = {};
-  fact.forEach(function (l) {
-    var jm = jmLvn(l.Date_LVN), m = moisTexte_(l.Mois); if (!jm || !m) return;
-    var an = +m.slice(0, 4) + (jm[1] - +m.slice(5, 7) > 6 ? -1 : jm[1] - +m.slice(5, 7) < -6 ? 1 : 0);
-    var c = moisLvn[l.N_Facture] = moisLvn[l.N_Facture] || {}, k = an + '-' + ('0' + jm[1]).slice(-2); c[k] = (c[k] || 0) + 1;
-  });
-  fact.forEach(function (l) {
-    var c = moisLvn[l.N_Facture]; if (!c) return;
-    l.Mois = Object.keys(c).sort(function (a, b) { return c[b] - c[a]; })[0];
-  });
+  var jmLvn = jmLvn_;
   var aControler = {};
   fact.forEach(function (l) { var m = moisTexte_(l.Mois); if (m) aControler[m] = 1; });
   if (jour0.getDate() >= jourCtrl) aControler[prec] = 1;
@@ -558,12 +564,12 @@ function controleFactures_(ss, jour0) {
       if (regul || l.Nature === 'AVOIR') c.ajustements.push({ libelle: regul ? 'Régularisation' : 'Avoir', montant: r2(montant), facture: l.N_Facture });
       if (l.Nature !== 'TRANSPORT' || regul) return;
       c.transport = true;
-      var k = kc + '|' + cle_(l.Lieu);
+      var k = l.Societe + '|' + cle_(l.Client) + '|' + cle_(l.Lieu);   // les 2 factures d'une quinzaine s'additionnent
       var a = facturees[k] = facturees[k] || { societe: l.Societe, client: l.Client, ref: l.Ref_Client, lieu: l.Lieu, qte: 0, montant: 0, prix: {}, lvns: [], factures: {}, quinzaines: {} };
       a.qte += nombre_(l.Quantite, 0); a.montant += montant; a.factures[l.N_Facture] = 1;
       if (pu !== null) a.prix[r2(pu)] = 1;
       if (l.LVN) a.lvns.push(String(l.LVN).replace(/\.0+$/, ''));
-      var jm = jmLvn(l.Date_LVN); if (jm) a.quinzaines[jm[0] <= 15 ? 1 : 2] = 1;
+      var jm = jmLvn(l.Date_LVN); a.quinzaines[jm ? (jm[0] <= 15 ? 1 : 2) : '?'] = 1;   // ligne sans date : pas de découpage
     });
     var pris = {}, alias = {};   // alias : réf. client de la facture -> nom du client au planning (appris sur les correspondances sûres)
     var lieuOk = function (lf, lp) {
