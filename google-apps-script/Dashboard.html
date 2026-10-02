@@ -355,6 +355,14 @@ button.petit { padding: 2px 8px; font-size: 12px; }
         <input type="file" id="choixPdf" accept="application/pdf" multiple hidden></div>
       <div id="listeDepot"></div>
     </div>
+    <div class="carte">
+      <h2>Facture SCAPED (hors INFORCE)</h2>
+      <p class="note">Prépare l'onglet du mois dans le classeur des factures SCAPED, à partir du planning Carburant : une ligne par livraison (m³, LVN),
+        le prix du mois précédent, les doubles dépotages (« DD » au planning), les totaux par page et le récapitulatif. Relisez puis Fichier &gt; Télécharger &gt; PDF.</p>
+      <div class="barre"><label for="moisScaped">Mois</label><select id="moisScaped"></select>
+        <button id="btnScaped" class="primaire">Préparer la facture</button><span class="msg" id="msgScaped"></span></div>
+      <div id="apercuScaped"></div>
+    </div>
     <div class="barre"><label for="moisFact">Mois facturé</label><select id="moisFact"></select><span class="note" id="noteFact"></span></div>
     <div class="tuiles" id="tuilesFact2"></div>
     <div class="carte carbu">
@@ -1578,7 +1586,36 @@ function afficherVerif(id) {
   zone.addEventListener('drop', function (e) { traiterFichiers(e.dataTransfer.files); });
 })();
 
+function rendreScaped() {
+  var sel = document.getElementById('moisScaped'), ancien = sel.value, j = new Date(), liste = [];
+  for (var k = 0; k < 4; k++) { var d = new Date(j.getFullYear(), j.getMonth() - k, 1); liste.push(d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2)); }
+  sel.innerHTML = liste.map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
+  sel.value = liste.indexOf(ancien) >= 0 ? ancien : (j.getDate() >= 25 ? liste[0] : liste[1]);
+  var M = sel.value, par = {};
+  (D.PLANNING || []).filter(function (l) { return l.activite === 'Carburant' && sansAccents(l.client).indexOf('SCAPED') >= 0 && l.date.slice(0, 7) === M; }).forEach(function (l) {
+    var x = par[l.lieu] = par[l.lieu] || { nb: 0, m3: 0, dd: 0, ca: 0, sansLvn: 0 };
+    x.nb++; x.m3 += num(l.m3) || 0; x.dd += l.dd ? 1 : 0; x.ca += num(l.ca) || 0; if (!l.lvn) x.sansLvn++;
+  });
+  var lieux = Object.keys(par);
+  document.getElementById('apercuScaped').innerHTML = !lieux.length ? '<div class="vide">Aucune livraison SCAPED au planning en ' + nomMois(M) + '.</div>' :
+    '<table class="serre"><thead><tr><th>Lieu</th><th class="n">Livraisons</th><th class="n">m³</th><th class="n">Doubles dépotages</th><th class="n">CA planning</th><th></th></tr></thead><tbody>' +
+    lieux.map(function (k) { var x = par[k]; return '<tr><td>' + txt(k) + '</td><td class="n">' + x.nb + '</td><td class="n">' + fmtNb.format(x.m3) + '</td><td class="n">' + (x.dd || '') +
+      '</td><td class="n">' + eur(x.ca) + '</td><td>' + (x.sansLvn ? '⚠ ' + x.sansLvn + ' sans LVN' : '') + '</td></tr>'; }).join('') + '</tbody></table>';
+  sel.onchange = rendreScaped;
+  document.getElementById('btnScaped').onclick = function () {
+    var m = document.getElementById('msgScaped');
+    if (!confirm('Préparer la facture SCAPED de ' + nomMois(M) + ' ? Si l\'onglet du mois existe déjà, il est remplacé.')) return;
+    m.className = 'msg'; m.textContent = 'Préparation…';
+    appelServeur('genererFactureScaped', M).then(function (r) {
+      m.className = 'msg ok';
+      m.innerHTML = '✓ Facture ' + txt(r.numero) + ' : ' + r.livraisons + ' livraisons, ' + fmtEur2.format(r.totalHT) + ' HT, ' + r.pages + ' pages — <a href="' + txt(r.url) + '" target="_blank" rel="noopener">ouvrir l\'onglet « ' + txt(r.onglet) + ' »</a>' +
+        (r.avertissements.length ? '<div class="note">⚠ ' + r.avertissements.map(txt).join('<br>⚠ ') + '</div>' : '');
+      charger();
+    }).catch(function (e) { m.className = 'msg err'; m.textContent = '⚠ ' + e.message; });
+  };
+}
 function rendreFacturation() {
+  rendreScaped();
   var fact = (D.FACTURES_CLIENTS || []).filter(function (l) { return garderSociete(l.Societe); });
   var mois = {};
   fact.forEach(function (l) { if (l.Mois) mois[String(l.Mois).slice(0, 7)] = 1; });

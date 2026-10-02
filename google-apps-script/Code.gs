@@ -79,6 +79,7 @@ var PARAMETRES_DEFAUT = [
   ['JOURS_URGENT', 7, 'Une échéance passe « urgente » ce nombre de jours avant la date'],
   ['SEUIL_MARGE_PCT', 5, 'Alerte si la marge d\'un camion sur le dernier mois est sous ce % (négatif = urgent)'],
   ['SEUIL_CONSO_L100', 38, 'Alerte si la consommation d\'un camion dépasse ce nombre de L/100 km (90 derniers jours)'],
+  ['ID_FACTURE_SCAPED', '', 'Lien du Google Sheet des factures SCAPED (faites hors INFORCE) : un onglet par mois, préparé depuis le planning Carburant'],
   ['NOM_FICHIER_FINANCES', 'FINANCES_EXPORT.csv', 'Nom du fichier déposé dans Google Drive par exporter_finances_csv.py'],
   ['RECAP_HEBDO', 'OUI', 'OUI = un mail récapitulatif complet chaque lundi, même sans nouvelle alerte'],
   ['JOURS_RELANCE', 15, 'Une facture échue est « à relancer » si aucune relance depuis ce nombre de jours'],
@@ -108,6 +109,7 @@ function onOpen() {
     .addItem('Importer les finances depuis Drive', 'importerFinancesManuel')
     .addItem('Vérifier les alertes et envoyer le mail maintenant', 'verifierAlertesManuel')
     .addItem('Remplir la colonne CAMION des plannings', 'preparerCamionsManuel')
+    .addItem('Préparer la facture SCAPED du mois', 'factureScapedManuel')
     .addToUi();
 }
 
@@ -954,6 +956,230 @@ function syntheseBalance_(b) {
     postes: arr(postes), camions: camions, nonAffecte: arr(nonAffecte), points: pts, lignes: b.lignes };
 }
 
+// ---------------------------------------------------------------------------
+// Facture SCAPED (faite hors INFORCE) : onglet du mois préparé depuis le planning Carburant
+// ---------------------------------------------------------------------------
+var MOIS_MAJ = ['JANVIER', 'FEVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN', 'JUILLET', 'AOUT', 'SEPTEMBRE', 'OCTOBRE', 'NOVEMBRE', 'DECEMBRE'];
+
+function factureScapedManuel() {
+  var ui = SpreadsheetApp.getUi(), j = new Date();
+  var defaut = j.getDate() >= 25 ? Utilities.formatDate(j, FUSEAU, 'yyyy-MM') : Utilities.formatDate(new Date(j.getFullYear(), j.getMonth() - 1, 1), FUSEAU, 'yyyy-MM');
+  var r = ui.prompt('Facture SCAPED', 'Mois à facturer (AAAA-MM) :', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  var res = genererFactureScaped(r.getResponseText().trim() || defaut);
+  ui.alert('Facture SCAPED ' + res.numero + ' préparée dans l\'onglet « ' + res.onglet + ' » : ' + res.livraisons + ' livraisons, ' + euros_(res.totalHT) + ' HT.' +
+    (res.avertissements.length ? '\n\nÀ vérifier :\n- ' + res.avertissements.join('\n- ') : ''));
+}
+
+/** Livraisons SCAPED du mois au planning Carburant, avec le lieu, les m³, le prix, la LVN et le double dépotage. */
+function livraisonsScaped_(ss, mois) {
+  return plannings_(ss).filter(function (l) {
+    return l.activite === 'Carburant' && cle_(l.client).indexOf('SCAPED') >= 0 && Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM') === mois;
+  }).sort(function (a, b) { return a.date - b.date || String(a.lvn).localeCompare(String(b.lvn)); });
+}
+
+/**
+ * Répartit la facture en pages (fonction pure, testée à part).
+ * sites : [{ lieu, entete: [lignes de texte], km, prix, livraisons: [{ m3, lvn, jour }], dd: { nb, prix } | null }]
+ * zone : nombre de lignes utilisables par page. Renvoie des pages de lignes { type, ... } ('' = ligne vide).
+ */
+function planFactureScaped_(sites, zone) {
+  var pages = [[]], page = function () { return pages[pages.length - 1]; };
+  var place = function (n) { if (page().length + n > zone) pages.push([]); };
+  var ajout = function (x) { page().push(x); };
+  sites.forEach(function (s) {
+    place(s.entete.length + 1 + 2);   // en-tête du site + une livraison au moins sur la même page
+    s.entete.forEach(function (t) { ajout({ type: 'texte', texte: t }); });
+    ajout({ type: '' });
+    s.livraisons.forEach(function (l) {
+      place(2);
+      ajout({ type: 'transport', m3: l.m3, prix: s.prix });
+      ajout({ type: 'lvn', texte: 'LVN ' + l.lvn + ' DU ' + l.jour });
+    });
+    var fin = (s.km ? 2 : 0) + (s.dd ? 2 : 0);
+    if (fin) {
+      place(fin);
+      if (page().length && page()[page().length - 1].type !== '') ajout({ type: '' });
+      if (s.km) { ajout({ type: 'texte', texte: s.km }); ajout({ type: '' }); }
+      if (s.dd) { ajout({ type: 'dd', nb: s.dd.nb, prix: s.dd.prix }); ajout({ type: '' }); }
+    }
+    if (page().length && page().length < zone) ajout({ type: '' });
+  });
+  pages.forEach(function (p) { while (p.length > zone) p.pop(); });
+  return pages;
+}
+
+/**
+ * Prépare l'onglet « <MOIS> <ANNÉE> » du classeur des factures SCAPED (paramètre ID_FACTURE_SCAPED) :
+ * même mise en page que le dernier onglet, une ligne par livraison du planning (m³, prix du dernier mois, LVN),
+ * le double dépotage (« DD » au planning), les totaux par page et la page récapitulative.
+ * La facture est aussi enregistrée dans FACTURES_CLIENTS pour le contrôle des factures.
+ */
+function genererFactureScaped(mois) {
+  var ss = classeur_();
+  if (!/^\d{4}-\d{2}$/.test(String(mois || ''))) throw new Error('Mois invalide : écrivez AAAA-MM (ex. 2026-09)');
+  var fac = classeurParam_(ss, 'ID_FACTURE_SCAPED');
+  if (!fac) throw new Error('Collez le lien du Google Sheet des factures SCAPED dans PARAMETRES (ID_FACTURE_SCAPED)');
+  var an = +mois.slice(0, 4), mo = +mois.slice(5, 7), nomOnglet = MOIS_MAJ[mo - 1] + ' ' + an;
+  var cleMois = function (nom) {
+    var n = cle_(nom), m = MOIS_MAJ.filter(function (x) { return n.indexOf(x) === 0; })[0], a = (n.match(/(20\d\d)/) || [])[1];
+    return m && a ? +a * 100 + MOIS_MAJ.indexOf(m) + 1 : null;
+  };
+  // Modèle : le dernier onglet mensuel avant le mois facturé (à défaut le plus récent)
+  var onglets = fac.getSheets().filter(function (sh) { return cleMois(sh.getName()); })
+    .sort(function (a, b) { return cleMois(a.getName()) - cleMois(b.getName()); });
+  var avant = onglets.filter(function (sh) { return cleMois(sh.getName()) < an * 100 + mo; });
+  var modele = avant[avant.length - 1] || onglets[onglets.length - 1];
+  if (!modele) throw new Error('Aucun onglet mensuel (ex. « AOUT 2026 ») dans le classeur des factures SCAPED pour servir de modèle');
+  if (cle_(modele.getName()) === cle_(nomOnglet)) throw new Error('L\'onglet ' + nomOnglet + ' est le seul modèle disponible');
+  var mv = modele.getDataRange().getValues(), nbCol = Math.max(7, modele.getLastColumn());
+  var colA = mv.map(function (l) { return cle_(l[0]); });
+  // Structure d'une page du modèle
+  var debuts = []; colA.forEach(function (t, i) { if (t.indexOf('SAS LPB') === 0) debuts.push(i); });
+  if (debuts.length < 2) throw new Error('Mise en page du modèle « ' + modele.getName() + ' » non reconnue (en-tête « SAS LPB TRANSPORTS » répété à chaque page)');
+  var hauteur = debuts[1] - debuts[0];
+  var ligneDe = function (test, depuis, jusqu) { for (var i = depuis; i < jusqu; i++) if (test(mv[i], i)) return i; return -1; };
+  var rDesig = ligneDe(function (l) { return cle_(l[0]) === 'DESIGNATION'; }, 0, hauteur);
+  var rTotal = ligneDe(function (l) { return l.some(function (x) { return cle_(x) === 'TOTAL HT'; }); }, 0, hauteur);
+  var cTotal = mv[rTotal].map(cle_).indexOf('TOTAL HT');
+  var rRef = ligneDe(function (l) { return cle_(l[0]).indexOf('REF') === 0; }, 0, hauteur);
+  if (rDesig < 0 || rTotal < 0) throw new Error('Modèle non reconnu : lignes « Désignation » et « TOTAL HT » introuvables');
+  var zone = rTotal - 1 - (rDesig + 1);   // lignes utilisables entre l'en-tête du tableau et TOTAL HT
+  var rTrans = ligneDe(function (l) { return cle_(l[0]).indexOf('TRANSPORT') === 0; }, rDesig, rTotal);
+  var rRecap = ligneDe(function (l) { return cle_(l[0]).indexOf('SOUS TOTAL PAGE') === 0; }, 0, mv.length);
+  if (rTrans < 0 || rRecap < 0) throw new Error('Modèle non reconnu : ligne « TRANSPORTS CARBURANT » ou « Sous total page » introuvable');
+  var recapDebut = debuts.filter(function (d) { return d <= rRecap; }).pop(), recapFin = mv.length - 1, hRecap = recapFin - recapDebut + 1;
+  // Ce que le modèle apprend : en-têtes des sites, ligne KM, prix unitaire exact, prix du double dépotage
+  var infos = {}, prixDD = null, siteCourant = null;
+  mv.forEach(function (l, i) {
+    var t = cle_(l[0]);
+    if (/^ITM\b/.test(t)) {
+      var lieuTxt = t.replace(/^ITM\s+/, '').replace(/\s+\d{2,3}$/, '');
+      siteCourant = infos[lieuTxt] = infos[lieuTxt] || { entete: [], km: '', prix: null };
+      siteCourant.entete = (cle_(mv[i - 1][0]).indexOf('CHARGEMENT') === 0 ? [String(mv[i - 1][0])] : []).concat([String(l[0])]);
+    } else if (siteCourant && /\bKM\b.*\bTK\b/.test(t)) siteCourant.km = siteCourant.km || String(l[0]);
+    else if (siteCourant && t.indexOf('TRANSPORT') === 0 && siteCourant.prix === null) siteCourant.prix = nombre_(l[4], null);
+    if (t.indexOf('DOUBLE DEPOTAGE') === 0) prixDD = nombre_(l[4], null);
+  });
+  // Livraisons du planning, par site (ordre des sites du modèle, puis les nouveaux)
+  var livs = livraisonsScaped_(ss, mois);
+  if (!livs.length) throw new Error('Aucune livraison SCAPED au planning Carburant en ' + nomMois_(mois));
+  var avert = [], parSite = {}, ordre = Object.keys(infos);
+  livs.forEach(function (l) {
+    var k = cle_(l.lieu), connu = ordre.filter(function (o) { return memeLieu_(o, k); })[0] || k;
+    if (ordre.indexOf(connu) < 0) ordre.push(connu);
+    (parSite[connu] = parSite[connu] || []).push(l);
+  });
+  var sites = ordre.filter(function (k) { return parSite[k]; }).map(function (k) {
+    var inf = infos[k] || { entete: ['Chargement : DPF FOS CODE 13011', 'ITM ' + k], km: '', prix: null };
+    if (!infos[k]) avert.push('Nouveau lieu ' + k + ' : vérifiez son en-tête et ajoutez la ligne « KM - TK - TF »');
+    var prixPl = parSite[k].map(function (l) { return l.prix; }).filter(function (x) { return x; });
+    var pp = prixPl.length ? prixPl.sort(function (a, b) { return prixPl.filter(function (x) { return x === b; }).length - prixPl.filter(function (x) { return x === a; }).length; })[0] : null;
+    // prix exact du dernier mois (3 décimales) s'il correspond au prix arrondi du planning ; sinon le prix du planning
+    var prix = inf.prix !== null && (pp === null || Math.abs(inf.prix - pp) < 0.006) ? inf.prix : pp;
+    if (prix === null) throw new Error('Prix introuvable pour ' + k + ' (ni au planning ni dans le modèle)');
+    if (inf.prix !== null && pp !== null && Math.abs(inf.prix - pp) >= 0.006) avert.push(k + ' : prix du planning ' + pp + ' € au lieu de ' + inf.prix + ' € le mois dernier (nouveau tarif ?)');
+    parSite[k].forEach(function (l) {
+      if (!l.lvn) avert.push(k + ' ' + Utilities.formatDate(l.date, FUSEAU, 'dd/MM') + ' : LVN manquante au planning');
+      if (!l.m3) avert.push(k + ' ' + Utilities.formatDate(l.date, FUSEAU, 'dd/MM') + ' : m³ manquants au planning');
+    });
+    var nbDD = parSite[k].filter(function (l) { return l.dd; }).length;
+    if (nbDD && prixDD === null) avert.push('Prix du double dépotage introuvable dans le modèle : 45 € appliqués');
+    return { lieu: k, entete: inf.entete, km: inf.km, prix: prix,
+      livraisons: parSite[k].map(function (l) { return { m3: l.m3 || Math.round((l.litres || 0) / 1000), lvn: l.lvn || '?', jour: Utilities.formatDate(l.date, FUSEAU, 'dd/MM') }; }),
+      dd: nbDD ? { nb: nbDD, prix: prixDD === null ? 45 : prixDD } : null };
+  });
+  var pages = planFactureScaped_(sites, zone);
+  // Onglet du mois : remplacé s'il existe déjà
+  var ancien = fac.getSheetByName(nomOnglet);
+  if (ancien) fac.deleteSheet(ancien);
+  var sh = modele.copyTo(fac).setName(nomOnglet);
+  fac.setActiveSheet(sh); fac.moveActiveSheet(fac.getSheets().length);
+  var nbLignes = pages.length * hauteur + hRecap;
+  if (sh.getMaxRows() < nbLignes) sh.insertRowsAfter(sh.getMaxRows(), nbLignes - sh.getMaxRows());
+  sh.getRange(1, 1, sh.getMaxRows(), nbCol).breakApart().clear();
+  var dateFac = new Date(an, mo, 0), numero = 'FA' + ('0' + mo).slice(-2) + an, nbPages = pages.length + 1;
+  var poser = function (base, srcDebut, n) {   // copie un bloc d'une page du modèle (mise en page + textes fixes)
+    modele.getRange(srcDebut + 1, 1, n, nbCol).copyTo(sh.getRange(base, 1));
+    for (var k0 = 0; k0 < n; k0++) { var hh = modele.getRowHeight(srcDebut + k0 + 1); if (hh) sh.setRowHeight(base + k0, hh); }
+    for (var k = 0; k < n && srcDebut + k < mv.length; k++) {   // date et numéro, à leur place dans ce bloc
+      var t = cle_(mv[srcDebut + k][0]);
+      if (t.indexOf('DATE') === 0) sh.getRange(base + k, 2).setValue(dateFac);
+      if (t.indexOf('FACTURE N') === 0) sh.getRange(base + k, 2).setValue(numero);
+    }
+  };
+  var pageNoDe = function (srcDebut, n) {   // case du n° de page (« 1/5 ») : une date au format j/m sous le TOTAL
+    for (var k = n - 1; k > 0; k--) {
+      var l = mv[srcDebut + k] || [];
+      if (cle_(l[0]).indexOf('DATE') === 0) break;   // remonté jusqu'à l'en-tête : pas de n° de page
+      for (var c2 = 1; c2 < l.length; c2++) if (l[c2] instanceof Date) return [k, c2];
+    }
+    return null;
+  };
+  var fmt = function (r) { return modele.getRange(r + 1, 1, 1, nbCol); };
+  var ligneTotaux = [], totalHT = 0;
+  pages.forEach(function (lignes, ip) {
+    var base = ip * hauteur + 1, r0 = base + rDesig + 1;
+    poser(base, debuts[0], hauteur);
+    sh.getRange(r0, 1, zone + 1, nbCol).breakApart().clearContent();
+    lignes.forEach(function (x, k) {
+      var r = r0 + k, cel = sh.getRange(r, 1, 1, 7);
+      if (x.type === 'texte') sh.getRange(r, 1).setValue(x.texte);
+      else if (x.type === 'lvn') { fmt(rTrans + 1).copyTo(sh.getRange(r, 1), { formatOnly: true }); sh.getRange(r, 1).setValue(x.texte); }
+      else if (x.type === 'transport' || x.type === 'dd') {
+        fmt(rTrans).copyTo(sh.getRange(r, 1), { formatOnly: true });
+        cel.setValues([[x.type === 'dd' ? 'DOUBLE DEPOTAGE' : 'TRANSPORTS CARBURANT', '', '', x.type === 'dd' ? x.nb : x.m3, x.prix, 0.2, '=D' + r + '*E' + r]]);
+        totalHT += Math.round((x.type === 'dd' ? x.nb : x.m3) * x.prix * 100) / 100;
+      }
+    });
+    var rt = base + rTotal;
+    sh.getRange(rt, cTotal + 2).setFormula('=SUM(G' + r0 + ':G' + (r0 + zone) + ')');
+    ligneTotaux.push(rt);
+    var pn = pageNoDe(debuts[0], hauteur); if (pn) sh.getRange(base + pn[0], pn[1] + 1).setNumberFormat('@').setValue((ip + 1) + '/' + nbPages);
+  });
+  // Page récapitulative
+  var baseR = pages.length * hauteur + 1, decal = rRecap - recapDebut;
+  poser(baseR, recapDebut, hRecap);
+  var rv = mv.slice(recapDebut, recapFin + 1);
+  var rMode = rv.map(function (l) { return cle_(l[0]); }).findIndex(function (t) { return t.indexOf('MODE DE REGLEMENT') === 0; });
+  var colSous = rv[decal].map(function (x) { return String(x).charAt(0) === '=' ? 1 : 0; }).indexOf(1);
+  var cS = colSous >= 0 ? colSous : 5;
+  for (var k = decal; k < (rMode > 0 ? rMode : decal + 18); k++) sh.getRange(baseR + k, 1, 1, nbCol).clearContent();
+  var lignesSous = [];
+  ligneTotaux.forEach(function (rt, i) {
+    var r = baseR + decal + i * 2;
+    sh.getRange(r, 1).setValue('Sous total page ' + (i + 1));
+    sh.getRange(r, cS + 1).setFormula('=G' + rt);
+    lignesSous.push(colonneLettre_(cS + 1) + r);
+  });
+  var rHT = rv.map(function (l) { return l.map(cle_); }).findIndex(function (l) { return l.indexOf('H.T') >= 0 || l.indexOf('HT') >= 0; });
+  if (rHT >= 0) {
+    var cLib = rv[rHT].map(cle_).indexOf('H.T') >= 0 ? rv[rHT].map(cle_).indexOf('H.T') : rv[rHT].map(cle_).indexOf('HT');
+    var cVal = colonneLettre_(cLib + 2), rH = baseR + rHT;
+    sh.getRange(rH, cLib + 2).setFormula('=' + lignesSous.join('+'));
+    sh.getRange(rH + 1, cLib + 2).setFormula('=' + cVal + rH + '*20/100');
+    sh.getRange(rH + 2, cLib + 2).setFormula('=' + cVal + rH + '+' + cVal + (rH + 1));
+  }
+  var pnR = pageNoDe(recapDebut, hRecap); if (pnR) sh.getRange(baseR + pnR[0], pnR[1] + 1).setNumberFormat('@').setValue(nbPages + '/' + nbPages);
+  var finUtile = baseR + hRecap - 1;
+  if (sh.getMaxRows() > finUtile) sh.deleteRows(finUtile + 1, sh.getMaxRows() - finUtile);
+  SpreadsheetApp.flush();
+  // Enregistrement pour le contrôle des factures (FACTURES_CLIENTS)
+  var refClient = rRef >= 0 ? String(mv[rRef][1] || '') : '';
+  var lignesF = [];
+  sites.forEach(function (s) {
+    s.livraisons.forEach(function (l) { lignesF.push({ nature: 'TRANSPORT', lieu: s.lieu, quantite: l.m3, prix: s.prix, montant: Math.round(l.m3 * s.prix * 100) / 100, lvn: l.lvn, dateLvn: l.jour }); });
+    if (s.dd) lignesF.push({ nature: 'DEPOTAGE', lieu: s.lieu, quantite: s.dd.nb, prix: s.dd.prix, montant: s.dd.nb * s.dd.prix });
+  });
+  try {
+    deposerFacture({ numero: numero, date: Utilities.formatDate(dateFac, FUSEAU, 'yyyy-MM-dd'), mois: mois, societe: 'LPB', client: 'SCA PETROLE & DERIVES (SCAPED)',
+      refClient: refClient, activite: 'Carburant', lignes: lignesF, netHT: Math.round(totalHT * 100) / 100 }, '', '');
+  } catch (e) { avert.push('Facture préparée mais non enregistrée pour le contrôle : ' + e.message); }
+  return { onglet: nomOnglet, numero: numero, url: fac.getUrl() + '#gid=' + sh.getSheetId(), livraisons: livs.length, pages: nbPages,
+    totalHT: Math.round(totalHT * 100) / 100, sites: sites.map(function (s) { return { lieu: s.lieu, nb: s.livraisons.length, m3: s.livraisons.reduce(function (t, l) { return t + l.m3; }, 0), prix: s.prix, dd: s.dd ? s.dd.nb : 0 }; }),
+    avertissements: avert };
+}
+
 function calculerAlertes_(ss, aujourdhui) {
   var p = lireParametres_(ss);
   var preavis = nombre_(p.JOURS_PREAVIS, 30), urgent = nombre_(p.JOURS_URGENT, 7);
@@ -1524,6 +1750,7 @@ function plannings_(ss) {
           attente: nombre_(val(l, c.attente), null), contratManquant: String(val(l, c.contrat) || '').trim(),
           m3: nombre_(val(l, c.m3), null), prix: nombre_(val(l, c.prix), null), lvn: String(val(l, c.lvn) || '').replace(/\.0+$/, '').trim(),
           termeFixe: nombre_(val(l, c.termeFixe), null),
+          dd: l.some(function (x) { return cle_(x) === 'DD'; }),   // double dépotage noté « DD » (colonne HEURES ATTENTES le plus souvent)
           camionSaisi: /^#/.test(String(val(l, c.camion))) ? '' : plaque_(val(l, c.camion))
         });
       });
