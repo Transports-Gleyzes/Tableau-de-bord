@@ -589,9 +589,10 @@ function controleFactures_(ss, jour0) {
       });
       return s2;
     };
-    var resteQuinzaine = [];
+    var resteQuinzaine = [], faits = {};
     var rapprocher = function (a, k, lieuDifferent) {
       var g = groupes[k]; pris[k] = 1; alias[a.ref] = cle_(g.client);
+      var n0 = alertes.length, nR = resteQuinzaine.length;
       // Facture à la quinzaine : on ne compare qu'à la quinzaine facturée, l'autre attend sa propre facture
       var qz = Object.keys(a.quinzaines), periodeF = null;
       if (qz.length === 1) {
@@ -634,6 +635,26 @@ function controleFactures_(ss, jour0) {
           cle: 'FACT_PRIX|' + M + '|' + a.ref + '|' + g.lieu + '|' + prixF.join('/') });
       }
       out.carburant.push(ligne);
+      faits[k] = { a: a, ligne: ligne, alertes: alertes.slice(n0), restes: resteQuinzaine.slice(nR), lieuDifferent: lieuDifferent };
+    };
+    // Une 2e facture du même client (autre quinzaine, autre réf.) arrive sur un groupe déjà rapproché : on additionne et on refait le contrôle
+    var fusionner = function (a, k) {
+      var f = faits[k], a0 = f.a, x = {};
+      Object.keys(a0).forEach(function (c) { x[c] = a0[c]; });
+      x.qte = a0.qte + a.qte; x.montant = a0.montant + a.montant; x.lvns = a0.lvns.concat(a.lvns);
+      [['prix'], ['factures'], ['quinzaines']].forEach(function (c) { x[c] = {}; [a0, a].forEach(function (y) { Object.keys(y[c]).forEach(function (z) { x[c][z] = 1; }); }); });
+      out.carburant = out.carburant.filter(function (l) { return l !== f.ligne; });
+      alertes = alertes.filter(function (al) { return f.alertes.indexOf(al) < 0; });
+      resteQuinzaine = resteQuinzaine.filter(function (r) { return f.restes.indexOf(r) < 0; });
+      pris[k] = 0; rapprocher(x, k, f.lieuDifferent);
+    };
+    var sansForme = function (n) { return cle_(n).replace(/&/g, ' ').split(/[\s.-]+/).filter(function (w) { return w && ['ET', 'SA', 'SAS', 'SARL', 'STE', 'SOCIETE', 'ETS'].indexOf(w) < 0; }).join(' '); };
+    var dejaFait = function (a) {
+      var nom = clientPlanningDe(a) || clientPlanningDe({ client: sansForme(a.client), ref: a.ref });
+      return Object.keys(faits).filter(function (k) {
+        var f = faits[k], g = groupes[k];
+        return f.a.societe === a.societe && (memePersonne_(sansForme(f.a.client), sansForme(a.client)) || (nom && cle_(g.client) === nom)) && (lieuOkPour(a, g) || lieuOk(a.lieu, f.a.lieu));
+      })[0];
     };
     var aggs = Object.keys(facturees).map(function (k) { return facturees[k]; }).sort(function (a, b) { return b.qte - a.qte; });
     var restants = [];
@@ -656,6 +677,8 @@ function controleFactures_(ss, jour0) {
       if (cand.length && (Math.abs(groupes[cand[0]].m3 - a.qte) <= 1 || lieuOkPour(a, groupes[cand[0]]))) {
         rapprocher(a, cand[0], !lieuOkPour(a, groupes[cand[0]])); return;
       }
+      var kf = dejaFait(a);
+      if (kf) { fusionner(a, kf); return; }
       var prixF = Object.keys(a.prix).map(Number), facts = Object.keys(a.factures).join(', ');
       out.carburant.push({ societe: a.societe, clientFacture: a.client, lieu: a.lieu, m3Fact: a.qte, prixFact: prixF.join(' / '), montantFact: r2(a.montant), factures: facts, etats: ['absent du planning'] });
       alertes.push({ niveau: 'a_prevoir', categorie: 'facturation', domaine: 'Factures', objet: a.client, sujet: 'Facturé hors planning',
