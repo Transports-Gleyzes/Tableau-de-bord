@@ -260,7 +260,7 @@ button.petit { padding: 2px 8px; font-size: 12px; }
     </div>
     <div class="carte">
       <h2>CA par camion</h2>
-      <p class="note">Colonne CAMION des plannings (remplie automatiquement avec le camion habituel de l'onglet CAMIONS, modifiable à la main)</p>
+      <p class="note">D'après la colonne CAMION des plannings</p>
       <div class="tableau"><table id="tabCamions"></table></div>
     </div>
     <div class="carte carbu">
@@ -1001,7 +1001,7 @@ function rendreActivite() {
       litres: litres || null, conso: kmL ? litres / kmL * 100 : null, changes: x.changes ? x.changes + ' ligne(s)' : '' };
   }).sort(function (a, b) { return b.ca - a.ca; });
   tableTriable('tabCamions', [['Camion', 'id', 'txt'], ['Activité', 'activite', 'txt'], ['Chauffeur(s)', 'chauffeurs', 'txt'], ['Tournées / livr.', 'n', 'nb'],
-    ['Km (Inter)', 'km', 'nb'], ['CA', 'ca', 'eur'], ['Litres consommés', 'litres', 'nb'], ['L/100 km', 'conso', 'nb'], ['Camion changé à la main', 'changes', 'txt']],
+    ['Km (Inter)', 'km', 'nb'], ['CA', 'ca', 'eur'], ['Litres consommés', 'litres', 'nb'], ['L/100 km', 'conso', 'nb']],
     lignesCam, function (o, k) { return o[k]; });
 
   var cl = {};
