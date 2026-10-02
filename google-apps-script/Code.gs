@@ -744,7 +744,10 @@ function plannings_(ss) {
       var dernier = function (test) { for (var k = e.length - 1; k >= 0; k--) if (test(e[k])) return k; return -1; };
       var c = {
         date: Math.max(0, col(function (h) { return h === 'DATE' || h === 'DATES'; })), ca: e.indexOf('CA'), km: e.indexOf('KM'), litres: e.indexOf('LITRAGE'),
+        // Planning Carburant : 1re colonne SOCIETE = société du chauffeur, 2e = société du client (qui facture).
+        // Planning Inter : une seule colonne, les deux sont identiques.
         societe: dernier(function (h) { return h.indexOf('SOCIETE') === 0; }),
+        societeChauffeur: col(function (h) { return h.indexOf('SOCIETE') === 0; }),
         chauffeur: col(function (h) { return h.indexOf('CHAUFFEUR') === 0; }),
         client: col(function (h) { return h === 'CLIENT'; }),
         lieu: col(function (h) { return h === 'LIEU DE LIVRAISON' || h === 'LIVRAISON'; }),
@@ -765,9 +768,9 @@ function plannings_(ss) {
         var ca = nombre_(val(l, c.ca), null);
         if (!dt || (!chauffeur && !ca)) return;
         if (!ca && !nombre_(val(l, c.km), null) && !nombre_(val(l, c.litres), null)) return;   // ligne préparée mais pas encore remplie
-        var soc = cle_(val(l, c.societe));
+        var normSoc = function (x) { var k = cle_(x); return k.indexOf('LPB') >= 0 ? 'LPB' : (k.indexOf('GLEYZES') >= 0 ? 'Gleyzes' : k); };
         res.push({
-          date: dt, activite: src[1], societe: soc.indexOf('LPB') >= 0 ? 'LPB' : (soc.indexOf('GLEYZES') >= 0 ? 'Gleyzes' : soc),
+          date: dt, activite: src[1], societe: normSoc(val(l, c.societe)), societeChauffeur: normSoc(val(l, c.societeChauffeur)),
           chauffeur: chauffeur, client: String(val(l, c.client) || '').trim(), lieu: String(val(l, c.lieu) || '').trim(),
           ca: ca, km: nombre_(val(l, c.km), null), litres: nombre_(val(l, c.litres), null),
           attente: nombre_(val(l, c.attente), null), contratManquant: String(val(l, c.contrat) || '').trim(),

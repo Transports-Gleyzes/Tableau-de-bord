@@ -241,6 +241,7 @@ button.petit { padding: 2px 8px; font-size: 12px; }
       <div class="carte carbu">
         <h2><span class="pastille-act" style="background:var(--s2)"></span>Planning Carburant</h2>
         <div class="mini" id="miniCarbu"></div>
+        <p class="note">« Employé par » = société du chauffeur ; CA Gleyzes / CA LPB = selon la société du client (2e colonne SOCIETE DU du planning)</p>
         <div class="tableau"><table id="tabCarbu"></table></div>
       </div>
     </div>
@@ -973,18 +974,28 @@ function rendreActivite() {
     '<div><b>' + fmtNb.format(attente) + ' h</b>d\'attente</div>' +
     '<div><b class="' + (sansPrix ? 'neg' : '') + '">' + sansPrix + '</b>livraison(s) sans prix</div>';
 
-  var parChauffeur = function (lignes, colQ, libQ, fmtQ) {
+  // Par chauffeur : société du chauffeur (son employeur) et CA réparti selon la société du client (qui facture)
+  var parChauffeur = function (lignes, colQ) {
     var g = {};
     lignes.forEach(function (l) {
       var k = String(l.chauffeur).trim().toUpperCase() || '?';
-      var x = g[k] = g[k] || { nom: k, soc: {}, n: 0, q: 0, ca: 0 };
-      x.n++; x.q += num(l[colQ]) || 0; x.ca += num(l.ca) || 0; x.soc[l.societe] = 1;
+      var x = g[k] = g[k] || { nom: k, socCh: {}, n: 0, q: 0, ca: 0, caG: 0, caL: 0 };
+      var ca = num(l.ca) || 0;
+      x.n++; x.q += num(l[colQ]) || 0; x.ca += ca;
+      if (l.societe === 'LPB') x.caL += ca; else if (l.societe === 'Gleyzes') x.caG += ca;
+      var sc = l.societeChauffeur || l.societe;
+      if (sc) x.socCh[sc] = (x.socCh[sc] || 0) + 1;
     });
-    return Object.keys(g).map(function (k) { var x = g[k]; x.societe = Object.keys(x.soc).join(' + '); return x; });
+    return Object.keys(g).map(function (k) {
+      var x = g[k];
+      x.societe = Object.keys(x.socCh).sort(function (a, b) { return x.socCh[b] - x.socCh[a]; })[0] || '';
+      return x;
+    });
   };
   tableTriable('tabInter', [['Chauffeur', 'nom', 'txt'], ['Société', 'societe', 'txt'], ['Tournées', 'n', 'nb'], ['Km', 'q', 'nb'], ['CA', 'ca', 'eur']],
     parChauffeur(inter, 'km'), function (o, k) { return o[k]; });
-  tableTriable('tabCarbu', [['Chauffeur', 'nom', 'txt'], ['Société', 'societe', 'txt'], ['Livraisons', 'n', 'nb'], ['m³', 'm3', 'nb'], ['CA', 'ca', 'eur']],
+  tableTriable('tabCarbu', [['Chauffeur', 'nom', 'txt'], ['Employé par', 'societe', 'txt'], ['Livr.', 'n', 'nb'], ['m³', 'm3', 'nb'],
+    ['CA Gleyzes', 'caG', 'eur'], ['CA LPB', 'caL', 'eur'], ['Total', 'ca', 'eur']],
     parChauffeur(carbu, 'litres').map(function (x) { x.m3 = x.q / 1000; return x; }), function (o, k) { return o[k]; });
   var cam = {};
   duMois.forEach(function (l) {
@@ -1005,8 +1016,9 @@ function rendreActivite() {
     lignesCam, function (o, k) { return o[k]; });
 
   var cl = {};
-  carbu.forEach(function (l) { var k = (l.client || '?') + ' — ' + (l.lieu || '?'); var x = cl[k] = cl[k] || { nom: k, n: 0, m3: 0, ca: 0 }; x.n++; x.m3 += (num(l.litres) || 0) / 1000; x.ca += num(l.ca) || 0; });
-  tableTriable('tabClients', [['Client — lieu', 'nom', 'txt'], ['Livraisons', 'n', 'nb'], ['m³', 'm3', 'nb'], ['CA', 'ca', 'eur']],
+  carbu.forEach(function (l) { var k = (l.client || '?') + ' — ' + (l.lieu || '?'); var x = cl[k] = cl[k] || { nom: k, soc: {}, n: 0, m3: 0, ca: 0 }; x.n++; x.m3 += (num(l.litres) || 0) / 1000; x.ca += num(l.ca) || 0; if (l.societe) x.soc[l.societe] = 1; });
+  Object.keys(cl).forEach(function (k) { cl[k].societe = Object.keys(cl[k].soc).sort().join(' + '); });
+  tableTriable('tabClients', [['Client — lieu', 'nom', 'txt'], ['Client de', 'societe', 'txt'], ['Livraisons', 'n', 'nb'], ['m³', 'm3', 'nb'], ['CA', 'ca', 'eur']],
     Object.keys(cl).map(function (k) { return cl[k]; }).sort(function (a, b) { return b.ca - a.ca; }), function (o, k) { return o[k]; });
 
   // CA par jour (empilé) et CA par mois (groupé) : bleu = Inter, orange = Carburant, partout
