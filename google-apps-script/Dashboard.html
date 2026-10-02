@@ -260,8 +260,13 @@ button.petit { padding: 2px 8px; font-size: 12px; }
       </div>
     </div>
     <div class="carte">
+      <h2>Charges à mutualiser</h2>
+      <p class="note" id="noteMut"></p>
+      <div class="tableau"><table id="tabMut"></table></div>
+    </div>
+    <div class="carte">
       <h2>CA par camion</h2>
-      <p class="note">D'après la colonne CAMION des plannings</p>
+      <p class="note">D'après la colonne CAMION des plannings. Charges mut. = part des charges à mutualiser des chauffeurs du camion</p>
       <div class="tableau"><table id="tabCamions"></table></div>
     </div>
     <div class="carte carbu">
@@ -997,11 +1002,45 @@ function rendreActivite() {
   tableTriable('tabCarbu', [['Chauffeur', 'nom', 'txt'], ['Employé par', 'societe', 'txt'], ['Livr.', 'n', 'nb'], ['m³', 'm3', 'nb'],
     ['CA Gleyzes', 'caG', 'eur'], ['CA LPB', 'caL', 'eur'], ['Total', 'ca', 'eur']],
     parChauffeur(carbu, 'litres').map(function (x) { x.m3 = x.q / 1000; return x; }), function (o, k) { return o[k]; });
+  // Charges à mutualiser : total mensuel de chaque société ÷ nombre de ses chauffeurs ayant travaillé dans le mois
+  // (même règle que maj_mensuelle_flotte.py), puis part de chaque chauffeur répartie sur ses camions au prorata de ses lignes
+  var normSoc = function (x) { var k = String(x || '').toUpperCase(); return k.indexOf('LPB') >= 0 ? 'LPB' : (k.indexOf('GLEYZES') >= 0 ? 'Gleyzes' : ''); };
+  var chargesMut = {};
+  (D.CHARGES_MUTUALISEES || []).forEach(function (c) { var so = normSoc(c['Société']), m = num(c.Montant_Mensuel); if (so && m !== null) chargesMut[so] = (chargesMut[so] || 0) + m; });
+  var tousMois = (D.PLANNING || []).filter(function (l) { return l.date.slice(0, 7) === mois; });   // tous, filtre société ignoré pour compter les chauffeurs
+  var chSoc = {}, lignesCh = {};
+  tousMois.forEach(function (l) {
+    var ch = String(l.chauffeur).trim().toUpperCase(), so = l.societeChauffeur || l.societe;
+    if (!ch || !so) return;
+    (chSoc[so] = chSoc[so] || {})[ch] = 1;
+    lignesCh[ch] = (lignesCh[ch] || 0) + 1;
+  });
+  var partCh = {};
+  Object.keys(chSoc).forEach(function (so) {
+    var n = Object.keys(chSoc[so]).length;
+    if (chargesMut[so] && n) Object.keys(chSoc[so]).forEach(function (ch) { partCh[ch] = chargesMut[so] / n; });
+  });
+  var aujMois = aujourdhui().slice(0, 7);
+  document.getElementById('noteMut').textContent = !Object.keys(chargesMut).length
+    ? 'Collez le tableau des charges à mutualiser (Poste, Société, Montant) dans l\'onglet CHARGES_MUTUALISEES du Google Sheet.'
+    : 'Total mensuel de chaque société, divisé par le nombre de ses chauffeurs ayant travaillé en ' + nomMois(mois) + '.' +
+      (mois === aujMois ? ' Mois en cours : le CA est celui réalisé à date, les charges sont celles du mois entier.' : '');
+  var lignesMut = ['Gleyzes', 'LPB'].filter(function (so) { return !societe() || garderSociete(so); }).map(function (so) {
+    var n = chSoc[so] ? Object.keys(chSoc[so]).length : 0;
+    var caSo = caListe(tousMois.filter(function (l) { return l.societe === so; }));
+    return { soc: so, charges: chargesMut[so] || null, n: n, part: chargesMut[so] && n ? chargesMut[so] / n : null, ca: caSo,
+      reste: chargesMut[so] ? caSo - chargesMut[so] : null };
+  });
+  tableTriable('tabMut', [['Société', 'soc', 'txt'], ['Charges du mois', 'charges', 'eur'], ['Chauffeurs actifs', 'n', 'nb'], ['Part par chauffeur', 'part', 'eur'],
+    ['CA (clients de la société)', 'ca', 'eur'], ['CA − charges mutualisées', 'reste', 'eur']], lignesMut, function (o, k) { return o[k]; });
+
   var cam = {};
   duMois.forEach(function (l) {
     var k = l.camion || '(sans camion)';
-    var x = cam[k] = cam[k] || { id: k, act: {}, ch: {}, n: 0, km: 0, ca: 0, changes: 0 };
-    x.act[l.activite] = 1; x.ch[String(l.chauffeur).trim().toUpperCase()] = 1; x.n++; x.km += num(l.km) || 0; x.ca += num(l.ca) || 0;
+    var x = cam[k] = cam[k] || { id: k, act: {}, ch: {}, n: 0, km: 0, ca: 0, changes: 0, mut: 0 };
+    var ch = String(l.chauffeur).trim().toUpperCase();
+    x.act[l.activite] = 1; x.ch[ch] = 1; x.n++; x.km += num(l.km) || 0; x.ca += num(l.ca) || 0;
+    if (partCh[ch] && lignesCh[ch]) x.mut += partCh[ch] / lignesCh[ch];
     if (l.camionSource === 'planning') x.changes++;
   });
   var litMois = (D.LITRAGES || []).filter(function (w) { return w.valide && String(w.fin).slice(0, 7) === mois; });
@@ -1009,10 +1048,11 @@ function rendreActivite() {
     var x = cam[k], w = litMois.filter(function (y) { return y.immat === k; });
     var litres = w.reduce(function (t, y) { return t + y.litres; }, 0), kmL = w.reduce(function (t, y) { return t + y.km; }, 0);
     return { id: k, activite: Object.keys(x.act).join(' + '), chauffeurs: Object.keys(x.ch).sort().join(', '), n: x.n, km: x.km || null, ca: x.ca,
-      litres: litres || null, conso: kmL ? litres / kmL * 100 : null, changes: x.changes ? x.changes + ' ligne(s)' : '' };
+      litres: litres || null, conso: kmL ? litres / kmL * 100 : null, mut: x.mut || null, apresMut: x.mut ? x.ca - x.mut : null };
   }).sort(function (a, b) { return b.ca - a.ca; });
   tableTriable('tabCamions', [['Camion', 'id', 'txt'], ['Activité', 'activite', 'txt'], ['Chauffeur(s)', 'chauffeurs', 'txt'], ['Tournées / livr.', 'n', 'nb'],
-    ['Km (Inter)', 'km', 'nb'], ['CA', 'ca', 'eur'], ['Litres consommés', 'litres', 'nb'], ['L/100 km', 'conso', 'nb']],
+    ['Km (Inter)', 'km', 'nb'], ['CA', 'ca', 'eur'], ['Charges mut.', 'mut', 'eur'], ['CA − charges mut.', 'apresMut', 'eur'],
+    ['Litres consommés', 'litres', 'nb'], ['L/100 km', 'conso', 'nb']],
     lignesCam, function (o, k) { return o[k]; });
 
   var cl = {};

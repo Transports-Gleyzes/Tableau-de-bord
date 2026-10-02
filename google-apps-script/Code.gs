@@ -39,6 +39,7 @@ var FEUILLES = {
   FACTURES: ['N_Facture', 'Client', 'Date_Facture', 'Echeance', 'Montant_TTC', 'Statut', 'Date_Paiement',
              'Derniere_Relance', 'Remarque'],
   HEURES: ['Date', 'Salarié', 'Heures', 'Remarque'],
+  CHARGES_MUTUALISEES: ['Poste', 'Société', 'Montant_Mensuel'],
   JOURNAL_ALERTES: ['Date_Envoi', 'Clé', 'Niveau', 'Message']
 };
 
@@ -213,7 +214,7 @@ function doGet() {
 function getDonnees() {
   var ss = classeur_();
   var d = {};
-  ['FINANCES', 'FLOTTE', 'SALARIES', 'ABSENCES', 'CARBURANT', 'LIVRAISONS', 'FACTURES', 'HEURES'].forEach(function (nom) {
+  ['FINANCES', 'FLOTTE', 'SALARIES', 'ABSENCES', 'CARBURANT', 'LIVRAISONS', 'FACTURES', 'HEURES', 'CHARGES_MUTUALISEES'].forEach(function (nom) {
     var sh = ss.getSheetByName(nom);
     d[nom] = sh ? lireTable_(sh).map(serialiser_) : [];
   });
