@@ -858,6 +858,8 @@ function posteCompte_(compte, libelle) {
   return 'Autre';
 }
 
+function eur2_(n) { return (Math.round(n * 100) / 100).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' €'; }
+
 function dateFrTexte_(iso) { var p = String(iso || '').split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : String(iso || ''); }
 
 /**
@@ -1423,49 +1425,74 @@ function controlePrefacs_(ss, jour0) {
     if (l.Type === 'LIGNE') x.lignes.push({ designation: String(l.Designation), quantite: nombre_(l.Quantite, null), prix: nombre_(l.Prix_Unitaire, null), montant: nombre_(l.Montant_HT, 0) });
     else x.tournees.push({ date: iso(l.Date_Tournee), tournee: String(l.Tournee).replace(/\.0+$/, ''), km: nombre_(l.KM, null), livraisons: String(l.Livraisons || '') });
   });
+  var jj = function (d) { return Utilities.formatDate(d, FUSEAU, 'dd/MM'); };
   Object.keys(parMois).sort().forEach(function (M) {
     var lib = nomMois_(M), precM = Utilities.formatDate(new Date(+M.slice(0, 4), +M.slice(5, 7) - 2, 1), FUSEAU, 'yyyy-MM');
     var plM = pl.filter(function (l) { return Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM') === M; });
     var out = [];
     Object.keys(parMois[M]).sort().forEach(function (c) {
-      var x = parMois[M][c], plc = plM.filter(function (l) { return l.numContrat === c; }), pris = {}, ecarts = [];
+      var x = parMois[M][c], plc = plM.filter(function (l) { return l.numContrat === c; }), pris = {}, tours = [], notes = [];
+      var ligneTour = function (t, l, probleme, ou, niveau) {
+        tours.push({ date: t ? t.date : Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM-dd'), tourneePrefac: t ? t.tournee : '', tourneePlanning: l ? l.tournee : '',
+          chauffeur: l ? l.chauffeur : '', livraisons: t && t.livraisons ? t.livraisons : (l ? l.lieu : ''), kmPrefac: t ? t.km : null, kmPlanning: l ? l.km : null,
+          probleme: probleme || '', ou: ou || '', niveau: niveau || 'ok' });
+      };
       x.tournees.forEach(function (t) {
-        var j = plc.filter(function (l, i) { return !pris[i] && l.tournee === t.tournee; })[0];
-        var i = j ? plc.indexOf(j) : -1;
+        var i = -1, numFaux = false;
+        plc.forEach(function (l, k) { if (i < 0 && !pris[k] && l.tournee === t.tournee) i = k; });
         if (i < 0) {   // n° mal saisi au planning : même jour, mêmes km (à 5 km près)
           plc.forEach(function (l, k) { if (i < 0 && !pris[k] && Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM-dd') === t.date && l.km !== null && t.km !== null && Math.abs(l.km - t.km) <= 5) i = k; });
-          if (i >= 0) ecarts.push({ type: 'numero', niveau: 'a_prevoir', texte: 'tournée ' + t.tournee + ' du ' + dateFrTexte_(t.date) + ' : n° saisi « ' + plc[i].tournee + ' » au planning (' + plc[i].chauffeur + ')' });
+          numFaux = i >= 0;
         }
-        if (i < 0) { ecarts.push({ type: 'hors', niveau: 'urgent', texte: 'tournée ' + t.tournee + ' du ' + dateFrTexte_(t.date) + ' (' + t.km + ' km' + (t.livraisons ? ', ' + t.livraisons : '') + ') : absente du planning' }); return; }
+        if (i < 0) {
+          var ailleurs = pl.filter(function (l) { return l.tournee === t.tournee; })[0];
+          ligneTour(t, ailleurs || null, ailleurs ? 'Au planning avec le contrat ' + (ailleurs.numContrat || '(vide)') + ' au lieu de ' + c
+            : 'Tournée facturée par Intermarché mais absente du planning', ailleurs ? 'Planning : corriger le n° de contrat' : 'Planning : ajouter la tournée (ou vérifier le contrat)', 'urgent');
+          return;
+        }
         pris[i] = 1;
-        var l = plc[i];
-        if (l.km !== null && t.km !== null && Math.abs(l.km - t.km) > 1)
-          ecarts.push({ type: 'km', niveau: t.km < l.km ? 'urgent' : 'a_prevoir', texte: 'tournée ' + t.tournee + ' du ' + dateFrTexte_(t.date) + ' (' + l.chauffeur + ') : ' + t.km + ' km sur la préfac, ' + l.km + ' km au planning' });
+        var l = plc[i], pbs = [], ou = [], niv = 'ok';
+        if (numFaux) { pbs.push('N° de tournée saisi « ' + l.tournee + ' » au planning au lieu de ' + t.tournee); ou.push('Planning : corriger le n° de tournée'); niv = 'a_prevoir'; }
+        if (l.km !== null && t.km !== null && Math.abs(l.km - t.km) > 1) {
+          if (t.km < l.km) { pbs.push('Intermarché paie ' + (l.km - t.km) + ' km de moins que le planning'); ou.push('Préfac : réclamer ' + (l.km - t.km) + ' km (ou corriger le planning s\'il est faux)'); niv = 'urgent'; }
+          else { pbs.push('Préfac : ' + (t.km - l.km) + ' km de plus que le planning'); ou.push('Planning : vérifier les km (' + t.km + ' sur la préfac)'); if (niv === 'ok') niv = 'a_prevoir'; }
+        }
+        ligneTour(t, l, pbs.join(' · '), ou.join(' · '), niv);
       });
       plc.forEach(function (l, i) {
-        if (!pris[i]) ecarts.push({ type: 'manque', niveau: 'urgent', texte: 'tournée ' + (l.tournee || '?') + ' du ' + Utilities.formatDate(l.date, FUSEAU, 'dd/MM/yyyy') + ' (' + l.chauffeur + (l.km ? ', ' + l.km + ' km' : '') + ') au planning mais absente de la préfac : à réclamer' });
+        if (!pris[i]) ligneTour(null, l, 'Tournée faite (planning) mais absente de la préfac', 'Préfac : réclamer la tournée à Intermarché', 'urgent');
       });
+      tours.sort(function (a, b) { return a.date.localeCompare(b.date) || String(a.tourneePrefac || a.tourneePlanning).localeCompare(String(b.tourneePrefac || b.tourneePlanning)); });
       var ligne = function (re) { return x.lignes.filter(function (y) { return re.test(cle_(y.designation)); }); };
       var somme = function (a) { return r2(a.reduce(function (t, y) { return t + y.montant; }, 0)); };
       var tf = ligne(/^TERME FIXE(?! NUIT)/), peage = somme(ligne(/^PEAGE/)), regul = somme(ligne(/^REGUL|^DIFFERENCE/));
-      var attendu = (peages[precM] || {})[c] || 0;
-      if (Math.abs(peage - attendu) > 0.05 && (peage || attendu))
-        ecarts.push({ type: 'peage', niveau: 'urgent', texte: 'péages : ' + euros_(peage) + ' sur la préfac, ' + euros_(attendu) + ' remboursables d\'après les relevés de ' + nomMois_(precM) + (peages[precM] ? '' : ' (relevés non déposés)') });
-      var kmP = x.tournees.reduce(function (t, y) { return t + (y.km || 0); }, 0), kmPl = plc.reduce(function (t, l) { return t + (l.km || 0); }, 0);
+      var releves = !!peages[precM], attendu = (peages[precM] || {})[c] || 0;
+      if (peage && !releves) notes.push({ niveau: 'a_prevoir', texte: 'Péages : ' + eur2_(peage) + ' sur la préfac. Déposez les relevés de badge de ' + nomMois_(precM) + ' (carte Péages) pour les vérifier.' });
+      else if (releves && Math.abs(peage - attendu) > 0.05) notes.push({ niveau: 'urgent', texte: 'Péages : ' + eur2_(peage) + ' sur la préfac, ' + eur2_(attendu) + ' remboursables d\'après les relevés de ' + nomMois_(precM) + ' → ' + (peage < attendu ? 'réclamer ' + eur2_(attendu - peage) + ' à Intermarché' : 'vérifier le planning des péages') });
+      else if (releves && peage) notes.push({ niveau: 'ok', texte: 'Péages : ' + eur2_(peage) + ', identiques aux relevés de ' + nomMois_(precM) + '.' });
+      if (regul) notes.push({ niveau: 'info', texte: 'Régularisation sur la préfac : ' + eur2_(regul) + '.' });
       var nums = Object.keys(x.prefacs), facturee = nums.map(function (n) { return factures[n]; }).filter(String);
-      out.push({ contrat: c, societe: x.societe, prefacs: nums.join(', '), facture: facturee.join(', '), tourneesPrefac: x.tournees.length, tourneesPlanning: plc.length,
-        kmPrefac: kmP, kmPlanning: kmPl, termeFixe: tf.map(function (y) { return y.quantite + ' × ' + y.prix; }).join(' + '), peage: peage, peageAttendu: r2(attendu), regul: regul,
-        total: r2(x.total), caPlanning: r2(plc.reduce(function (t, l) { return t + (l.ca || 0); }, 0)), ecarts: ecarts });
-      ecarts.filter(function (e) { return e.type !== 'numero'; }).forEach(function (e) {
-        alertes.push({ niveau: e.niveau, categorie: 'prefacs', domaine: 'Intermarché', objet: c, sujet: 'Préfac ' + c, message: 'Préfac ' + c + ' (' + x.societe + ', ' + lib + ') : ' + e.texte,
-          cle: 'PREFAC|' + M + '|' + c + '|' + e.texte });
+      var aCorriger = tours.filter(function (t) { return t.niveau !== 'ok'; });
+      out.push({ contrat: c, societe: x.societe, prefacs: nums.join(', '), facture: facturee.join(', '), total: r2(x.total), caPlanning: r2(plc.reduce(function (t, l) { return t + (l.ca || 0); }, 0)),
+        termeFixe: tf.map(function (y) { return y.quantite + ' × ' + y.prix + ' €'; }).join(' + '), peage: peage, regul: regul,
+        nbTours: tours.length, nbPlanning: plc.length, nbPrefac: x.tournees.length,
+        corrigerPlanning: aCorriger.filter(function (t) { return /Planning/.test(t.ou); }).length,
+        reclamer: aCorriger.filter(function (t) { return /^Préfac : réclamer/.test(t.ou) || /Préfac : réclamer/.test(t.ou); }).length,
+        tours: tours, notes: notes });
+      aCorriger.filter(function (t) { return t.niveau === 'urgent'; }).forEach(function (t) {
+        alertes.push({ niveau: 'urgent', categorie: 'prefacs', domaine: 'Intermarché', objet: c, sujet: 'Préfac ' + c,
+          message: 'Préfac ' + c + ' (' + x.societe + ', ' + lib + ') : tournée ' + (t.tourneePrefac || t.tourneePlanning || '?') + ' du ' + dateFrTexte_(t.date) + ' — ' + t.probleme + ' → ' + t.ou,
+          cle: 'PREFAC|' + M + '|' + c + '|' + (t.tourneePrefac || t.tourneePlanning) + '|' + t.probleme });
+      });
+      notes.filter(function (n) { return n.niveau === 'urgent'; }).forEach(function (n) {
+        alertes.push({ niveau: 'urgent', categorie: 'prefacs', domaine: 'Intermarché', objet: c, sujet: 'Préfac ' + c, message: 'Préfac ' + c + ' (' + lib + ') : ' + n.texte, cle: 'PREFAC|' + M + '|' + c + '|' + n.texte });
       });
     });
     // contrats du planning sans préfac
     var sans = {};
-    plM.forEach(function (l) { if (l.numContrat && /^\d{6}$/.test(l.numContrat) && !parMois[M][l.numContrat]) (sans[l.numContrat] = sans[l.numContrat] || { n: 0, soc: l.societe, ca: 0 }), sans[l.numContrat].n++, sans[l.numContrat].ca += l.ca || 0; });
+    plM.forEach(function (l) { if (l.numContrat && /^\d{6}$/.test(l.numContrat) && !parMois[M][l.numContrat]) { sans[l.numContrat] = sans[l.numContrat] || { n: 0, soc: l.societe, ca: 0 }; sans[l.numContrat].n++; sans[l.numContrat].ca += l.ca || 0; } });
     Object.keys(sans).sort().forEach(function (c) {
-      out.push({ contrat: c, societe: sans[c].soc, prefacs: '', tourneesPrefac: 0, tourneesPlanning: sans[c].n, caPlanning: r2(sans[c].ca), ecarts: [{ type: 'sansprefac', niveau: 'a_prevoir', texte: 'aucune préfac déposée' }] });
+      out.push({ contrat: c, societe: sans[c].soc, prefacs: '', sansPrefac: true, nbPlanning: sans[c].n, caPlanning: r2(sans[c].ca), tours: [], notes: [] });
     });
     res[M] = out;
   });
