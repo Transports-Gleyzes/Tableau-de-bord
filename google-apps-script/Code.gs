@@ -40,6 +40,8 @@ var FEUILLES = {
              'Derniere_Relance', 'Remarque'],
   HEURES: ['Date', 'Salarié', 'Heures', 'Remarque'],
   CHARGES_MUTUALISEES: ['Poste', 'Société', 'Montant_Mensuel', 'Debut', 'Fin', 'Echeance'],
+  PEAGES: ['Mois', 'Quinzaine', 'Facture_Badge', 'Immatriculation', 'Date_Entree', 'Heure_Entree', 'Gare_Entree', 'Autoroute_Entree',
+           'Date_Sortie', 'Heure_Sortie', 'Gare_Sortie', 'Autoroute_Sortie', 'Societe_Autoroute', 'KM', 'Montant_HT', 'Montant_TTC', 'Contrat', 'Rembourse', 'Depose_Le'],
   BALANCE: ['Societe', 'Du', 'Au', 'Compte', 'Libelle', 'Debit', 'Credit', 'Poste', 'Camion', 'Importe_Le'],
   CORRESPONDANCES: ['Type', 'Sur_la_facture', 'Sur_le_planning', 'Remarque'],
   FACTURES_CLIENTS: ['N_Facture', 'Date_Facture', 'Mois', 'Societe', 'Client', 'Ref_Client', 'Activite', 'Nature', 'Lieu',
@@ -80,6 +82,7 @@ var PARAMETRES_DEFAUT = [
   ['SEUIL_MARGE_PCT', 5, 'Alerte si la marge d\'un camion sur le dernier mois est sous ce % (négatif = urgent)'],
   ['SEUIL_CONSO_L100', 38, 'Alerte si la consommation d\'un camion dépasse ce nombre de L/100 km (90 derniers jours)'],
   ['ID_FACTURE_SCAPED', '', 'Lien du Google Sheet des factures SCAPED (faites hors INFORCE) : un onglet par mois, préparé depuis le planning Carburant'],
+  ['PREFIXE_PEAGES_REMBOURSES', '7531', 'Péages remboursés par Intermarché : contrats commençant par ce numéro (les autres, ex. 7539…, ne le sont pas)'],
   ['NOM_FICHIER_FINANCES', 'FINANCES_EXPORT.csv', 'Nom du fichier déposé dans Google Drive par exporter_finances_csv.py'],
   ['RECAP_HEBDO', 'OUI', 'OUI = un mail récapitulatif complet chaque lundi, même sans nouvelle alerte'],
   ['JOURS_RELANCE', 15, 'Une facture échue est « à relancer » si aucune relance depuis ce nombre de jours'],
@@ -280,6 +283,7 @@ function getDonnees() {
     SEUIL_HAUSSE_CONSO_PCT: nombre_(params.SEUIL_HAUSSE_CONSO_PCT, 15),
     NB_SEMAINES_CONSO: Math.max(1, nombre_(params.NB_SEMAINES_CONSO, 2))
   };
+  try { d.PEAGES = synthesePeages_(ss); } catch (e) { d.PEAGES = []; d.erreurs.push('Péages : ' + e.message); }
   try { d.COMPTA = balances_(ss).map(syntheseBalance_); } catch (e) { d.COMPTA = []; d.erreurs.push('Balance comptable : ' + e.message); }
   try { d.CONTROLE = controleFactures_(ss, minuit_(new Date())).mois; } catch (e) { d.CONTROLE = {}; d.erreurs.push('Contrôle des factures : ' + e.message); }
   d.alertes = calculerAlertes_(ss, new Date());
@@ -1182,6 +1186,199 @@ function genererFactureScaped(mois) {
     avertissements: avert };
 }
 
+// ---------------------------------------------------------------------------
+// Péages Intermarché : relevés de badge (CSV, à la quinzaine) -> contrat de chaque trajet -> planning des péages
+// ---------------------------------------------------------------------------
+var DOSSIER_PEAGES = 'Tableau de bord - Péages Intermarché';
+
+/** Index des tournées Inter : 'IMMAT|AAAA-MM-JJ' -> [n° de contrat…] */
+function tourneesParCamion_(ss) {
+  var idx = {};
+  plannings_(ss).forEach(function (l) {
+    if (l.activite !== 'Inter' || !l.camion) return;
+    var k = plaque_(l.camion) + '|' + Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM-dd'), x = idx[k] = idx[k] || [];
+    var c = l.numContrat || '?';
+    if (x.indexOf(c) < 0) x.push(c);
+  });
+  return idx;
+}
+
+/**
+ * Depuis le site : enregistre un relevé de badge lu dans le navigateur.
+ * r = { facture: 'FR26009960632', lignes: [{ immat, dateEntree, heureEntree, gareEntree, autorouteEntree, dateSortie, heureSortie,
+ *       gareSortie, autorouteSortie, societe, km, ht, ttc }] } (dates AAAA-MM-JJ, seuls les trajets facturés sur ce relevé).
+ * Chaque trajet reçoit le contrat de la tournée Inter du même camion le même jour (planning Inter, colonne CAMION) ;
+ * les camions sans aucune tournée Inter sur le relevé (carburant…) sont écartés. Le planning des péages du mois est regénéré.
+ */
+function deposerPeages(r) {
+  if (!r || !Array.isArray(r.lignes) || !r.lignes.length) throw new Error('Aucun trajet lu dans le relevé');
+  var ss = classeur_(), p = lireParametres_(ss), prefixe = String(p.PREFIXE_PEAGES_REMBOURSES || '7531').trim();
+  var idx = tourneesParCamion_(ss);
+  // Mois et quinzaine du relevé : ceux de la majorité des trajets
+  var compte = {};
+  r.lignes.forEach(function (l) { var d = l.dateSortie || l.dateEntree; if (d) { var k = d.slice(0, 7) + '|' + (+d.slice(8, 10) <= 15 ? 1 : 2); compte[k] = (compte[k] || 0) + 1; } });
+  var maj = Object.keys(compte).sort(function (a, b) { return compte[b] - compte[a]; })[0];
+  if (!maj) throw new Error('Dates illisibles dans le relevé');
+  var mois = maj.split('|')[0], quinz = +maj.split('|')[1];
+  var parImmat = {};
+  r.lignes.forEach(function (l) {
+    var im = plaque_(l.immat), d = l.dateSortie || l.dateEntree, cands = [];
+    [l.dateEntree, d].forEach(function (x) { if (!cands.length && x && idx[im + '|' + x]) cands = idx[im + '|' + x]; });   // jour d'entrée, sinon de sortie
+    l.contrat = cands.join('/'); l.rembourse = cands.some(function (c) { return c.indexOf(prefixe) === 0; });
+    (parImmat[im] = parImmat[im] || []).push(l);
+  });
+  var gardes = Object.keys(parImmat).filter(function (im) { return parImmat[im].some(function (l) { return l.contrat; }); });
+  var ecartes = Object.keys(parImmat).filter(function (im) { return gardes.indexOf(im) < 0; });
+  var maintenant = new Date(), propre = function (x) { return String(x === undefined || x === null ? '' : x).replace(/^[=+\-@]/, "'$&").slice(0, 80); };
+  var lignes = [];
+  gardes.forEach(function (im) {
+    parImmat[im].forEach(function (l) {
+      lignes.push([mois, quinz, propre(r.facture), im, dateDepuisTexte_(l.dateEntree) || '', propre(l.heureEntree), propre(l.gareEntree), propre(l.autorouteEntree),
+        dateDepuisTexte_(l.dateSortie) || '', propre(l.heureSortie), propre(l.gareSortie), propre(l.autorouteSortie), propre(l.societe), nombre_(l.km, ''),
+        nombre_(l.ht, 0), nombre_(l.ttc, 0), l.contrat || '', l.contrat ? (l.rembourse ? 'OUI' : 'NON') : 'À AFFECTER', maintenant]);
+    });
+  });
+  var verrou = LockService.getScriptLock();
+  verrou.waitLock(15000);
+  try {
+    var sh = ss.getSheetByName('PEAGES');
+    if (!sh) { sh = ss.insertSheet('PEAGES'); sh.getRange(1, 1, 1, FEUILLES.PEAGES.length).setValues([FEUILLES.PEAGES]).setFontWeight('bold'); sh.setFrozenRows(1); }
+    var garder = lireTable_(sh).filter(function (x) { return String(x.Facture_Badge) !== String(r.facture); })
+      .map(function (x) { return FEUILLES.PEAGES.map(function (h) { return x[h] === undefined ? '' : x[h]; }); });
+    var tout = garder.concat(lignes);
+    if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(FEUILLES.PEAGES.length, sh.getLastColumn())).clearContent();
+    if (tout.length) sh.getRange(2, 1, tout.length, FEUILLES.PEAGES.length).setValues(tout);
+  } finally {
+    verrou.releaseLock();
+  }
+  var fichier = genererPlanningPeages_(ss, mois);
+  var somme = function (f) { return Math.round(lignes.filter(f).reduce(function (t, l) { return t + l[14]; }, 0) * 100) / 100; };
+  return { mois: mois, quinzaine: quinz, trajets: lignes.length, camions: gardes, ecartes: ecartes,
+    rembourseHT: somme(function (l) { return l[17] === 'OUI'; }), nonRembourseHT: somme(function (l) { return l[17] === 'NON'; }),
+    aAffecter: lignes.filter(function (l) { return l[17] === 'À AFFECTER'; }).map(function (l) { return l[3] + ' ' + Utilities.formatDate(l[8] || l[4], FUSEAU, 'dd/MM'); })
+      .filter(function (v, i, a) { return a.indexOf(v) === i; }),
+    url: fichier.url, nom: fichier.nom };
+}
+
+/** Lignes PEAGES (dates en texte AAAA-MM-JJ). */
+function peages_(ss) {
+  var sh = ss.getSheetByName('PEAGES');
+  return (sh ? lireTable_(sh) : []).map(function (l) {
+    var o = {}; Object.keys(l).forEach(function (k) { o[k] = l[k] instanceof Date ? Utilities.formatDate(l[k], FUSEAU, k.indexOf('Date') === 0 ? 'yyyy-MM-dd' : 'yyyy-MM-dd HH:mm') : l[k]; });
+    o.Mois = moisTexte_(l.Mois) || String(l.Mois); return o;
+  });
+}
+
+/**
+ * Crée (ou remplace) le Google Sheet « PEAGES <MOIS> <ANNÉE> » dans le dossier Drive des péages : un onglet par quinzaine,
+ * mêmes colonnes que le relevé, trajets groupés par camion avec « Total badge », contrat de chaque trajet (cases fusionnées
+ * par tournée), montants vidés pour les contrats non remboursés. C'est le fichier à envoyer à Intermarché avant le 15.
+ */
+function genererPlanningPeages_(ss, mois) {
+  var lignes = peages_(ss).filter(function (l) { return l.Mois === mois; });
+  var nom = 'PEAGES ' + MOIS_MAJ[+mois.slice(5, 7) - 1] + ' ' + mois.slice(0, 4);
+  var it = DriveApp.getFoldersByName(DOSSIER_PEAGES), dossier = it.hasNext() ? it.next() : DriveApp.createFolder(DOSSIER_PEAGES);
+  var ancien = dossier.getFilesByName(nom);
+  var ext = ancien.hasNext() ? SpreadsheetApp.open(ancien.next()) : null;
+  if (!ext) { ext = SpreadsheetApp.create(nom); DriveApp.getFileById(ext.getId()).moveTo(dossier); }
+  var entetes = ['Type de ligne/Line Type', 'Immatriculation/Plate Number', 'Date d\'entree/Entry date', 'Heure d\'entree/Entry time', 'Gare/Lieu d\'entree/Name of Entry',
+    'Lieu d\'entré/Name of Entry', 'Date de sortie/Exit date', 'Heure de sortie/Exit time', 'Gare/Lieu de sortie/Name of Exit', 'Autoroute de sortie/Exit motorway',
+    'Societe circulee/Toll company', 'KM', 'Montant brut de peage HT/Excluding VAT and discount toll amount', 'Montant brut de peage TTC/Including VAT and without discount toll amount', 'CONTRAT '];
+  var onglets = [];
+  [1, 2].forEach(function (q) {
+    var lq = lignes.filter(function (l) { return +l.Quinzaine === q; });
+    if (!lq.length) return;
+    var titre = 'PEAGES ' + (q === 1 ? 'PREMIERE' : 'DEUXIEME') + ' QUINZAINE ' + MOIS_MAJ[+mois.slice(5, 7) - 1];
+    var sh = ext.getSheetByName(titre) || ext.insertSheet(titre);
+    sh.clear(); sh.getRange(1, 1, Math.max(1, sh.getMaxRows()), 15).breakApart();
+    var v = [entetes], fusions = [], totaux = [], gris = [];
+    var ordre = []; lq.forEach(function (l) { if (ordre.indexOf(l.Immatriculation) < 0) ordre.push(l.Immatriculation); });
+    ordre.forEach(function (im) {
+      var li = lq.filter(function (l) { return l.Immatriculation === im; }).sort(function (a, b) {
+        return String(a.Date_Sortie || a.Date_Entree).localeCompare(String(b.Date_Sortie || b.Date_Entree)) || String(a.Heure_Sortie).localeCompare(String(b.Heure_Sortie));
+      });
+      var debut = v.length + 1, bloc = null;
+      li.forEach(function (l) {
+        var paye = l.Rembourse !== 'NON', r = v.length + 1, c = String(l.Contrat || '');
+        v.push(['Trajet brut facturé/without discounts currently invoiced', im, l.Date_Entree ? dateDepuisTexte_(l.Date_Entree) : '', l.Heure_Entree, l.Gare_Entree || 'Entrée/sortie ouverte',
+          l.Autoroute_Entree, l.Date_Sortie ? dateDepuisTexte_(l.Date_Sortie) : '', l.Heure_Sortie, l.Gare_Sortie, l.Autoroute_Sortie, l.Societe_Autoroute, l.KM,
+          paye ? l.Montant_HT : '', paye ? l.Montant_TTC : '', c]);
+        if (!c) gris.push(r);
+        var jour = String(l.Date_Sortie || l.Date_Entree);
+        if (bloc && bloc.c === c && bloc.j === jour) bloc.fin = r; else { if (bloc && bloc.fin > bloc.debut && bloc.c) fusions.push(bloc); bloc = { c: c, j: jour, debut: r, fin: r }; }
+      });
+      if (bloc && bloc.fin > bloc.debut && bloc.c) fusions.push(bloc);
+      var fin = v.length;
+      v.push(['Total badge', im, '', '', '', '', '', '', '', '', '', '', '=SUM(M' + debut + ':M' + fin + ')', '=SUM(N' + debut + ':N' + fin + ')', '']);
+      totaux.push(v.length);
+    });
+    sh.getRange(1, 1, v.length, 15).setValues(v);
+    sh.getRange(1, 1, 1, 15).setFontWeight('bold').setWrap(true).setBackground('#e8eef7');
+    sh.getRange(2, 3, v.length - 1, 1).setNumberFormat('dd/MM/yyyy'); sh.getRange(2, 7, v.length - 1, 1).setNumberFormat('dd/MM/yyyy');
+    sh.getRange(2, 13, v.length - 1, 2).setNumberFormat('#,##0.00');
+    totaux.forEach(function (r) { sh.getRange(r, 1, 1, 15).setFontWeight('bold').setBackground('#f3f3f3'); });
+    gris.forEach(function (r) { sh.getRange(r, 15).setBackground('#fde2e1'); });   // contrat à compléter à la main
+    fusions.forEach(function (b) { sh.getRange(b.debut, 15, b.fin - b.debut + 1, 1).merge().setVerticalAlignment('middle').setHorizontalAlignment('center'); });
+    sh.setFrozenRows(1);
+    onglets.push(titre);
+  });
+  ext.getSheets().forEach(function (sh) { if (onglets.indexOf(sh.getName()) < 0 && ext.getSheets().length > 1) ext.deleteSheet(sh); });
+  PropertiesService.getScriptProperties().setProperty('PEAGES_FICHIER_' + mois, ext.getUrl());
+  return { url: ext.getUrl(), nom: nom };
+}
+
+/** Depuis le site : marque le planning des péages d'un mois comme envoyé à Intermarché (ou annule). */
+function marquerPeagesEnvoyes(mois, envoye) {
+  var pr = PropertiesService.getScriptProperties(), k = 'PEAGES_ENVOYE_' + mois;
+  if (envoye) pr.setProperty(k, Utilities.formatDate(new Date(), FUSEAU, 'yyyy-MM-dd')); else pr.deleteProperty(k);
+  return true;
+}
+
+/** Synthèse pour le site : par mois et quinzaine, remboursé / non remboursé / à affecter, par contrat ; lien du fichier ; envoi. */
+function synthesePeages_(ss) {
+  var par = {}, pr = PropertiesService.getScriptProperties().getProperties();
+  peages_(ss).forEach(function (l) {
+    var m = par[l.Mois] = par[l.Mois] || { mois: l.Mois, quinzaines: {}, contrats: {}, tousContrats: {}, camions: {}, rembourse: 0, nonRembourse: 0, aAffecter: [], envoye: pr['PEAGES_ENVOYE_' + l.Mois] || '', url: pr['PEAGES_FICHIER_' + l.Mois] || '' };
+    var ht = nombre_(l.Montant_HT, 0);
+    m.quinzaines[l.Quinzaine] = (m.quinzaines[l.Quinzaine] || 0) + 1;
+    m.camions[l.Immatriculation] = 1;
+    if (l.Contrat) m.tousContrats[l.Contrat] = 1;
+    if (l.Rembourse === 'OUI') { m.rembourse += ht; m.contrats[l.Contrat] = (m.contrats[l.Contrat] || 0) + ht; }
+    else if (l.Rembourse === 'NON') m.nonRembourse += ht;
+    else m.aAffecter.push(l.Immatriculation + ' ' + String(l.Date_Sortie || l.Date_Entree).slice(8, 10) + '/' + String(l.Date_Sortie || l.Date_Entree).slice(5, 7));
+  });
+  return Object.keys(par).sort().reverse().map(function (k) {
+    var m = par[k], r2 = function (x) { return Math.round(x * 100) / 100; };
+    m.rembourse = r2(m.rembourse); m.nonRembourse = r2(m.nonRembourse);
+    Object.keys(m.contrats).forEach(function (c) { m.contrats[c] = r2(m.contrats[c]); });
+    m.aAffecter = m.aAffecter.filter(function (v, i, a) { return a.indexOf(v) === i; });
+    m.camions = Object.keys(m.camions);
+    return m;
+  });
+}
+
+/** Alertes : relevés de péages du mois précédent non déposés (à partir du 5), planning des péages non envoyé (à partir du 10). */
+function alertesPeages_(ss, jour0) {
+  var al = [], prec = Utilities.formatDate(new Date(jour0.getFullYear(), jour0.getMonth() - 1, 1), FUSEAU, 'yyyy-MM'), j = jour0.getDate();
+  if (!String(lireParametres_(ss).ID_PLANNING_INTER || '').trim()) return al;
+  var m = synthesePeages_(ss).filter(function (x) { return x.mois === prec; })[0], lib = nomMois_(prec);
+  if (j >= 5 && j <= 20 && (!m || Object.keys(m.quinzaines).length < 2))
+    al.push({ niveau: j >= 10 ? 'urgent' : 'a_prevoir', categorie: 'peages', domaine: 'Péages', objet: 'Intermarché', sujet: 'Relevés de péages',
+      message: 'Relevés de badge de ' + lib + ' à déposer (' + (m ? '1 quinzaine sur 2' : 'aucun') + ') pour préparer le planning des péages Intermarché', cle: 'PEAGES_RELEVES|' + prec + '|' + (m ? 1 : 0) });
+  if (m && !m.envoye && j >= 10 && j <= 20)
+    al.push({ niveau: j >= 13 ? 'depasse' : 'urgent', categorie: 'peages', domaine: 'Péages', objet: 'Intermarché', sujet: 'Planning des péages',
+      message: 'Planning des péages de ' + lib + ' à envoyer à Intermarché avant le 15 (' + euros_(m.rembourse) + ' HT remboursables)', cle: 'PEAGES_ENVOI|' + prec });
+  var bizarres = m ? Object.keys(m.tousContrats).filter(function (c) { return c.split('/').some(function (x) { return !/^753\d{3}$/.test(x); }); }) : [];
+  if (bizarres.length)
+    al.push({ niveau: 'urgent', categorie: 'peages', domaine: 'Péages', objet: 'Intermarché', sujet: 'Contrat inhabituel',
+      message: 'Péages de ' + lib + ' : n° de contrat inhabituel au planning Inter (' + bizarres.join(', ') + ') — faute de frappe ? Les péages ne sont remboursés que pour les contrats ' + (lireParametres_(ss).PREFIXE_PEAGES_REMBOURSES || '7531') + '…',
+      cle: 'PEAGES_CONTRAT|' + prec + '|' + bizarres.join(',') });
+  if (m && m.aAffecter.length)
+    al.push({ niveau: 'a_prevoir', categorie: 'peages', domaine: 'Péages', objet: 'Intermarché', sujet: 'Péages sans tournée',
+      message: 'Péages de ' + lib + ' sans tournée Intermarché au planning (camion / jour) : ' + m.aAffecter.slice(0, 8).join(', ') + (m.aAffecter.length > 8 ? '…' : ''), cle: 'PEAGES_AFFECT|' + prec + '|' + m.aAffecter.length });
+  return al;
+}
+
 function calculerAlertes_(ss, aujourdhui) {
   var p = lireParametres_(ss);
   var preavis = nombre_(p.JOURS_PREAVIS, 30), urgent = nombre_(p.JOURS_URGENT, 7);
@@ -1374,6 +1571,7 @@ function calculerAlertes_(ss, aujourdhui) {
       Math.max(1, nombre_(p.NB_SEMAINES_CONSO, 2))));
   } catch (e) { console.warn('Litrages : ' + e); }
 
+  try { alertes = alertes.concat(alertesPeages_(ss, jour0)); } catch (e) { console.warn('Péages : ' + e); }
   // 9. Comptabilité : points anormaux de la dernière balance de chaque société
   try {
     balances_(ss).forEach(function (b) {
@@ -1726,6 +1924,7 @@ function plannings_(ss) {
         client: col(function (h) { return h === 'CLIENT'; }),
         lieu: col(function (h) { return h === 'LIEU DE LIVRAISON' || h === 'LIVRAISON'; }),
         contrat: col(function (h) { return h.indexOf('CONTRAT MANQUANT') === 0; }),
+        numContrat: col(function (h) { return /^N\W{0,3}\s*CONTRAT$/.test(h); }), tournee: col(function (h) { return /^N\W{0,3}\s*TOURNEE$/.test(h); }),
         camion: col(function (h) { return /^(CAMION|VEHICULE|IMMAT|TRACTEUR)/.test(h); }),
         attente: col(function (h) { return h.indexOf('HEURES ATTENTE') === 0; }),
         m3: col(function (h) { return h === 'TOTAL'; }), prix: col(function (h) { return h === 'PRIX'; }),
@@ -1750,6 +1949,7 @@ function plannings_(ss) {
           chauffeur: chauffeur, client: String(val(l, c.client) || '').trim(), lieu: String(val(l, c.lieu) || '').trim(),
           ca: ca, km: nombre_(val(l, c.km), null), litres: nombre_(val(l, c.litres), null),
           attente: nombre_(val(l, c.attente), null), contratManquant: String(val(l, c.contrat) || '').trim(),
+          numContrat: String(val(l, c.numContrat) || '').replace(/\.0+$/, '').trim(), tournee: String(val(l, c.tournee) || '').replace(/\.0+$/, '').trim(),
           m3: nombre_(val(l, c.m3), null), prix: nombre_(val(l, c.prix), null), lvn: String(val(l, c.lvn) || '').replace(/\.0+$/, '').trim(),
           termeFixe: nombre_(val(l, c.termeFixe), null),
           dd: l.some(function (x) { return cle_(x) === 'DD'; }),   // double dépotage noté « DD » (colonne HEURES ATTENTES le plus souvent)
