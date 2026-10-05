@@ -348,7 +348,7 @@ button.petit { padding: 2px 8px; font-size: 12px; }
   <!-- CONTRÔLE DES FACTURES CLIENTS (PDF INFORCE) -->
   <section id="facturation" hidden>
     <div class="carte">
-      <h2>Déposer des factures (PDF INFORCE)</h2>
+      <h2>Déposer des factures (PDF INFORCE) ou des préfactures Intermarché</h2>
       <p class="note">Glissez ici un ou plusieurs PDF de factures clients. Le site les lit, les range dans Google Drive
         (dossier « Tableau de bord - Factures clients ») et les compare aux plannings. Une facture redéposée remplace l'ancienne.</p>
       <div class="depot" id="zoneDepot">📄 Glissez les PDF ici, ou cliquez pour les choisir
@@ -378,6 +378,16 @@ button.petit { padding: 2px 8px; font-size: 12px; }
     </div>
     <div class="barre"><label for="moisFact">Mois facturé</label><select id="moisFact"></select><span class="note" id="noteFact"></span></div>
     <div class="tuiles" id="tuilesFact2"></div>
+    <div class="carte inter">
+      <h2><span class="pastille-act" style="background:var(--s1)"></span>Préfactures Intermarché</h2>
+      <div class="depot" id="zonePrefacs">📄 Glissez ici les préfactures Intermarché (PDF « proforma »), ou cliquez pour les choisir
+        <input type="file" id="choixPrefacs" accept="application/pdf" multiple hidden></div>
+      <div id="listePrefacs"></div>
+      <p class="note">Chaque contrat est comparé au planning Inter (tournées, km)
+        et sa ligne PEAGE aux péages remboursables du mois précédent (relevés de badge). « Facturée » : facture INFORCE déposée qui reprend le n° de préfac.</p>
+      <div class="tableau"><table id="tabPrefacs"></table></div>
+      <div id="detailPrefacs"></div>
+    </div>
     <div class="carte carbu">
       <h2><span class="pastille-act" style="background:var(--s2)"></span>Contrôle Carburant</h2>
       <p class="note">Chaque client du planning comparé à sa facture : m³, prix au m³, livraisons (LVN). Client reconnu par le lieu de livraison et les m³.</p>
@@ -387,13 +397,6 @@ button.petit { padding: 2px 8px; font-size: 12px; }
       <h2><span class="pastille-act" style="background:var(--s1)"></span>Contrôle Inter (ITM)</h2>
       <p class="note">Nombre de tournées par terme fixe (286 €, 330 €, 540 €…) au planning et sur les factures ; montants pour information (la préfacture ITM fait foi).</p>
       <div class="tableau"><table id="tabCtrlInter"></table></div>
-    </div>
-    <div class="carte inter">
-      <h2><span class="pastille-act" style="background:var(--s1)"></span>Préfactures Intermarché</h2>
-      <p class="note">Déposez les préfacs (PDF « proforma ») dans la zone ci-dessus, avec les factures. Chaque contrat est comparé au planning Inter (tournées, km)
-        et sa ligne PEAGE aux péages remboursables du mois précédent (relevés de badge). « Facturée » : facture INFORCE déposée qui reprend le n° de préfac.</p>
-      <div class="tableau"><table id="tabPrefacs"></table></div>
-      <div id="detailPrefacs"></div>
     </div>
     <div class="grille">
       <div class="carte">
@@ -1529,15 +1532,16 @@ function appelServeur(fonction) {
     r[fonction].apply(r, args);
   });
 }
-var enAttenteVerif = {};   // factures lues mais à vérifier avant enregistrement (scan, information manquante)
+var enAttenteVerif = {}, listeDepotCible = 'listeDepot';   // factures lues mais à vérifier avant enregistrement (scan, information manquante)
 function ligneDepot(id, nom) {
   var d = document.createElement('div'); d.className = 'fichier'; d.id = 'dep-' + id;
   d.innerHTML = '<span class="nom">' + txt(nom) + '</span><span class="msg">Lecture…</span>';
-  document.getElementById('listeDepot').prepend(d);
+  document.getElementById(listeDepotCible).prepend(d);
   return d;
 }
 function etatDepot(el, html, classe) { var m = el.querySelector('.msg'); m.className = 'msg ' + (classe || ''); m.innerHTML = html; }
-function traiterFichiers(fichiers) {
+function traiterFichiers(fichiers, cible) {
+  listeDepotCible = cible || 'listeDepot';
   var liste = Array.prototype.slice.call(fichiers).filter(function (f) { return /\.pdf$/i.test(f.name) || f.type === 'application/pdf'; });
   var suite = Promise.resolve();
   liste.forEach(function (fichier, k) {
@@ -1674,6 +1678,14 @@ function traiterPeages(fichiers) {
   });
   suite.then(function () { charger(); });
 }
+(function () {
+  var zone = document.getElementById('zonePrefacs'), choix = document.getElementById('choixPrefacs');
+  zone.addEventListener('click', function (e) { if (e.target !== choix) choix.click(); });
+  choix.addEventListener('change', function () { traiterFichiers(choix.files, 'listePrefacs'); choix.value = ''; });
+  ['dragenter', 'dragover'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.add('survol'); }); });
+  ['dragleave', 'drop'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.remove('survol'); }); });
+  zone.addEventListener('drop', function (e) { traiterFichiers(e.dataTransfer.files, 'listePrefacs'); });
+})();
 (function () {
   var zone = document.getElementById('zonePeages'), choix = document.getElementById('choixPeages');
   zone.addEventListener('click', function (e) { if (e.target !== choix) choix.click(); });
