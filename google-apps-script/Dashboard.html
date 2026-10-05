@@ -359,11 +359,14 @@ button.petit { padding: 2px 8px; font-size: 12px; }
       <h2>Péages Intermarché</h2>
       <p class="note">Déposez les relevés de badge de chaque quinzaine (fichiers CSV « FR… »). Chaque trajet reçoit le contrat de la tournée Inter du même camion le même jour
         (planning Inter, colonne CAMION) : contrats 7531… remboursés, 7539… non remboursés (montants vidés). Les camions sans tournée Intermarché sont écartés.
-        Le fichier « PEAGES &lt;MOIS&gt; » à envoyer à Intermarché avant le 15 est créé dans Google Drive (dossier « Tableau de bord - Péages Intermarché »).</p>
+        Le planning des péages s'affiche ci-dessous ; « Télécharger » donne le fichier Excel « PEAGES &lt;MOIS&gt; » à envoyer à Intermarché avant le 15.</p>
       <div class="depot" id="zonePeages">🛣️ Glissez les relevés CSV ici, ou cliquez pour les choisir
         <input type="file" id="choixPeages" accept=".csv,text/csv" multiple hidden></div>
       <div id="listePeages"></div>
       <div class="tableau" style="margin-top:10px"><table id="tabPeages" class="serre"></table></div>
+      <div class="barre" style="margin-top:12px"><label for="moisPeages">Planning des péages</label><select id="moisPeages"></select>
+        <button id="dlPeages" class="primaire">⬇ Télécharger le fichier Excel</button><span class="msg" id="msgPeages"></span></div>
+      <div id="planningPeages"></div>
     </div>
     <div class="carte">
       <h2>Facture SCAPED (hors INFORCE)</h2>
@@ -1665,7 +1668,7 @@ function traiterPeages(fichiers) {
           fmtEur2.format(x.rembourseHT) + ' HT remboursables' + (x.nonRembourseHT ? ', ' + fmtEur2.format(x.nonRembourseHT) + ' non remboursés' : '') +
           (x.ecartes.length ? ' · écartés (pas de tournée Intermarché) : ' + txt(x.ecartes.join(', ')) : '') +
           (x.aAffecter.length ? '<div class="note">⚠ Sans tournée Intermarché au planning ce jour-là (contrat à compléter en rouge dans le fichier) : ' + txt(x.aAffecter.join(', ')) + '</div>' : '') +
-          ' — <a href="' + txt(x.url) + '" target="_blank" rel="noopener">ouvrir ' + txt(x.nom) + '</a>', 'ok');
+          ' — voir le planning des péages ci-dessous', 'ok');
       }).catch(function (e) { etatDepot(d, '⚠ ' + txt(e.message), 'err'); });
     });
   });
@@ -1682,19 +1685,113 @@ function traiterPeages(fichiers) {
 function rendrePeages() {
   var liste = (D.PEAGES || []).slice(0, 6);
   document.getElementById('tabPeages').innerHTML = !liste.length ? '' :
-    '<thead><tr><th>Mois</th><th>Quinzaines</th><th>Camions</th><th class="n">Remboursés HT</th><th>Par contrat</th><th class="n">Non remboursés</th><th>Fichier</th><th>Envoi Intermarché</th></tr></thead><tbody>' +
+    '<thead><tr><th>Mois</th><th>Quinzaines</th><th>Camions</th><th class="n">Remboursés HT</th><th>Par contrat</th><th class="n">Non remboursés</th><th>Envoi Intermarché</th></tr></thead><tbody>' +
     liste.map(function (m) {
       var q = Object.keys(m.quinzaines).sort().map(function (k) { return k === '1' ? '1re' : '2e'; }).join(' + ');
       return '<tr><td>' + txt(nomMois(m.mois)) + '</td><td>' + q + (Object.keys(m.quinzaines).length < 2 ? ' <span class="note">(incomplet)</span>' : '') + '</td><td>' + txt(m.camions.join(', ')) +
         '</td><td class="n">' + eur(m.rembourse) + '</td><td class="note">' + Object.keys(m.contrats).sort().map(function (c) { return txt(c) + ' : ' + fmtEur2.format(m.contrats[c]); }).join('<br>') +
         (m.aAffecter.length ? '<br>⚠ ' + m.aAffecter.length + ' jour(s) sans tournée' : '') + '</td><td class="n">' + eur(m.nonRembourse) +
-        '</td><td>' + (m.url ? '<a href="' + txt(m.url) + '" target="_blank" rel="noopener">PEAGES ' + txt(nomMois(m.mois)) + '</a>' : '') +
         '</td><td>' + (m.envoye ? '✓ envoyé le ' + dateFr(m.envoye) + ' <button class="suppr" data-penv="' + m.mois + '" data-v="0" title="Annuler">✕</button>'
           : '<button data-penv="' + m.mois + '" data-v="1">Marquer envoyé</button>') + '</td></tr>';
     }).join('') + '</tbody>';
   document.querySelectorAll('[data-penv]').forEach(function (b) {
     b.onclick = function () { appelServeur('marquerPeagesEnvoyes', b.dataset.penv, b.dataset.v === '1').then(function () { charger(); }).catch(function (e) { alert(e.message); }); };
   });
+  var sel = document.getElementById('moisPeages'), ancien = sel.value, moisDispo = Object.keys(D.PEAGES_DETAIL || {}).sort().reverse();
+  sel.innerHTML = moisDispo.map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
+  if (moisDispo.indexOf(ancien) >= 0) sel.value = ancien;
+  sel.onchange = rendrePlanningPeages;
+  document.getElementById('dlPeages').disabled = !moisDispo.length;
+  document.getElementById('dlPeages').onclick = function () { telechargerPeages(sel.value); };
+  rendrePlanningPeages();
+}
+var COLS_PEAGES = ['Type de ligne/Line Type', 'Immatriculation/Plate Number', 'Date d\'entree/Entry date', 'Heure d\'entree/Entry time', 'Gare/Lieu d\'entree/Name of Entry',
+  'Lieu d\'entré/Name of Entry', 'Date de sortie/Exit date', 'Heure de sortie/Exit time', 'Gare/Lieu de sortie/Name of Exit', 'Autoroute de sortie/Exit motorway',
+  'Societe circulee/Toll company', 'KM', 'Montant brut de peage HT/Excluding VAT and discount toll amount', 'Montant brut de peage TTC/Including VAT and without discount toll amount', 'CONTRAT '];
+/** Trajets d'un mois groupés par quinzaine puis par camion, avec les blocs « même jour, même contrat ». */
+function planPeages(M) {
+  var lignes = (D.PEAGES_DETAIL || {})[M] || [], res = [];
+  [1, 2].forEach(function (q) {
+    var lq = lignes.filter(function (l) { return l[0] === q; }); if (!lq.length) return;
+    var ordre = []; lq.forEach(function (l) { if (ordre.indexOf(l[1]) < 0) ordre.push(l[1]); });
+    res.push({ q: q, camions: ordre.map(function (im) {
+      var li = lq.filter(function (l) { return l[1] === im; }).sort(function (a, b) { return String(a[6] || a[2]).localeCompare(String(b[6] || b[2])) || String(a[7]).localeCompare(String(b[7])); });
+      var blocs = [];
+      li.forEach(function (l) { var j = l[6] || l[2], b = blocs[blocs.length - 1]; if (b && b.jour === j && b.contrat === l[14]) b.lignes.push(l); else blocs.push({ jour: j, contrat: l[14], rembourse: l[15], lignes: [l] }); });
+      return { immat: im, blocs: blocs, ht: li.reduce(function (t, l) { return t + (l[15] === 'NON' ? 0 : l[12]); }, 0), ttc: li.reduce(function (t, l) { return t + (l[15] === 'NON' ? 0 : l[13]); }, 0) };
+    }) });
+  });
+  return res;
+}
+function rendrePlanningPeages() {
+  var M = document.getElementById('moisPeages').value, plan = planPeages(M), z = document.getElementById('planningPeages');
+  if (!plan.length) { z.innerHTML = ''; return; }
+  z.innerHTML = plan.map(function (p) {
+    return '<details' + (plan.length === 1 ? ' open' : '') + ' style="margin-top:8px"><summary><b>' + (p.q === 1 ? 'Première' : 'Deuxième') + ' quinzaine</b> · ' +
+      p.camions.map(function (c) { return txt(c.immat) + ' ' + fmtEur2.format(c.ht); }).join(' · ') + '</summary>' +
+      '<div class="tableau"><table class="serre"><thead><tr><th>Camion</th><th>Date</th><th>Entrée</th><th>Sortie</th><th class="n">KM</th><th class="n">HT</th><th class="n">TTC</th><th>Contrat</th></tr></thead><tbody>' +
+      p.camions.map(function (c) {
+        return c.blocs.map(function (b) {
+          return b.lignes.map(function (l, k) {
+            var non = l[15] === 'NON', style = non ? ' style="color:var(--text-2);text-decoration:line-through"' : '';
+            var cellC = k ? '' : '<td rowspan="' + b.lignes.length + '" style="vertical-align:middle;' + (!b.contrat ? 'background:var(--neg-bg,#fde2e1)' : '') + '">' +
+              (b.contrat ? txt(b.contrat) + (non ? ' <span class="note">non remboursé</span>' : '') : '') +
+              ' <button class="petit" data-aff="' + txt(c.immat) + '|' + txt(b.jour) + '|' + txt(b.contrat) + '" title="Changer le contrat">✎</button></td>';
+            return '<tr><td>' + txt(c.immat) + '</td><td>' + dateFr(l[6] || l[2]) + ' ' + txt(String(l[7] || '').slice(0, 5)) + '</td><td>' + txt(l[4] || 'Entrée/sortie ouverte') +
+              '</td><td>' + txt(l[8]) + '</td><td class="n">' + (l[11] === '' ? '' : fmtNb.format(l[11])) + '</td><td class="n"' + style + '>' + fmtEur2.format(l[12]) +
+              '</td><td class="n"' + style + '>' + fmtEur2.format(l[13]) + '</td>' + cellC + '</tr>';
+          }).join('');
+        }).join('') + '<tr><td colspan="5"><b>Total badge ' + txt(c.immat) + '</b></td><td class="n"><b>' + fmtEur2.format(c.ht) + '</b></td><td class="n"><b>' + fmtEur2.format(c.ttc) + '</b></td><td></td></tr>';
+      }).join('') + '</tbody></table></div></details>';
+  }).join('');
+  z.querySelectorAll('[data-aff]').forEach(function (b) {
+    b.onclick = function () {
+      var p = b.dataset.aff.split('|'), c = prompt('Contrat de ' + p[0] + ' le ' + dateFr(p[1]) + ' (ex. 753131, ou 753925/753927) :', p[2] || '');
+      if (c === null) return;
+      appelServeur('affecterPeages', M, p[0], p[1], c.trim()).then(function () { charger(); }).catch(function (e) { alert(e.message); });
+    };
+  });
+}
+var xlsxPret = null;
+function chargerXlsx() {
+  if (window.XLSX) return Promise.resolve();
+  if (!xlsxPret) xlsxPret = new Promise(function (ok, ko) {
+    var sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    sc.onload = ok; sc.onerror = function () { xlsxPret = null; ko(new Error('Impossible de charger le module Excel')); }; document.head.appendChild(sc);
+  });
+  return xlsxPret;
+}
+/** Fichier Excel « PEAGES <MOIS> <ANNÉE>.xlsx » : un onglet par quinzaine, mêmes colonnes que le relevé, total par badge, contrat fusionné par tournée. */
+function telechargerPeages(M) {
+  var msg = document.getElementById('msgPeages'); msg.textContent = 'Préparation…';
+  chargerXlsx().then(function () {
+    var nomM = ['JANVIER', 'FEVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN', 'JUILLET', 'AOUT', 'SEPTEMBRE', 'OCTOBRE', 'NOVEMBRE', 'DECEMBRE'][+M.slice(5, 7) - 1], wb = XLSX.utils.book_new();
+    planPeages(M).forEach(function (p) {
+      var aoa = [COLS_PEAGES], merges = [];
+      var d = function (iso) { if (!iso) return ''; var x = String(iso).split('-'); return new Date(Date.UTC(+x[0], +x[1] - 1, +x[2])); };
+      p.camions.forEach(function (c) {
+        var debut = aoa.length + 1;
+        c.blocs.forEach(function (b) {
+          var r0 = aoa.length;
+          b.lignes.forEach(function (l, k) {
+            var non = l[15] === 'NON';
+            aoa.push(['Trajet brut facturé/without discounts currently invoiced', c.immat, d(l[2]), l[3], l[4] || 'Entrée/sortie ouverte', l[5], d(l[6]), l[7], l[8], l[9], l[10], l[11],
+              non ? '' : l[12], non ? '' : l[13], k ? '' : (/^\d+$/.test(b.contrat) ? +b.contrat : b.contrat)]);
+          });
+          if (b.lignes.length > 1) merges.push({ s: { r: r0, c: 14 }, e: { r: r0 + b.lignes.length - 1, c: 14 } });
+        });
+        var fin = aoa.length;
+        aoa.push(['Total badge', c.immat, '', '', '', '', '', '', '', '', '', '', { f: 'SUM(M' + debut + ':M' + fin + ')', v: Math.round(c.ht * 100) / 100 },
+          { f: 'SUM(N' + debut + ':N' + fin + ')', v: Math.round(c.ttc * 100) / 100 }, '']);
+      });
+      var ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true, dateNF: 'dd/mm/yyyy' });
+      ws['!merges'] = merges;
+      ws['!cols'] = [36, 12, 11, 9, 22, 8, 11, 9, 22, 8, 10, 7, 12, 12, 12].map(function (w) { return { wch: w }; });
+      XLSX.utils.book_append_sheet(wb, ws, ('PEAGES ' + (p.q === 1 ? 'PREMIERE' : 'DEUXIEME') + ' QUINZAINE ' + nomM).slice(0, 31));
+    });
+    XLSX.writeFile(wb, 'PEAGES ' + nomM + ' ' + M.slice(0, 4) + '.xlsx');
+    msg.textContent = '';
+  }).catch(function (e) { msg.textContent = '⚠ ' + e.message; });
 }
 function rendreScaped() {
   var sel = document.getElementById('moisScaped'), ancien = sel.value, j = new Date(), liste = [];
