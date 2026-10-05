@@ -40,6 +40,8 @@ var FEUILLES = {
              'Derniere_Relance', 'Remarque'],
   HEURES: ['Date', 'Salarié', 'Heures', 'Remarque'],
   CHARGES_MUTUALISEES: ['Poste', 'Société', 'Montant_Mensuel', 'Debut', 'Fin', 'Echeance'],
+  PREFACTURES: ['N_Prefac', 'Date', 'Mois', 'Contrat', 'Societe', 'Type', 'Designation', 'Quantite', 'Unite', 'Prix_Unitaire', 'Montant_HT',
+                'Date_Tournee', 'Tournee', 'KM', 'Livraisons', 'Total_HT', 'Depose_Le'],
   PEAGES: ['Mois', 'Quinzaine', 'Facture_Badge', 'Immatriculation', 'Date_Entree', 'Heure_Entree', 'Gare_Entree', 'Autoroute_Entree',
            'Date_Sortie', 'Heure_Sortie', 'Gare_Sortie', 'Autoroute_Sortie', 'Societe_Autoroute', 'KM', 'Montant_HT', 'Montant_TTC', 'Contrat', 'Rembourse', 'Depose_Le'],
   BALANCE: ['Societe', 'Du', 'Au', 'Compte', 'Libelle', 'Debit', 'Credit', 'Poste', 'Camion', 'Importe_Le'],
@@ -283,6 +285,7 @@ function getDonnees() {
     SEUIL_HAUSSE_CONSO_PCT: nombre_(params.SEUIL_HAUSSE_CONSO_PCT, 15),
     NB_SEMAINES_CONSO: Math.max(1, nombre_(params.NB_SEMAINES_CONSO, 2))
   };
+  try { d.PREFACS = controlePrefacs_(ss, minuit_(new Date())).mois; } catch (e) { d.PREFACS = {}; d.erreurs.push('Préfacs Intermarché : ' + e.message); }
   try { d.PEAGES = synthesePeages_(ss); } catch (e) { d.PEAGES = []; d.erreurs.push('Péages : ' + e.message); }
   try { d.COMPTA = balances_(ss).map(syntheseBalance_); } catch (e) { d.COMPTA = []; d.erreurs.push('Balance comptable : ' + e.message); }
   try { d.CONTROLE = controleFactures_(ss, minuit_(new Date())).mois; } catch (e) { d.CONTROLE = {}; d.erreurs.push('Contrôle des factures : ' + e.message); }
@@ -1379,6 +1382,126 @@ function alertesPeages_(ss, jour0) {
   return al;
 }
 
+// ---------------------------------------------------------------------------
+// Préfactures Intermarché (proformas ENTA) : dépôt, comparaison au planning Inter et aux péages du mois précédent
+// ---------------------------------------------------------------------------
+/**
+ * Depuis le site : enregistre une préfac lue dans le navigateur.
+ * pf = { numero, date (AAAA-MM-JJ), contrat, societe, totalHT, lignes: [{ designation, quantite, unite, prix, montant }],
+ *        tournees: [{ date (AAAA-MM-JJ), tournee, km, livraisons }] }. Une préfac redéposée remplace l'ancienne.
+ */
+function deposerPrefac(pf) {
+  if (!pf || !/^\d{6,}$/.test(String(pf.numero || ''))) throw new Error('Numéro de préfacture illisible');
+  if (!/^\d{6}$/.test(String(pf.contrat || ''))) throw new Error('N° de contrat illisible');
+  var compte = {};
+  (pf.tournees || []).forEach(function (t) { var m = String(t.date).slice(0, 7); compte[m] = (compte[m] || 0) + 1; });
+  var mois = Object.keys(compte).sort(function (a, b) { return compte[b] - compte[a]; })[0] || String(pf.date || '').slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(mois)) throw new Error('Mois de la préfacture illisible');
+  var soc = /LPB|L\.P\.B|LP TRANS/i.test(pf.societe || '') ? 'LPB' : 'Gleyzes', maintenant = new Date();
+  var propre = function (x) { return String(x === undefined || x === null ? '' : x).replace(/^[=+\-@]/, "'$&").slice(0, 300); };
+  var base = function (type) { return [pf.numero, dateDepuisTexte_(pf.date) || '', mois, pf.contrat, soc, type]; };
+  var lignes = (pf.lignes || []).map(function (l) {
+    return base('LIGNE').concat([propre(l.designation), nombre_(l.quantite, ''), propre(l.unite), nombre_(l.prix, ''), nombre_(l.montant, 0), '', '', '', '', nombre_(pf.totalHT, ''), maintenant]);
+  }).concat((pf.tournees || []).map(function (t) {
+    return base('TOURNEE').concat(['', '', '', '', '', dateDepuisTexte_(t.date) || '', String(t.tournee), nombre_(t.km, ''), propre(t.livraisons), nombre_(pf.totalHT, ''), maintenant]);
+  }));
+  if (!lignes.length) throw new Error('Préfacture ' + pf.numero + ' : rien de lu');
+  var verrou = LockService.getScriptLock();
+  verrou.waitLock(15000);
+  try {
+    var ss = classeur_(), sh = ss.getSheetByName('PREFACTURES');
+    if (!sh) { sh = ss.insertSheet('PREFACTURES'); sh.getRange(1, 1, 1, FEUILLES.PREFACTURES.length).setValues([FEUILLES.PREFACTURES]).setFontWeight('bold'); sh.setFrozenRows(1); }
+    var garder = lireTable_(sh).filter(function (x) { return String(x.N_Prefac) !== String(pf.numero); })
+      .map(function (x) { return FEUILLES.PREFACTURES.map(function (h) { return x[h] === undefined ? '' : x[h]; }); });
+    var tout = garder.concat(lignes);
+    if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(FEUILLES.PREFACTURES.length, sh.getLastColumn())).clearContent();
+    sh.getRange(2, 1, tout.length, FEUILLES.PREFACTURES.length).setValues(tout);
+  } finally {
+    verrou.releaseLock();
+  }
+  return { numero: pf.numero, mois: mois, contrat: pf.contrat, societe: soc, tournees: (pf.tournees || []).length, totalHT: nombre_(pf.totalHT, null) };
+}
+
+function supprimerPrefac(numero) {
+  var sh = classeur_().getSheetByName('PREFACTURES'); if (!sh) return 0;
+  var v = sh.getDataRange().getValues(), n = 0;
+  for (var i = v.length - 1; i >= 1; i--) if (String(v[i][0]) === String(numero)) { sh.deleteRow(i + 1); n++; }
+  return n;
+}
+
+/**
+ * Contrôle des préfacs, par mois et par contrat :
+ *  - tournées : préfac <-> planning Inter (même n° de tournée ; sinon même jour et mêmes km, n° mal saisi au planning) ;
+ *    tournée au planning absente de la préfac (à réclamer), tournée de la préfac absente du planning, km différents ;
+ *  - péages : la ligne PEAGE de la préfac = péages remboursables du mois précédent pour ce contrat (relevés de badge) ;
+ *  - contrats du planning sans préfac ; préfac facturée sur INFORCE (n° de préfacture repris sur la facture).
+ * Renvoie { mois: { 'AAAA-MM': [lignes par contrat] }, alertes }.
+ */
+function controlePrefacs_(ss, jour0) {
+  var sh = ss.getSheetByName('PREFACTURES'), lignes = sh ? lireTable_(sh) : [];
+  var res = {}, alertes = [], r2 = function (x) { return Math.round(x * 100) / 100; };
+  if (!lignes.length) return { mois: res, alertes: alertes };
+  var pl = []; try { pl = plannings_(ss).filter(function (l) { return l.activite === 'Inter'; }); } catch (e) { /* plannings non reliés */ }
+  var peages = {}; try { synthesePeages_(ss).forEach(function (m) { peages[m.mois] = m.contrats; }); } catch (e) { /* pas de péages */ }
+  var factures = {}; try { lireTable_(ss.getSheetByName('FACTURES_CLIENTS')).forEach(function (f) { if (f.Prefacture) factures[String(f.Prefacture).replace(/\.0+$/, '')] = f.N_Facture; }); } catch (e) { /* aucune */ }
+  var iso = function (d) { return d instanceof Date ? Utilities.formatDate(d, FUSEAU, 'yyyy-MM-dd') : String(d || ''); };
+  var parMois = {};
+  lignes.forEach(function (l) {
+    var M = moisTexte_(l.Mois), c = String(l.Contrat).replace(/\.0+$/, ''), k = String(l.N_Prefac);
+    var x = ((parMois[M] = parMois[M] || {})[c] = parMois[M][c] || { contrat: c, societe: l.Societe, prefacs: {}, lignes: [], tournees: [], total: 0 });
+    if (!x.prefacs[k]) { x.prefacs[k] = 1; x.total += nombre_(l.Total_HT, 0); }
+    if (l.Type === 'LIGNE') x.lignes.push({ designation: String(l.Designation), quantite: nombre_(l.Quantite, null), prix: nombre_(l.Prix_Unitaire, null), montant: nombre_(l.Montant_HT, 0) });
+    else x.tournees.push({ date: iso(l.Date_Tournee), tournee: String(l.Tournee).replace(/\.0+$/, ''), km: nombre_(l.KM, null), livraisons: String(l.Livraisons || '') });
+  });
+  Object.keys(parMois).sort().forEach(function (M) {
+    var lib = nomMois_(M), precM = Utilities.formatDate(new Date(+M.slice(0, 4), +M.slice(5, 7) - 2, 1), FUSEAU, 'yyyy-MM');
+    var plM = pl.filter(function (l) { return Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM') === M; });
+    var out = [];
+    Object.keys(parMois[M]).sort().forEach(function (c) {
+      var x = parMois[M][c], plc = plM.filter(function (l) { return l.numContrat === c; }), pris = {}, ecarts = [];
+      x.tournees.forEach(function (t) {
+        var j = plc.filter(function (l, i) { return !pris[i] && l.tournee === t.tournee; })[0];
+        var i = j ? plc.indexOf(j) : -1;
+        if (i < 0) {   // n° mal saisi au planning : même jour, mêmes km (à 5 km près)
+          plc.forEach(function (l, k) { if (i < 0 && !pris[k] && Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM-dd') === t.date && l.km !== null && t.km !== null && Math.abs(l.km - t.km) <= 5) i = k; });
+          if (i >= 0) ecarts.push({ type: 'numero', niveau: 'a_prevoir', texte: 'tournée ' + t.tournee + ' du ' + dateFrTexte_(t.date) + ' : n° saisi « ' + plc[i].tournee + ' » au planning (' + plc[i].chauffeur + ')' });
+        }
+        if (i < 0) { ecarts.push({ type: 'hors', niveau: 'urgent', texte: 'tournée ' + t.tournee + ' du ' + dateFrTexte_(t.date) + ' (' + t.km + ' km' + (t.livraisons ? ', ' + t.livraisons : '') + ') : absente du planning' }); return; }
+        pris[i] = 1;
+        var l = plc[i];
+        if (l.km !== null && t.km !== null && Math.abs(l.km - t.km) > 1)
+          ecarts.push({ type: 'km', niveau: t.km < l.km ? 'urgent' : 'a_prevoir', texte: 'tournée ' + t.tournee + ' du ' + dateFrTexte_(t.date) + ' (' + l.chauffeur + ') : ' + t.km + ' km sur la préfac, ' + l.km + ' km au planning' });
+      });
+      plc.forEach(function (l, i) {
+        if (!pris[i]) ecarts.push({ type: 'manque', niveau: 'urgent', texte: 'tournée ' + (l.tournee || '?') + ' du ' + Utilities.formatDate(l.date, FUSEAU, 'dd/MM/yyyy') + ' (' + l.chauffeur + (l.km ? ', ' + l.km + ' km' : '') + ') au planning mais absente de la préfac : à réclamer' });
+      });
+      var ligne = function (re) { return x.lignes.filter(function (y) { return re.test(cle_(y.designation)); }); };
+      var somme = function (a) { return r2(a.reduce(function (t, y) { return t + y.montant; }, 0)); };
+      var tf = ligne(/^TERME FIXE(?! NUIT)/), peage = somme(ligne(/^PEAGE/)), regul = somme(ligne(/^REGUL|^DIFFERENCE/));
+      var attendu = (peages[precM] || {})[c] || 0;
+      if (Math.abs(peage - attendu) > 0.05 && (peage || attendu))
+        ecarts.push({ type: 'peage', niveau: 'urgent', texte: 'péages : ' + euros_(peage) + ' sur la préfac, ' + euros_(attendu) + ' remboursables d\'après les relevés de ' + nomMois_(precM) + (peages[precM] ? '' : ' (relevés non déposés)') });
+      var kmP = x.tournees.reduce(function (t, y) { return t + (y.km || 0); }, 0), kmPl = plc.reduce(function (t, l) { return t + (l.km || 0); }, 0);
+      var nums = Object.keys(x.prefacs), facturee = nums.map(function (n) { return factures[n]; }).filter(String);
+      out.push({ contrat: c, societe: x.societe, prefacs: nums.join(', '), facture: facturee.join(', '), tourneesPrefac: x.tournees.length, tourneesPlanning: plc.length,
+        kmPrefac: kmP, kmPlanning: kmPl, termeFixe: tf.map(function (y) { return y.quantite + ' × ' + y.prix; }).join(' + '), peage: peage, peageAttendu: r2(attendu), regul: regul,
+        total: r2(x.total), caPlanning: r2(plc.reduce(function (t, l) { return t + (l.ca || 0); }, 0)), ecarts: ecarts });
+      ecarts.filter(function (e) { return e.type !== 'numero'; }).forEach(function (e) {
+        alertes.push({ niveau: e.niveau, categorie: 'prefacs', domaine: 'Intermarché', objet: c, sujet: 'Préfac ' + c, message: 'Préfac ' + c + ' (' + x.societe + ', ' + lib + ') : ' + e.texte,
+          cle: 'PREFAC|' + M + '|' + c + '|' + e.texte });
+      });
+    });
+    // contrats du planning sans préfac
+    var sans = {};
+    plM.forEach(function (l) { if (l.numContrat && /^\d{6}$/.test(l.numContrat) && !parMois[M][l.numContrat]) (sans[l.numContrat] = sans[l.numContrat] || { n: 0, soc: l.societe, ca: 0 }), sans[l.numContrat].n++, sans[l.numContrat].ca += l.ca || 0; });
+    Object.keys(sans).sort().forEach(function (c) {
+      out.push({ contrat: c, societe: sans[c].soc, prefacs: '', tourneesPrefac: 0, tourneesPlanning: sans[c].n, caPlanning: r2(sans[c].ca), ecarts: [{ type: 'sansprefac', niveau: 'a_prevoir', texte: 'aucune préfac déposée' }] });
+    });
+    res[M] = out;
+  });
+  return { mois: res, alertes: alertes };
+}
+
 function calculerAlertes_(ss, aujourdhui) {
   var p = lireParametres_(ss);
   var preavis = nombre_(p.JOURS_PREAVIS, 30), urgent = nombre_(p.JOURS_URGENT, 7);
@@ -1571,6 +1694,7 @@ function calculerAlertes_(ss, aujourdhui) {
       Math.max(1, nombre_(p.NB_SEMAINES_CONSO, 2))));
   } catch (e) { console.warn('Litrages : ' + e); }
 
+  try { alertes = alertes.concat(controlePrefacs_(ss, jour0).alertes); } catch (e) { console.warn('Préfacs : ' + e); }
   try { alertes = alertes.concat(alertesPeages_(ss, jour0)); } catch (e) { console.warn('Péages : ' + e); }
   // 9. Comptabilité : points anormaux de la dernière balance de chaque société
   try {

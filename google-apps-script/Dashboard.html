@@ -385,6 +385,13 @@ button.petit { padding: 2px 8px; font-size: 12px; }
       <p class="note">Nombre de tournées par terme fixe (286 €, 330 €, 540 €…) au planning et sur les factures ; montants pour information (la préfacture ITM fait foi).</p>
       <div class="tableau"><table id="tabCtrlInter"></table></div>
     </div>
+    <div class="carte inter">
+      <h2><span class="pastille-act" style="background:var(--s1)"></span>Préfactures Intermarché</h2>
+      <p class="note">Déposez les préfacs (PDF « proforma ») dans la zone ci-dessus, avec les factures. Chaque contrat est comparé au planning Inter (tournées, km)
+        et sa ligne PEAGE aux péages remboursables du mois précédent (relevés de badge). « Facturée » : facture INFORCE déposée qui reprend le n° de préfac.</p>
+      <div class="tableau"><table id="tabPrefacs"></table></div>
+      <div id="detailPrefacs"></div>
+    </div>
     <div class="grille">
       <div class="carte">
         <h2>Fiche indexation</h2>
@@ -884,6 +891,7 @@ function rendreAttention(al) {
     c.forEach(function (a) { socs[a.objet] = 1; });
     ajouter(c, pl(c.length, 'point de la comptabilité', 'points de la comptabilité') + ' à vérifier avec le comptable (balance ' + Object.keys(socs).join(' et ') + ')');
   })();
+  ajouter(par.prefacs, pl((par.prefacs || []).length, 'écart', 'écarts') + ' entre les préfacs Intermarché et le planning (tournées, km, péages)');
   ajouter(par.peages, (par.peages || []).length === 1 ? par.peages[0].message : pl((par.peages || []).length, 'point', 'points') + ' sur les péages Intermarché à traiter');
   ajouter(par.charges, pl((par.charges || []).length, 'contrat ou charge arrive', 'contrats ou charges arrivent') + ' à échéance (' +
     (par.charges || []).map(function (a) { return a.objet; }).join(', ') + ')');
@@ -1541,11 +1549,21 @@ function traiterFichier(fichier, id) {
     return lignesPdf(b.slice(0));
   }).then(function (r) {
     var texte = r.lignes.map(function (l) { return l.texte; }).join(' ');
+    if (/PROFORMA/i.test(texte) && /CONTRAT\s*:\s*\d{6}/i.test(texte)) {   // préfacture Intermarché (ENTA)
+      var pf = analyserPrefac(r.lignes);
+      etatDepot(el, 'Préfacture Intermarché ' + txt(pf.numero) + ' : enregistrement…');
+      return appelServeur('deposerPrefac', pf).then(function (x) {
+        etatDepot(el, '✓ Préfac ' + txt(x.numero) + ' · contrat ' + txt(x.contrat) + ' (' + txt(x.societe) + ') · ' + txt(nomMois(x.mois)) + ' · ' + x.tournees + ' tournées · ' +
+          (x.totalHT !== null ? fmtEur2.format(x.totalHT) + ' HT' : ''), 'ok');
+        return null;
+      });
+    }
     if (texte.replace(/\s/g, '').length > 80) return analyserFacture(r.lignes, r.largeur);
     scan = true;
     etatDepot(el, 'Scan sans texte : lecture par Google Drive…');
     return appelServeur('lireScanFacture', b64, fichier.name).then(function (t) { return analyserFacture(lignesTexte(t), 600); });
   }).then(function (f) {
+    if (!f) return;   // préfacture déjà enregistrée
     if (scan) f.avertissements.unshift('Facture scannée : vérifiez la lecture');
     if (f.avertissements.length) { enAttenteVerif[id] = { f: f, b64: b64, nom: fichier.name }; afficherVerif(id); return; }
     return enregistrerFacture(id, f, b64, fichier.name);
@@ -1706,6 +1724,59 @@ function rendreScaped() {
     }).catch(function (e) { m.className = 'msg err'; m.textContent = '⚠ ' + e.message; });
   };
 }
+// ---------- préfactures Intermarché (proformas ENTA) ----------
+function analyserPrefac(lignes) {
+  var t = lignes.map(function (l) { return String(l.texte); }), u = t.map(function (x) { return sansAccents(x).replace(/\s+/g, ' ').trim(); });
+  var tout = u.join('\n'), m, pf = { lignes: [], tournees: [] };
+  if ((m = tout.match(/(\d{2})\/(\d{2})\/(\d{4}) PROFORMA (\d{6,})/))) { pf.date = m[3] + '-' + m[2] + '-' + m[1]; pf.numero = m[4]; }
+  else if ((m = tout.match(/PROFORMA\s+(\d{6,})/))) pf.numero = m[1];
+  if ((m = tout.match(/CONTRAT\s*:\s*(\d{6})\s*([^\n]*)/))) { pf.contrat = m[1]; pf.societe = m[2].trim(); }
+  if (!pf.societe) pf.societe = /LPB/.test(tout) ? 'LPB' : 'Gleyzes';
+  var mt = tout.match(/MONTANT TOTAL HT[^\n]*\n\s*([\d  ]+,\d{2})/);
+  pf.totalHT = mt ? nombreFr(mt[1]) : null;
+  var reNb = /-?\d[\d  ]*(?:,\d+)?/g;
+  u.forEach(function (x, i) {
+    var d = x.match(/^(TERME FIXE J?|TERME FIXE|TERME VARIABLE|REGULARISATION|PEAGES?|DIFFERENCE [A-Z ]+?|INDEXATION GASOIL|[A-Z][A-Z ]+?)\s+(\d[\d ]*(?:,\d+)?)\s+(D|KM|FFT|V|J|U)?\s*([\d ]+,\d+)\s*€?\s*(?:([\d ]+,\d+)\s*)?([\d  ]+,\d{2})\s*€\s*$/);
+    if (d && !/^MONTANT|^DATE|^DESIGNATION/.test(x)) {
+      pf.lignes.push({ designation: d[1].trim(), quantite: nombreFr(d[2]), unite: d[3] || '', prix: nombreFr(d[5] ? d[5] : d[4]), montant: nombreFr(d[6]) });
+    }
+  });
+  // Détail : « 01/09/2026  1557087  570  KM », livraisons « Liv - 3510 - ITM VILLENEUVE LOUBET » du même bloc (Enl … Rep)
+  var bloc = [], courante = null;
+  u.forEach(function (x) {
+    var tm = x.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{6,8})\b.*?(\d+)\s+KM$/);
+    var liv = x.match(/^LIV\s*-\s*\d+\s*-\s*(.+)$/);
+    if (liv) { var nomLiv = liv[1].replace(/^ITM\s+/, '').replace(/^\d+\s+/, '').trim(); if (bloc.indexOf(nomLiv) < 0) bloc.push(nomLiv); }
+    if (tm) { courante = { date: tm[3] + '-' + tm[2] + '-' + tm[1], tournee: tm[4], km: +tm[5], livraisons: '' }; pf.tournees.push(courante); }
+    if (/^REP\s*-/.test(x)) { if (courante) courante.livraisons = bloc.join(' - '); bloc = []; courante = null; }
+  });
+  if (courante && !courante.livraisons) courante.livraisons = bloc.join(' - ');
+  if (!pf.numero || !pf.contrat) throw new Error('Préfacture illisible (numéro ou contrat introuvable)');
+  return pf;
+}
+function rendrePrefacs(M) {
+  var liste = ((D.PREFACS || {})[M] || []).filter(function (x) { return garderSociete(x.societe); });
+  var t = document.getElementById('tabPrefacs');
+  t.innerHTML = !liste.length ? '<tbody><tr><td class="vide">Aucune préfac déposée pour ce mois.</td></tr></tbody>' :
+    '<thead><tr><th>Contrat</th><th>Soc.</th><th>Préfac</th><th class="n">Tournées préfac / planning</th><th class="n">Km préfac / planning</th><th>Terme fixe</th>' +
+    '<th class="n">Péages préfac / attendus</th><th class="n">Régul.</th><th class="n">Total HT préfac</th><th class="n">CA planning</th><th>INFORCE</th><th>État</th></tr></thead><tbody>' +
+    liste.map(function (x) {
+      var graves = x.ecarts.filter(function (e) { return e.niveau !== 'a_prevoir'; }).length;
+      var etat = !x.ecarts.length ? badge('ok', 'Conforme') : x.ecarts.some(function (e) { return e.type === 'sansprefac'; }) ? badge('a_prevoir', 'Pas de préfac') :
+        badge(graves ? 'urgent' : 'a_prevoir', x.ecarts.length + ' point' + (x.ecarts.length > 1 ? 's' : ''));
+      var pe = x.peage !== undefined ? fmtEur2.format(x.peage) + ' / ' + fmtEur2.format(x.peageAttendu) : '';
+      return '<tr><td>' + txt(x.contrat) + '</td><td>' + txt(x.societe) + '</td><td>' + txt(x.prefacs) + '</td><td class="n' + (x.tourneesPrefac !== x.tourneesPlanning ? ' neg' : '') + '">' +
+        x.tourneesPrefac + ' / ' + x.tourneesPlanning + '</td><td class="n' + (x.kmPrefac !== undefined && x.kmPrefac !== x.kmPlanning ? ' neg' : '') + '">' + (x.kmPrefac !== undefined ? fmtNb.format(x.kmPrefac) + ' / ' + fmtNb.format(x.kmPlanning) : '') +
+        '</td><td>' + txt(x.termeFixe || '') + '</td><td class="n' + (x.peage !== undefined && Math.abs(x.peage - x.peageAttendu) > 0.05 ? ' neg' : '') + '">' + pe + '</td><td class="n">' + (x.regul ? fmtEur2.format(x.regul) : '') +
+        '</td><td class="n">' + (x.total !== undefined ? fmtEur2.format(x.total) : '') + '</td><td class="n">' + eur(x.caPlanning) + '</td><td>' + (x.facture ? '✓ ' + txt(x.facture) : (x.prefacs ? '<span class="note">non déposée</span>' : '')) +
+        '</td><td>' + etat + '</td></tr>';
+    }).join('') + '</tbody>';
+  var det = liste.filter(function (x) { return x.ecarts.length && x.prefacs; });
+  document.getElementById('detailPrefacs').innerHTML = det.map(function (x) {
+    return '<details style="margin-top:6px"><summary>Contrat ' + txt(x.contrat) + ' : ' + x.ecarts.length + ' point(s) à vérifier</summary><div class="detail">' +
+      x.ecarts.map(function (e) { return '<div>' + badge(e.niveau) + ' ' + txt(e.texte) + '</div>'; }).join('') + '</div></details>';
+  }).join('');
+}
 function rendreFacturation() {
   rendreScaped();
   rendrePeages();
@@ -1713,10 +1784,12 @@ function rendreFacturation() {
   var mois = {};
   fact.forEach(function (l) { if (l.Mois) mois[String(l.Mois).slice(0, 7)] = 1; });
   Object.keys(D.CONTROLE || {}).forEach(function (m) { mois[m] = 1; });
+  Object.keys(D.PREFACS || {}).forEach(function (m) { mois[m] = 1; });
   var sel = document.getElementById('moisFact'), ancien = sel.value, liste = Object.keys(mois).sort().reverse();
   sel.innerHTML = liste.map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
   if (liste.indexOf(ancien) >= 0) sel.value = ancien;
   var M = sel.value, ctrl = (D.CONTROLE || {})[M] || { carburant: [], inter: [], indexation: [] };
+  rendrePrefacs(M);
   var fM = fact.filter(function (l) { return String(l.Mois).slice(0, 7) === M; });
   var an = (M || aujourdhui()).slice(0, 4);
   var htM = fM.filter(function (l) { return l.Nature !== 'INDEXATION'; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0);
