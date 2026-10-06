@@ -389,7 +389,7 @@ button.petit { padding: 2px 8px; font-size: 12px; }
       <div id="apercuScaped"></div>
       <details style="margin-top:12px"><summary><b>Avoir SCAPED</b> : coller le mail de demande d'avoir</summary>
         <p class="note">Copiez le mail de SCAPED (le tableau compris) et collez-le ici. Le site repère les avoirs demandés (n° de facture, montant HT, commentaire).
-          Les avoirs sur une facture SCAPED (FA082026…) sont préparés dans le classeur des factures SCAPED ; ceux sur une facture INFORCE (FA20…) sont à faire dans INFORCE.</p>
+          Chaque avoir est préparé dans un onglet du classeur des factures SCAPED (« AVOIR FA082026 »…), avec l'en-tête de la facture d'origine (ou de la dernière facture SCAPED si elle a été faite dans INFORCE).</p>
         <textarea id="mailAvoir" rows="7" style="width:100%" placeholder="Bonjour, Merci d'établir et de déposer sur extranet 2 avoirs…"></textarea>
         <div class="barre" style="margin-top:6px"><button id="lireAvoir" class="primaire">Repérer les avoirs</button></div>
         <div id="avoirsTrouves"></div>
@@ -1849,21 +1849,25 @@ function afficherAvoirs(liste) {
     liste.map(function (a, i) {
       return '<tr data-i="' + i + '"><td>' + txt(a.facture) + '</td><td><input data-k="motif" value="' + txt(a.commentaire ? 'Régularisation : ' + a.commentaire : 'Régularisation') + '" style="min-width:320px"></td>' +
         '<td><input data-k="montant" value="' + txt(String(a.montant).replace('.', ',')) + '" size="9"></td><td>' +
-        (a.inforce ? '<span class="note">Facture INFORCE : avoir à faire dans INFORCE</span>' : '<button class="primaire" data-av="' + i + '">Préparer l\'avoir</button>') + '<span class="msg"></span></td></tr>';
-    }).join('') + '</tbody></table></div>';
-  z.querySelectorAll('[data-av]').forEach(function (b) {
-    b.onclick = function () {
-      var tr = b.closest('tr'), a = liste[+b.dataset.av], m = tr.querySelector('.msg');
-      var motif = tr.querySelector('[data-k=motif]').value.trim(), montant = nombreFr(tr.querySelector('[data-k=montant]').value);
-      if (!montant) { m.textContent = ' ⚠ montant ?'; return; }
-      m.className = 'msg'; m.textContent = ' Préparation…';
-      appelServeur('genererAvoirScaped', { facture: a.facture, lignes: [{ motif: motif, montantHT: montant }] }).then(function (r) {
-        m.className = 'msg ok';
-        m.innerHTML = ' ✓ Avoir ' + txt(r.numero) + ' : −' + fmtEur2.format(r.totalHT) + ' HT — <a href="' + txt(r.url) + '" target="_blank" rel="noopener">ouvrir l\'onglet « ' + txt(r.onglet) + ' »</a>';
-        charger();
-      }).catch(function (e) { m.className = 'msg err'; m.textContent = ' ⚠ ' + e.message; });
-    };
-  });
+        '<button data-av="' + i + '">Préparer l\'avoir</button>' + '<span class="msg"></span></td></tr>';
+    }).join('') + '</tbody></table></div>' + (liste.length > 1 ? '<div class="barre" style="margin-top:6px"><button class="primaire" id="tousAvoirs">Préparer les ' + liste.length + ' avoirs</button></div>' : '');
+  var preparer = function (i) {
+    var tr = z.querySelector('tr[data-i="' + i + '"]'), a = liste[i], m = tr.querySelector('.msg');
+    var motif = tr.querySelector('[data-k=motif]').value.trim(), montant = nombreFr(tr.querySelector('[data-k=montant]').value);
+    if (!montant) { m.textContent = ' ⚠ montant ?'; return Promise.resolve(); }
+    m.className = 'msg'; m.textContent = ' Préparation…';
+    return appelServeur('genererAvoirScaped', { facture: a.facture, lignes: [{ motif: motif, montantHT: montant }] }).then(function (r) {
+      m.className = 'msg ok';
+      m.innerHTML = ' ✓ Avoir ' + txt(r.numero) + ' : −' + fmtEur2.format(r.totalHT) + ' HT — <a href="' + txt(r.url) + '" target="_blank" rel="noopener">ouvrir « ' + txt(r.onglet) + ' »</a>';
+    }).catch(function (e) { m.className = 'msg err'; m.textContent = ' ⚠ ' + e.message; });
+  };
+  z.querySelectorAll('[data-av]').forEach(function (b) { b.onclick = function () { preparer(+b.dataset.av).then(charger); }; });
+  var tous = document.getElementById('tousAvoirs');
+  if (tous) tous.onclick = function () {
+    var suite = Promise.resolve();
+    liste.forEach(function (a, i) { suite = suite.then(function () { return preparer(i); }); });
+    suite.then(charger);
+  };
 }
 document.getElementById('lireAvoir').onclick = function () { afficherAvoirs(lireMailAvoir(document.getElementById('mailAvoir').value)); };
 function rendreScaped() {

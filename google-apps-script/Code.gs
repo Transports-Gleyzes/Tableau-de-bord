@@ -1510,7 +1510,7 @@ function genererAvoirScaped(a) {
   if (!fac) throw new Error('Collez le lien du Google Sheet des factures SCAPED dans PARAMETRES (ID_FACTURE_SCAPED)');
   var numFac = String(a && a.facture || '').toUpperCase().trim();
   var lignes = (a && a.lignes || []).map(function (l) { return { motif: String(l.motif || 'Avoir').slice(0, 300), ht: Math.abs(nombre_(l.montantHT, 0)) }; }).filter(function (l) { return l.ht > 0; });
-  if (!/^FA\d{6}$/.test(numFac)) throw new Error('N° de facture SCAPED invalide : ' + numFac);
+  if (!/^FA\d{6,}$/.test(numFac)) throw new Error('N° de facture invalide : ' + numFac);
   if (!lignes.length) throw new Error('Montant de l\'avoir manquant');
   // L'onglet de la facture d'origine (case à droite de « Facture N° : »)
   var modele = null, dateFac = null, mv = null;
@@ -1519,7 +1519,16 @@ function genererAvoirScaped(a) {
     var v = sh.getDataRange().getValues();
     for (var i = 0; i < Math.min(v.length, 60); i++) if (cle_(v[i][0]).indexOf('FACTURE N') === 0 && cle_(v[i][1]) === numFac) { modele = sh; mv = v; break; }
   });
-  if (!modele) throw new Error('Facture ' + numFac + ' introuvable dans le classeur des factures SCAPED');
+  if (!modele) {   // facture faite ailleurs (INFORCE) : mise en page de la dernière facture du classeur
+    var cleM = function (nom) { var n = cle_(nom), m = MOIS_MAJ.filter(function (x) { return n.indexOf(x) === 0; })[0], an = (n.match(/(20\d\d)/) || [])[1]; return m && an ? +an * 100 + MOIS_MAJ.indexOf(m) + 1 : 0; };
+    modele = fac.getSheets().filter(function (sh) { return cleM(sh.getName()); }).sort(function (x, y) { return cleM(y.getName()) - cleM(x.getName()); })[0];
+    if (!modele) throw new Error('Aucune facture mensuelle dans le classeur SCAPED pour servir de modèle');
+    mv = modele.getDataRange().getValues();
+    try {
+      var fc = lireTable_(ss.getSheetByName('FACTURES_CLIENTS')).filter(function (f) { return String(f.N_Facture).toUpperCase() === numFac; })[0];
+      if (fc && fc.Date_Facture instanceof Date) dateFac = fc.Date_Facture;
+    } catch (e) { /* facture non déposée : pas de date */ }
+  }
   var colA = mv.map(function (l) { return cle_(l[0]); }), debuts = [];
   colA.forEach(function (t, i) { if (t.indexOf('SAS LPB') === 0) debuts.push(i); });
   var hauteur = debuts.length > 1 ? debuts[1] - debuts[0] : mv.length;
@@ -1528,7 +1537,8 @@ function genererAvoirScaped(a) {
   var rTotal = ligneDe(function (l) { return l.some(function (x) { return cle_(x) === 'TOTAL HT'; }); });
   var rTrans = ligneDe(function (l) { return cle_(l[0]).indexOf('TRANSPORT') === 0; });
   if (rDesig < 0 || rTotal < 0) throw new Error('Mise en page de la facture ' + numFac + ' non reconnue');
-  mv.forEach(function (l) { if (!dateFac && cle_(l[0]).indexOf('DATE') === 0 && l[1] instanceof Date) dateFac = l[1]; });
+  var dateDuModele = null; mv.forEach(function (l) { if (!dateDuModele && cle_(l[0]).indexOf('DATE') === 0 && l[1] instanceof Date) dateDuModele = l[1]; });
+  if (!dateFac && modele.getName() && mv.some(function (l) { return cle_(l[0]).indexOf('FACTURE N') === 0 && cle_(l[1]) === numFac; })) dateFac = dateDuModele;
   var nomOnglet = 'AVOIR ' + numFac, numAvoir = 'AV' + numFac.slice(2), nbCol = Math.max(7, modele.getLastColumn());
   var ancien = fac.getSheetByName(nomOnglet); if (ancien) fac.deleteSheet(ancien);
   var sh = fac.insertSheet(nomOnglet, fac.getSheets().length);
