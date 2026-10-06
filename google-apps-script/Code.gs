@@ -1248,7 +1248,8 @@ function deposerPeages(r) {
   verrou.waitLock(15000);
   try {
     var sh = ss.getSheetByName('PEAGES');
-    if (!sh) { sh = ss.insertSheet('PEAGES'); sh.getRange(1, 1, 1, FEUILLES.PEAGES.length).setValues([FEUILLES.PEAGES]).setFontWeight('bold'); sh.setFrozenRows(1); }
+    if (!sh) { sh = ss.insertSheet('PEAGES'); sh.setFrozenRows(1); }
+    sh.getRange(1, 1, 1, FEUILLES.PEAGES.length).setValues([FEUILLES.PEAGES]).setFontWeight('bold');
     var garder = lireTable_(sh).filter(function (x) { return String(x.Facture_Badge) !== String(r.facture); })
       .map(function (x) { return FEUILLES.PEAGES.map(function (h) { return x[h] === undefined ? '' : x[h]; }); });
     var tout = garder.concat(lignes);
@@ -1383,7 +1384,8 @@ function deposerPrefac(pf) {
   verrou.waitLock(15000);
   try {
     var ss = classeur_(), sh = ss.getSheetByName('PREFACTURES');
-    if (!sh) { sh = ss.insertSheet('PREFACTURES'); sh.getRange(1, 1, 1, FEUILLES.PREFACTURES.length).setValues([FEUILLES.PREFACTURES]).setFontWeight('bold'); sh.setFrozenRows(1); }
+    if (!sh) { sh = ss.insertSheet('PREFACTURES'); sh.setFrozenRows(1); }
+    sh.getRange(1, 1, 1, FEUILLES.PREFACTURES.length).setValues([FEUILLES.PREFACTURES]).setFontWeight('bold');   // colonnes d'une nouvelle version (ex. Cours)
     var garder = lireTable_(sh).filter(function (x) { return String(x.N_Prefac) !== String(pf.numero); })
       .map(function (x) { return FEUILLES.PREFACTURES.map(function (h) { return x[h] === undefined ? '' : x[h]; }); });
     var tout = garder.concat(lignes);
@@ -1430,38 +1432,48 @@ function controlePrefacs_(ss, jour0) {
   Object.keys(parMois).sort().forEach(function (M) {
     var lib = nomMois_(M), precM = Utilities.formatDate(new Date(+M.slice(0, 4), +M.slice(5, 7) - 2, 1), FUSEAU, 'yyyy-MM');
     var plM = pl.filter(function (l) { return Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM') === M; });
-    var out = [];
+    var out = [], prisM = {}, exactes = {}, avecPrefac = {};
+    // 1. Tournées retrouvées par leur n° dans tout le planning du mois (un contrat peut être inversé entre deux chauffeurs)
+    Object.keys(parMois[M]).forEach(function (c) {
+      avecPrefac[c] = 1;
+      parMois[M][c].tournees.forEach(function (t) {
+        var k = -1;
+        plM.forEach(function (l, i) { if (k < 0 && !prisM[i] && l.tournee === t.tournee) k = i; });
+        if (k >= 0) { prisM[k] = 1; exactes[c + '|' + t.tournee + '|' + t.date] = k; }
+      });
+    });
+    prisM = {};
     Object.keys(parMois[M]).sort().forEach(function (c) {
-      var x = parMois[M][c], plc = plM.filter(function (l) { return l.numContrat === c; }), pris = {}, tours = [], notes = [];
+      var x = parMois[M][c], plc = plM.filter(function (l) { return l.numContrat === c; }), tours = [], notes = [];
       var ligneTour = function (t, l, probleme, ou, niveau) {
         tours.push({ date: t ? t.date : Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM-dd'), tourneePrefac: t ? t.tournee : '', tourneePlanning: l ? l.tournee : '',
           chauffeur: l ? l.chauffeur : '', livraisons: t && t.livraisons ? t.livraisons : (l ? l.lieu : ''), kmPrefac: t ? t.km : null, kmPlanning: l ? l.km : null,
           probleme: probleme || '', ou: ou || '', niveau: niveau || 'ok' });
       };
       x.tournees.forEach(function (t) {
-        var i = -1, numFaux = false;
-        plc.forEach(function (l, k) { if (i < 0 && !pris[k] && l.tournee === t.tournee) i = k; });
-        if (i < 0) {   // n° mal saisi au planning : même jour, mêmes km (à 5 km près)
-          plc.forEach(function (l, k) { if (i < 0 && !pris[k] && Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM-dd') === t.date && l.km !== null && t.km !== null && Math.abs(l.km - t.km) <= 5) i = k; });
+        var i = exactes[c + '|' + t.tournee + '|' + t.date], numFaux = false;
+        if (i === undefined) {   // n° mal saisi au planning : même contrat, même jour, mêmes km (à 5 km près)
+          i = -1;
+          plM.forEach(function (l, k) { if (i < 0 && !prisM[k] && l.numContrat === c && Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM-dd') === t.date && l.km !== null && t.km !== null && Math.abs(l.km - t.km) <= 5) i = k; });
           numFaux = i >= 0;
         }
         if (i < 0) {
-          var ailleurs = pl.filter(function (l) { return l.tournee === t.tournee; })[0];
-          ligneTour(t, ailleurs || null, ailleurs ? 'Au planning avec le contrat ' + (ailleurs.numContrat || '(vide)') + ' au lieu de ' + c
-            : 'Tournée facturée par Intermarché mais absente du planning', ailleurs ? 'Planning : corriger le n° de contrat' : 'Planning : ajouter la tournée (ou vérifier le contrat)', 'urgent');
+          ligneTour(t, null, 'Tournée payée par Intermarché mais absente du planning', 'Planning : ajouter la tournée (ou vérifier le n° de tournée / de contrat)', 'urgent');
           return;
         }
-        pris[i] = 1;
-        var l = plc[i], pbs = [], ou = [], niv = 'ok';
+        prisM[i] = 1;
+        var l = plM[i], pbs = [], ou = [], niv = 'ok';
+        if (l.numContrat !== c) {
+          pbs.push('Au planning, cette tournée de ' + l.chauffeur + ' a le contrat ' + (l.numContrat || '(vide)') + ' ; la préfac la paie sur le contrat ' + c);
+          ou.push('Planning : contrat à corriger (' + (l.numContrat || 'vide') + ' → ' + c + ') sur la ligne de ' + l.chauffeur + ' du ' + jj(l.date));
+          niv = 'a_prevoir';
+        }
         if (numFaux) { pbs.push('N° de tournée saisi « ' + l.tournee + ' » au planning au lieu de ' + t.tournee); ou.push('Planning : corriger le n° de tournée'); niv = 'a_prevoir'; }
         if (l.km !== null && t.km !== null && Math.abs(l.km - t.km) > 1) {
           if (t.km < l.km) { pbs.push('Intermarché paie ' + (l.km - t.km) + ' km de moins que le planning'); ou.push('Préfac : réclamer ' + (l.km - t.km) + ' km (ou corriger le planning s\'il est faux)'); niv = 'urgent'; }
           else { pbs.push('Préfac : ' + (t.km - l.km) + ' km de plus que le planning'); ou.push('Planning : vérifier les km (' + t.km + ' sur la préfac)'); if (niv === 'ok') niv = 'a_prevoir'; }
         }
         ligneTour(t, l, pbs.join(' · '), ou.join(' · '), niv);
-      });
-      plc.forEach(function (l, i) {
-        if (!pris[i]) ligneTour(null, l, 'Tournée faite (planning) mais absente de la préfac', 'Préfac : réclamer la tournée à Intermarché', 'urgent');
       });
       tours.sort(function (a, b) { return a.date.localeCompare(b.date) || String(a.tourneePrefac || a.tourneePlanning).localeCompare(String(b.tourneePrefac || b.tourneePlanning)); });
       var ligne = function (re) { return x.lignes.filter(function (y) { return re.test(cle_(y.designation)); }); };
@@ -1494,7 +1506,7 @@ function controlePrefacs_(ss, jour0) {
       var tfQ = tf.reduce(function (t, y) { return t + (y.quantite || 0); }, 0);
       if (tf.length && x.tournees.length && tfQ !== x.tournees.length)
         notes.push({ niveau: 'a_prevoir', texte: 'Terme fixe : ' + tfQ + ' facturé(s) pour ' + x.tournees.length + ' tournées dans le détail.' });
-      if (ix && ix.cours === null) notes.push({ niveau: 'info', texte: 'Redéposez cette préfac pour vérifier le calcul de l\'indexation (cours du gasoil non enregistré par l\'ancienne version).' });
+      if (ix && ix.cours === null) notes.push({ niveau: 'info', texte: 'Cours du gasoil non enregistré pour cette préfac : redéposez-la pour vérifier le calcul de l\'indexation (km × cours × taux).' });
       if (!erreursCalc.length && !notes.some(function (n) { return /^Km/.test(n.texte); })) notes.push({ niveau: 'ok', texte: 'Calculs de la préfac vérifiés : km (' + kmTours + '), montants de chaque ligne et total HT.' });
       var nums = Object.keys(x.prefacs), facturee = nums.map(function (n) { return factures[n]; }).filter(String);
       var aCorriger = tours.filter(function (t) { return t.niveau !== 'ok'; });
@@ -1513,6 +1525,20 @@ function controlePrefacs_(ss, jour0) {
       notes.filter(function (n) { return n.niveau === 'urgent'; }).forEach(function (n) {
         alertes.push({ niveau: 'urgent', categorie: 'prefacs', domaine: 'Intermarché', objet: c, sujet: 'Préfac ' + c, message: 'Préfac ' + c + ' (' + lib + ') : ' + n.texte, cle: 'PREFAC|' + M + '|' + c + '|' + n.texte });
       });
+    });
+    // 3. Tournées du planning (contrat ayant une préfac) que la préfac ne paie pas : à réclamer
+    out.forEach(function (o) {
+      plM.forEach(function (l, i) {
+        if (prisM[i] || l.numContrat !== o.contrat) return;
+        o.tours.push({ date: Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM-dd'), tourneePrefac: '', tourneePlanning: l.tournee, chauffeur: l.chauffeur, livraisons: l.lieu, kmPrefac: null, kmPlanning: l.km,
+          probleme: 'Tournée faite (planning) mais absente de la préfac', ou: 'Préfac : réclamer la tournée à Intermarché', niveau: 'urgent' });
+        o.reclamer = (o.reclamer || 0) + 1;
+        alertes.push({ niveau: 'urgent', categorie: 'prefacs', domaine: 'Intermarché', objet: o.contrat, sujet: 'Préfac ' + o.contrat,
+          message: 'Préfac ' + o.contrat + ' (' + o.societe + ', ' + lib + ') : tournée ' + (l.tournee || '?') + ' du ' + jj(l.date) + ' (' + l.chauffeur + ') faite mais absente de la préfac → à réclamer',
+          cle: 'PREFAC|' + M + '|' + o.contrat + '|' + l.tournee + '|manque' });
+      });
+      o.tours.sort(function (a, b) { return a.date.localeCompare(b.date) || String(a.tourneePrefac || a.tourneePlanning).localeCompare(String(b.tourneePrefac || b.tourneePlanning)); });
+      o.nbTours = o.tours.length;
     });
     // contrats du planning sans préfac
     var sans = {};
