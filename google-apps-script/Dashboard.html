@@ -390,7 +390,10 @@ button.petit { padding: 2px 8px; font-size: 12px; }
       <details style="margin-top:12px"><summary><b>Avoir SCAPED</b> : coller le mail de demande d'avoir</summary>
         <p class="note">Copiez le mail de SCAPED (le tableau compris) et collez-le ici. Le site repère les avoirs demandés (n° de facture, montant HT, commentaire).
           Chaque avoir est préparé dans un onglet du classeur des factures SCAPED (« AVOIR FA082026 »…), avec l'en-tête de la facture d'origine (ou de la dernière facture SCAPED si elle a été faite dans INFORCE).</p>
-        <textarea id="mailAvoir" rows="7" style="width:100%" placeholder="Bonjour, Merci d'établir et de déposer sur extranet 2 avoirs…"></textarea>
+        <div class="depot" id="zoneMailAvoir">📧 Glissez ici le mail (PDF, capture d'écran ou fichier .eml), ou cliquez pour le choisir
+          <input type="file" id="choixMailAvoir" accept=".pdf,.eml,.txt,image/*,application/pdf,message/rfc822" hidden></div>
+        <div id="etatMailAvoir" class="note" style="margin:6px 0"></div>
+        <textarea id="mailAvoir" rows="6" style="width:100%" placeholder="… ou collez ici le texte du mail (Bonjour, Merci d'établir et de déposer sur extranet 2 avoirs…)"></textarea>
         <div class="barre" style="margin-top:6px"><button id="lireAvoir" class="primaire">Repérer les avoirs</button></div>
         <div id="avoirsTrouves"></div>
       </details>
@@ -1826,7 +1829,8 @@ function telechargerPeages(M) {
 // ---------- avoirs SCAPED : lecture du mail de demande ----------
 /** Repère dans le texte d'un mail les avoirs demandés : cellules « N° facture | AVOIR | montant HT | date | commentaire ». */
 function lireMailAvoir(texte) {
-  var cellules = String(texte || '').split(/[\t\r\n]+/).map(function (c) { return c.trim(); }).filter(String);
+  // cellules : tabulations / retours à la ligne (copier-coller), ou 2 espaces et plus (PDF, reconnaissance d'image)
+  var cellules = String(texte || '').split(/[\t\r\n]+|\s{2,}/).map(function (c) { return c.trim(); }).filter(String);
   var estFacture = function (c) { return /^FA\d{6,}$/i.test(c); }, estMois = function (c) { return /^[A-Za-zÀ-ÿ]+\.?-\d{2}$/.test(c); };
   var res = [];
   cellules.forEach(function (c, i) {
@@ -1839,6 +1843,22 @@ function lireMailAvoir(texte) {
     var com = rang.filter(function (x) { return !/^AVOIR$|^OK$/i.test(x) && !/^-?\d[\d  ]*,\d{2}\s*€?$/.test(x) && !/^\d{2}\/\d{2}\/\d{4}$/.test(x); }).join(' ');
     var f = c.toUpperCase();
     res.push({ facture: f, montant: Math.abs(nombreFr(mt.replace('€', ''))), commentaire: com, inforce: !/^FA\d{6}$/.test(f) });
+  });
+  // Secours ligne par ligne (PDF, image : cellules parfois séparées par un seul espace)
+  var lignes = String(texte || '').split(/\r?\n/), rangs = [];
+  lignes.forEach(function (l) {
+    var t = l.trim(); if (!t) return;
+    if (/\bFA\d{6,}\b/i.test(t)) rangs.push(t);
+    else if (rangs.length && !/^[A-Za-zÀ-ÿ]+\.?-\d{2}\b/.test(t) && !/TOTAL|^CDT|^CORDIALEMENT/i.test(t)) rangs[rangs.length - 1] += ' ' + t;
+    else rangs.push('');
+  });
+  rangs.forEach(function (r) {
+    var f = (r.match(/\b(FA\d{6,})\b/i) || [])[1]; if (!f || !/\bAVOIR\b/i.test(r)) return;
+    f = f.toUpperCase(); if (res.some(function (x) { return x.facture === f; })) return;
+    var apres = r.slice(r.search(/\bAVOIR\b/i) + 5), mt = apres.match(/^\s*(\d[\d  ]*,\d{2})\s*€?/);
+    if (!mt) return;
+    var dates = r.match(/\d{2}\/\d{2}\/\d{4}/g), com = dates ? r.slice(r.lastIndexOf(dates[dates.length - 1]) + 10) : apres.slice(mt[0].length);
+    res.push({ facture: f, montant: nombreFr(mt[1]), commentaire: com.replace(/\s+OK\s*$/i, '').replace(/\s+/g, ' ').trim(), inforce: !/^FA\d{6}$/.test(f) });
   });
   return res;
 }
@@ -1870,6 +1890,68 @@ function afficherAvoirs(liste) {
   };
 }
 document.getElementById('lireAvoir').onclick = function () { afficherAvoirs(lireMailAvoir(document.getElementById('mailAvoir').value)); };
+/** Texte d'un mail enregistré (.eml) : partie texte ou HTML, décodée (base64 / quoted-printable), tableau en cellules séparées par des tabulations. */
+function texteDepuisEml(brut) {
+  var parties = brut.split(/\r?\n--[^\r\n]+/), meilleur = '', estHtml = false;
+  parties.concat([brut]).forEach(function (p) {
+    var sep = p.search(/\r?\n\r?\n/); if (sep < 0) return;
+    var ent = p.slice(0, sep), corps = p.slice(sep).trim();
+    if (!/content-type:\s*text\/(plain|html)/i.test(ent) && p !== brut) return;
+    var html = /text\/html/i.test(ent);
+    if (/content-transfer-encoding:\s*base64/i.test(ent)) {
+      try { var bin = atob(corps.replace(/\s/g, '')), oct = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) oct[i] = bin.charCodeAt(i);
+        corps = new TextDecoder(/charset="?utf-8/i.test(ent) ? 'utf-8' : 'windows-1252').decode(oct); } catch (e) { return; }
+    } else if (/quoted-printable/i.test(ent)) {
+      var octets = []; corps = corps.replace(/=\r?\n/g, '');
+      for (var k = 0; k < corps.length; k++) { var m = corps.slice(k).match(/^=([0-9A-F]{2})/i); if (m) { octets.push(parseInt(m[1], 16)); k += 2; } else octets.push(corps.charCodeAt(k)); }
+      try { corps = new TextDecoder(/charset="?utf-8/i.test(ent) ? 'utf-8' : 'windows-1252').decode(new Uint8Array(octets)); } catch (e) { /* tel quel */ }
+    }
+    if (html && (!meilleur || !estHtml)) { meilleur = corps; estHtml = true; } else if (!meilleur) meilleur = corps;
+  });
+  if (estHtml) {
+    var d = document.createElement('div');
+    d.innerHTML = meilleur.replace(/<\/t[dh]>/gi, '\t').replace(/<\/tr>|<br\s*\/?>|<\/p>|<\/div>/gi, '\n');
+    meilleur = d.textContent;
+  }
+  return meilleur;
+}
+function lireFichierMailAvoir(f) {
+  var etat = document.getElementById('etatMailAvoir'), nom = f.name || 'mail';
+  etat.textContent = 'Lecture de ' + nom + '…';
+  var lecture;
+  if (/\.(eml|txt)$/i.test(nom) || /rfc822|text\/plain/.test(f.type)) lecture = f.text().then(function (t) { return /\.eml$/i.test(nom) || /^[\w-]+:/m.test(t.slice(0, 500)) ? texteDepuisEml(t) : t; });
+  else if (/^image\//.test(f.type)) {
+    lecture = f.arrayBuffer().then(function (b) { etat.textContent = 'Lecture de la capture par Google Drive…'; return appelServeur('lireScanFacture', base64Depuis(b), nom, f.type); });
+  } else if (/\.pdf$/i.test(nom) || f.type === 'application/pdf') {
+    var b64;
+    lecture = f.arrayBuffer().then(function (b) { b64 = base64Depuis(b); return lignesPdf(b.slice(0)); }).then(function (r) {
+      var t = r.lignes.map(function (l) { return l.texte; }).join('\n');
+      if (t.replace(/\s/g, '').length > 40) return t;
+      etat.textContent = 'PDF scanné : lecture par Google Drive…';
+      return appelServeur('lireScanFacture', b64, nom);
+    });
+  } else if (/\.msg$/i.test(nom)) lecture = Promise.reject(new Error('Fichier Outlook .msg non lisible : enregistrez le mail en PDF (Imprimer > PDF) ou faites une capture d\'écran'));
+  else lecture = Promise.reject(new Error('Format non reconnu : déposez le mail en PDF, en image ou en .eml'));
+  lecture.then(function (t) {
+    document.getElementById('mailAvoir').value = String(t || '').trim();
+    var l = lireMailAvoir(t);
+    etat.textContent = l.length ? '✓ ' + nom + ' lu : ' + l.length + ' avoir(s) repéré(s). Vérifiez les montants ci-dessous.' : '⚠ ' + nom + ' lu, mais aucun avoir repéré : vérifiez le texte ci-dessous puis « Repérer les avoirs ».';
+    afficherAvoirs(l);
+  }).catch(function (e) { etat.textContent = '⚠ ' + e.message; });
+}
+(function () {
+  var zone = document.getElementById('zoneMailAvoir'), choix = document.getElementById('choixMailAvoir');
+  zone.addEventListener('click', function (e) { if (e.target !== choix) choix.click(); });
+  choix.addEventListener('change', function () { if (choix.files[0]) lireFichierMailAvoir(choix.files[0]); choix.value = ''; });
+  ['dragenter', 'dragover'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.add('survol'); }); });
+  ['dragleave', 'drop'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.remove('survol'); }); });
+  zone.addEventListener('drop', function (e) { var f = e.dataTransfer.files[0]; if (f) lireFichierMailAvoir(f); });
+  // capture d'écran collée directement (Ctrl+V) dans la zone de texte
+  document.getElementById('mailAvoir').addEventListener('paste', function (e) {
+    var it = Array.prototype.slice.call((e.clipboardData || {}).items || []).filter(function (x) { return /^image\//.test(x.type); })[0];
+    if (it) { e.preventDefault(); var f = it.getAsFile(); lireFichierMailAvoir(new File([f], 'capture.png', { type: f.type })); }
+  });
+})();
 function rendreScaped() {
   var sel = document.getElementById('moisScaped'), ancien = sel.value, j = new Date(), liste = [];
   for (var k = 0; k < 4; k++) { var d = new Date(j.getFullYear(), j.getMonth() - k, 1); liste.push(d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2)); }

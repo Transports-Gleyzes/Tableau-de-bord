@@ -476,9 +476,10 @@ function supprimerFactureClient(numero) {
  * Depuis le site : texte d'un PDF scanné (sans texte), par la reconnaissance de caractères de Google Drive.
  * Nécessite le service avancé Drive (déclaré dans appsscript.json). Renvoie le texte, une ligne par ligne lue.
  */
-function lireScanFacture(pdfBase64, nomFichier) {
+function lireScanFacture(pdfBase64, nomFichier, typeMime) {
   if (typeof Drive === 'undefined') throw new Error('Lecture des scans indisponible : le service Drive n\'est pas activé (appsscript.json)');
-  var blob = Utilities.newBlob(Utilities.base64Decode(pdfBase64), 'application/pdf', nomFichier || 'scan.pdf');
+  var mime = /^image\/(png|jpeg|gif|bmp|webp)$/.test(String(typeMime || '')) ? typeMime : 'application/pdf';   // PDF scanné ou capture d'écran
+  var blob = Utilities.newBlob(Utilities.base64Decode(pdfBase64), mime, nomFichier || 'scan.pdf');
   var doc = Drive.Files.create({ name: 'OCR temporaire - ' + (nomFichier || 'scan'), mimeType: 'application/vnd.google-apps.document' },
     blob, { ocrLanguage: 'fr' });
   try {
