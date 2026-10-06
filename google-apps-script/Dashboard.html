@@ -387,6 +387,13 @@ button.petit { padding: 2px 8px; font-size: 12px; }
       <div class="barre"><label for="moisScaped">Mois</label><select id="moisScaped"></select>
         <button id="btnScaped" class="primaire">Préparer la facture</button><span class="msg" id="msgScaped"></span></div>
       <div id="apercuScaped"></div>
+      <details style="margin-top:12px"><summary><b>Avoir SCAPED</b> : coller le mail de demande d'avoir</summary>
+        <p class="note">Copiez le mail de SCAPED (le tableau compris) et collez-le ici. Le site repère les avoirs demandés (n° de facture, montant HT, commentaire).
+          Les avoirs sur une facture SCAPED (FA082026…) sont préparés dans le classeur des factures SCAPED ; ceux sur une facture INFORCE (FA20…) sont à faire dans INFORCE.</p>
+        <textarea id="mailAvoir" rows="7" style="width:100%" placeholder="Bonjour, Merci d'établir et de déposer sur extranet 2 avoirs…"></textarea>
+        <div class="barre" style="margin-top:6px"><button id="lireAvoir" class="primaire">Repérer les avoirs</button></div>
+        <div id="avoirsTrouves"></div>
+      </details>
     </div>
     <div class="barre"><label for="moisFact">Mois facturé</label><select id="moisFact"></select><span class="note" id="noteFact"></span></div>
     <div class="tuiles" id="tuilesFact2"></div>
@@ -1816,6 +1823,49 @@ function telechargerPeages(M) {
     msg.textContent = '';
   }).catch(function (e) { msg.textContent = '⚠ ' + e.message; });
 }
+// ---------- avoirs SCAPED : lecture du mail de demande ----------
+/** Repère dans le texte d'un mail les avoirs demandés : cellules « N° facture | AVOIR | montant HT | date | commentaire ». */
+function lireMailAvoir(texte) {
+  var cellules = String(texte || '').split(/[\t\r\n]+/).map(function (c) { return c.trim(); }).filter(String);
+  var estFacture = function (c) { return /^FA\d{6,}$/i.test(c); }, estMois = function (c) { return /^[A-Za-zÀ-ÿ]+\.?-\d{2}$/.test(c); };
+  var res = [];
+  cellules.forEach(function (c, i) {
+    if (!estFacture(c)) return;
+    var rang = [];
+    for (var j = i + 1; j < cellules.length && !estFacture(cellules[j]) && !estMois(cellules[j]) && !/^TOTAL/i.test(cellules[j]); j++) rang.push(cellules[j]);
+    if (!rang.some(function (x) { return /^AVOIR$/i.test(x); })) return;
+    var mt = rang.filter(function (x) { return /^-?\d[\d  ]*,\d{2}\s*€?$/.test(x); })[0];
+    if (!mt) return;   // pas de montant : avoir déjà traité (« OK »)
+    var com = rang.filter(function (x) { return !/^AVOIR$|^OK$/i.test(x) && !/^-?\d[\d  ]*,\d{2}\s*€?$/.test(x) && !/^\d{2}\/\d{2}\/\d{4}$/.test(x); }).join(' ');
+    var f = c.toUpperCase();
+    res.push({ facture: f, montant: Math.abs(nombreFr(mt.replace('€', ''))), commentaire: com, inforce: !/^FA\d{6}$/.test(f) });
+  });
+  return res;
+}
+function afficherAvoirs(liste) {
+  var z = document.getElementById('avoirsTrouves');
+  if (!liste.length) { z.innerHTML = '<div class="vide">Aucun avoir à faire repéré (il faut une ligne avec le n° de facture, « AVOIR » et un montant HT).</div>'; return; }
+  z.innerHTML = '<div class="tableau"><table class="edition serre"><thead><tr><th>Facture</th><th>Motif (écrit sur l\'avoir)</th><th class="n">Montant HT</th><th></th></tr></thead><tbody>' +
+    liste.map(function (a, i) {
+      return '<tr data-i="' + i + '"><td>' + txt(a.facture) + '</td><td><input data-k="motif" value="' + txt(a.commentaire ? 'Régularisation : ' + a.commentaire : 'Régularisation') + '" style="min-width:320px"></td>' +
+        '<td><input data-k="montant" value="' + txt(String(a.montant).replace('.', ',')) + '" size="9"></td><td>' +
+        (a.inforce ? '<span class="note">Facture INFORCE : avoir à faire dans INFORCE</span>' : '<button class="primaire" data-av="' + i + '">Préparer l\'avoir</button>') + '<span class="msg"></span></td></tr>';
+    }).join('') + '</tbody></table></div>';
+  z.querySelectorAll('[data-av]').forEach(function (b) {
+    b.onclick = function () {
+      var tr = b.closest('tr'), a = liste[+b.dataset.av], m = tr.querySelector('.msg');
+      var motif = tr.querySelector('[data-k=motif]').value.trim(), montant = nombreFr(tr.querySelector('[data-k=montant]').value);
+      if (!montant) { m.textContent = ' ⚠ montant ?'; return; }
+      m.className = 'msg'; m.textContent = ' Préparation…';
+      appelServeur('genererAvoirScaped', { facture: a.facture, lignes: [{ motif: motif, montantHT: montant }] }).then(function (r) {
+        m.className = 'msg ok';
+        m.innerHTML = ' ✓ Avoir ' + txt(r.numero) + ' : −' + fmtEur2.format(r.totalHT) + ' HT — <a href="' + txt(r.url) + '" target="_blank" rel="noopener">ouvrir l\'onglet « ' + txt(r.onglet) + ' »</a>';
+        charger();
+      }).catch(function (e) { m.className = 'msg err'; m.textContent = ' ⚠ ' + e.message; });
+    };
+  });
+}
+document.getElementById('lireAvoir').onclick = function () { afficherAvoirs(lireMailAvoir(document.getElementById('mailAvoir').value)); };
 function rendreScaped() {
   var sel = document.getElementById('moisScaped'), ancien = sel.value, j = new Date(), liste = [];
   for (var k = 0; k < 4; k++) { var d = new Date(j.getFullYear(), j.getMonth() - k, 1); liste.push(d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2)); }

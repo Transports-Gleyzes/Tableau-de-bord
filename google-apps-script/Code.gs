@@ -1499,6 +1499,75 @@ function controlePrefacs_(ss, jour0) {
   return { mois: res, alertes: alertes };
 }
 
+/**
+ * Avoir sur une facture SCAPED (classeur ID_FACTURE_SCAPED) : onglet « AVOIR FA082026 » avec l'en-tête de la facture,
+ * « Avoir N° : AV082026 », une ligne par motif en négatif, total HT / TVA 20 % / TTC.
+ * a = { facture: 'FA082026', lignes: [{ motif, montantHT (positif) }] }. Enregistré dans FACTURES_CLIENTS (nature AVOIR).
+ */
+function genererAvoirScaped(a) {
+  var ss = classeur_();
+  var fac = classeurParam_(ss, 'ID_FACTURE_SCAPED');
+  if (!fac) throw new Error('Collez le lien du Google Sheet des factures SCAPED dans PARAMETRES (ID_FACTURE_SCAPED)');
+  var numFac = String(a && a.facture || '').toUpperCase().trim();
+  var lignes = (a && a.lignes || []).map(function (l) { return { motif: String(l.motif || 'Avoir').slice(0, 300), ht: Math.abs(nombre_(l.montantHT, 0)) }; }).filter(function (l) { return l.ht > 0; });
+  if (!/^FA\d{6}$/.test(numFac)) throw new Error('N° de facture SCAPED invalide : ' + numFac);
+  if (!lignes.length) throw new Error('Montant de l\'avoir manquant');
+  // L'onglet de la facture d'origine (case à droite de « Facture N° : »)
+  var modele = null, dateFac = null, mv = null;
+  fac.getSheets().forEach(function (sh) {
+    if (modele || /^AVOIR/i.test(sh.getName())) return;
+    var v = sh.getDataRange().getValues();
+    for (var i = 0; i < Math.min(v.length, 60); i++) if (cle_(v[i][0]).indexOf('FACTURE N') === 0 && cle_(v[i][1]) === numFac) { modele = sh; mv = v; break; }
+  });
+  if (!modele) throw new Error('Facture ' + numFac + ' introuvable dans le classeur des factures SCAPED');
+  var colA = mv.map(function (l) { return cle_(l[0]); }), debuts = [];
+  colA.forEach(function (t, i) { if (t.indexOf('SAS LPB') === 0) debuts.push(i); });
+  var hauteur = debuts.length > 1 ? debuts[1] - debuts[0] : mv.length;
+  var ligneDe = function (test) { for (var i = 0; i < hauteur; i++) if (test(mv[i])) return i; return -1; };
+  var rDesig = ligneDe(function (l) { return cle_(l[0]) === 'DESIGNATION'; });
+  var rTotal = ligneDe(function (l) { return l.some(function (x) { return cle_(x) === 'TOTAL HT'; }); });
+  var rTrans = ligneDe(function (l) { return cle_(l[0]).indexOf('TRANSPORT') === 0; });
+  if (rDesig < 0 || rTotal < 0) throw new Error('Mise en page de la facture ' + numFac + ' non reconnue');
+  mv.forEach(function (l) { if (!dateFac && cle_(l[0]).indexOf('DATE') === 0 && l[1] instanceof Date) dateFac = l[1]; });
+  var nomOnglet = 'AVOIR ' + numFac, numAvoir = 'AV' + numFac.slice(2), nbCol = Math.max(7, modele.getLastColumn());
+  var ancien = fac.getSheetByName(nomOnglet); if (ancien) fac.deleteSheet(ancien);
+  var sh = fac.insertSheet(nomOnglet, fac.getSheets().length);
+  modele.getRange(1, 1, hauteur, nbCol).copyTo(sh.getRange(1, 1));
+  for (var k = 1; k <= hauteur; k++) { var hh = modele.getRowHeight(k); if (hh) sh.setRowHeight(k, hh); }
+  for (var c = 1; c <= nbCol; c++) sh.setColumnWidth(c, modele.getColumnWidth(c));
+  if (sh.getMaxRows() > hauteur) sh.deleteRows(hauteur + 1, sh.getMaxRows() - hauteur);
+  var aujourdhui = minuit_(new Date());
+  for (var i = 0; i < hauteur; i++) {
+    var t = cle_(mv[i][0]);
+    if (t.indexOf('DATE') === 0) sh.getRange(i + 1, 2).setValue(aujourdhui);
+    if (t.indexOf('FACTURE N') === 0) { sh.getRange(i + 1, 1).setValue('Avoir N° :'); sh.getRange(i + 1, 2).setValue(numAvoir); }
+    for (var c2 = 1; c2 < mv[i].length; c2++) if (i > rTotal && mv[i][c2] instanceof Date) sh.getRange(i + 1, c2 + 1).setNumberFormat('@').setValue('1/1');
+  }
+  if (rDesig >= 3) sh.getRange(rDesig - 1, 1).setValue('AVOIR').setFontWeight('bold').setFontSize(16);
+  var r0 = rDesig + 2;
+  sh.getRange(r0, 1, rTotal - rDesig - 1, nbCol).breakApart().clearContent();
+  sh.getRange(r0, 1).setValue('AVOIR SUR FACTURE N° ' + numFac + (dateFac ? ' DU ' + Utilities.formatDate(dateFac, FUSEAU, 'dd/MM/yyyy') : ''));
+  var r = r0 + 2;
+  lignes.forEach(function (l) {
+    if (rTrans >= 0) modele.getRange(rTrans + 1, 1, 1, nbCol).copyTo(sh.getRange(r, 1), { formatOnly: true });
+    sh.getRange(r, 1, 1, 7).setValues([[l.motif, '', '', 1, -l.ht, 0.2, '=D' + r + '*E' + r]]);
+    sh.getRange(r, 1).setWrap(true);
+    r += 2;
+  });
+  var rt = rTotal + 1, cTot = mv[rTotal].map(cle_).indexOf('TOTAL HT') + 1;
+  var colG = colonneLettre_(cTot + 1);
+  sh.getRange(rt - 2, cTot, 3, 2).setValues([['TOTAL HT', '=SUM(' + colG + (r0 + 2) + ':' + colG + (rt - 3) + ')'], ['TVA 20%', '=' + colG + (rt - 2) + '*20/100'], ['TOTAL TTC', '=' + colG + (rt - 2) + '+' + colG + (rt - 1)]]);
+  SpreadsheetApp.flush();
+  var total = Math.round(lignes.reduce(function (s2, l) { return s2 + l.ht; }, 0) * 100) / 100;
+  var mois = dateFac ? Utilities.formatDate(new Date(dateFac.getFullYear(), dateFac.getMonth(), 1), FUSEAU, 'yyyy-MM') : Utilities.formatDate(aujourdhui, FUSEAU, 'yyyy-MM');
+  try {
+    deposerFacture({ numero: numAvoir, date: Utilities.formatDate(aujourdhui, FUSEAU, 'yyyy-MM-dd'), mois: mois, societe: 'LPB', client: 'SCA PETROLE & DERIVES (SCAPED)',
+      refClient: String((mv.filter(function (l) { return cle_(l[0]).indexOf('REF') === 0; })[0] || [])[1] || ''), activite: 'Carburant',
+      lignes: lignes.map(function (l) { return { nature: 'AVOIR', lieu: '', quantite: 1, prix: -l.ht, montant: -l.ht }; }), netHT: -total }, '', '');
+  } catch (e) { /* l'avoir est préparé même si l'enregistrement pour le contrôle échoue */ }
+  return { onglet: nomOnglet, numero: numAvoir, facture: numFac, totalHT: total, url: fac.getUrl() + '#gid=' + sh.getSheetId() };
+}
+
 function calculerAlertes_(ss, aujourdhui) {
   var p = lireParametres_(ss);
   var preavis = nombre_(p.JOURS_PREAVIS, 30), urgent = nombre_(p.JOURS_URGENT, 7);
