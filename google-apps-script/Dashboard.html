@@ -1994,7 +1994,8 @@ function analyserPrefac(lignes) {
   u.forEach(function (x, i) {
     var d = x.match(/^(TERME FIXE J?|TERME FIXE|TERME VARIABLE|REGULARISATION|PEAGES?|DIFFERENCE [A-Z ]+?|INDEXATION GASOIL|[A-Z][A-Z ]+?)\s+(\d[\d ]*(?:,\d+)?)\s+(D|KM|FFT|V|J|U)?\s*([\d ]+,\d+)\s*€?\s*(?:([\d ]+,\d+)\s*)?([\d  ]+,\d{2})\s*€\s*$/);
     if (d && !/^MONTANT|^DATE|^DESIGNATION/.test(x)) {
-      pf.lignes.push({ designation: d[1].trim(), quantite: nombreFr(d[2]), unite: d[3] || '', prix: nombreFr(d[5] ? d[5] : d[4]), montant: nombreFr(d[6]) });
+      // indexation : « km  cours du mois  taux » -> prix = taux, cours gardé pour vérifier km × cours × taux
+      pf.lignes.push({ designation: d[1].trim(), quantite: nombreFr(d[2]), unite: d[3] || '', prix: nombreFr(d[5] ? d[5] : d[4]), cours: d[5] ? nombreFr(d[4]) : null, montant: nombreFr(d[6]) });
     }
   });
   // Détail : « 01/09/2026  1557087  570  KM », livraisons « Liv - 3510 - ITM VILLENEUVE LOUBET » du même bloc (Enl … Rep)
@@ -2037,7 +2038,7 @@ function rendrePrefacs(M) {
        x.reclamer ? '<span class="ou-prefac">' + x.reclamer + ' à réclamer à Intermarché</span>' : '',
        urg.length ? '<span class="ou-prefac">péages à vérifier</span>' : ''].filter(String).join(' ');
     return '<details class="prefac"' + (pb.length || urg.length ? ' open' : '') + '><summary><b>Contrat ' + txt(x.contrat) + '</b> · ' + txt(x.societe) + ' · préfac ' + txt(x.prefacs) +
-      ' · ' + x.nbPrefac + ' tournées · ' + fmtEur2.format(x.total) + ' HT ' + resume + '</summary>' +
+      ' · ' + x.nbPrefac + ' tournées · ' + fmtEur2.format(x.total) + ' HT' + (x.indexation ? ' (dont indexation ' + fmtEur2.format(x.indexation.montant) + ')' : '') + ' ' + resume + '</summary>' +
       (x.notes.length ? '<div class="notes-prefac">' + x.notes.map(function (n) { return '<div>' + (n.niveau === 'ok' ? '✓' : n.niveau === 'info' ? 'ℹ️' : badge(n.niveau, '')) + ' ' + txt(n.texte) + '</div>'; }).join('') + '</div>' : '') +
       (pb.length ? '<div class="tableau"><table class="serre">' + entete + '<tbody>' + pb.map(ligneTour).join('') + '</tbody></table></div>' : '') +
       '<button class="petit" data-tout="' + i + '">Voir les ' + x.tours.length + ' tournées</button><div class="tableau" id="toutes-' + i + '" hidden><table class="serre">' + entete + '<tbody>' +
@@ -2047,6 +2048,27 @@ function rendrePrefacs(M) {
   z.querySelectorAll('[data-tout]').forEach(function (b) {
     b.onclick = function () { var t = document.getElementById('toutes-' + b.dataset.tout); t.hidden = !t.hidden; b.textContent = t.hidden ? b.textContent.replace('Masquer', 'Voir') : b.textContent.replace('Voir', 'Masquer'); };
   });
+}
+/**
+ * Indexation par mois : factures déposées (lignes INDEXATION) ; pour Intermarché, la préfac fait foi quand elle est déposée
+ * (le mois et la société concernés ne reprennent alors pas l'indexation des factures INFORCE Inter, pour ne rien compter deux fois).
+ */
+function indexationLignes(fact) {
+  var res = [], prefac = {};
+  Object.keys(D.PREFACS || {}).forEach(function (m) {
+    (D.PREFACS[m] || []).forEach(function (x) {
+      if (!x.indexation || !x.indexation.montant || !garderSociete(x.societe)) return;
+      prefac[m + '|' + x.societe] = 1;
+      res.push({ mois: m, societe: x.societe, contrat: x.contrat, prefac: x.prefacs, montant: x.indexation.montant, km: x.indexation.km, cours: x.indexation.cours, taux: x.indexation.taux, source: 'prefac' });
+    });
+  });
+  fact.forEach(function (l) {
+    if (l.Nature !== 'INDEXATION') return;
+    var m = String(l.Mois).slice(0, 7);
+    if (l.Activite === 'Inter' && prefac[m + '|' + l.Societe]) return;
+    res.push({ mois: m, societe: l.Societe, montant: num(l.Montant_HT) || 0, source: 'facture' });
+  });
+  return res;
 }
 function rendreFacturation() {
   rendreScaped();
@@ -2065,7 +2087,9 @@ function rendreFacturation() {
   var an = (M || aujourdhui()).slice(0, 4);
   var htM = fM.filter(function (l) { return l.Nature !== 'INDEXATION'; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0);
   var ixM = fM.filter(function (l) { return l.Nature === 'INDEXATION'; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0);
-  var ixAn = fact.filter(function (l) { return l.Nature === 'INDEXATION' && String(l.Mois).slice(0, 4) === an; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0);
+  var IX = indexationLignes(fact);
+  var ixAn = IX.filter(function (x) { return x.mois.slice(0, 4) === an; }).reduce(function (t, x) { return t + x.montant; }, 0);
+  ixM = IX.filter(function (x) { return x.mois === M; }).reduce(function (t, x) { return t + x.montant; }, 0);
   var aVerifier = ctrl.carburant.filter(function (x) { return x.etats && x.etats.length && garderSociete(x.societe); }).length +
     ctrl.inter.filter(function (x) { return x.etats && x.etats.length && garderSociete(x.societe); }).length;
   var nbFact = {}; fM.forEach(function (l) { nbFact[l.N_Facture] = 1; });
@@ -2110,16 +2134,23 @@ function rendreFacturation() {
 
   // Fiche indexation : par mois de l'année (Gleyzes / LPB) et par client pour le mois choisi
   var moisAn = []; for (var k = 1; k <= 12; k++) moisAn.push(an + '-' + ('0' + k).slice(-2));
-  var parMoisSoc = function (m, so) { return fact.filter(function (l) { return l.Nature === 'INDEXATION' && String(l.Mois).slice(0, 7) === m && l.Societe === so; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0); };
+  var parMoisSoc = function (m, so) { return IX.filter(function (x) { return x.mois === m && x.societe === so; }).reduce(function (t, x) { return t + x.montant; }, 0); };
   var avecIndex = moisAn.filter(function (m) { return parMoisSoc(m, 'Gleyzes') || parMoisSoc(m, 'LPB'); });
-  var ixG = fact.filter(function (l) { return l.Nature === 'INDEXATION' && String(l.Mois).slice(0, 4) === an && l.Societe === 'Gleyzes'; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0);
-  document.getElementById('noteIndex').textContent = 'Total ' + an + ' : ' + fmtEur.format(ixAn) + ' (Gleyzes ' + fmtEur.format(ixG) + ', LPB ' + fmtEur.format(ixAn - ixG) + '), d\'après les factures déposées';
+  var ixG = IX.filter(function (x) { return x.mois.slice(0, 4) === an && x.societe === 'Gleyzes'; }).reduce(function (t, x) { return t + x.montant; }, 0);
+  document.getElementById('noteIndex').textContent = 'Total ' + an + ' : ' + fmtEur.format(ixAn) + ' (Gleyzes ' + fmtEur.format(ixG) + ', LPB ' + fmtEur.format(ixAn - ixG) + '), d\'après les factures et les préfacs Intermarché déposées';
   legende('legIndex', [['Gleyzes', css('--s1')], ['LPB', css('--s2')]]);
   dessiner('gIndex', { type: 'bar', data: { labels: avecIndex.map(nomMois), datasets: [
     barre('Gleyzes', avecIndex.map(function (m) { return parMoisSoc(m, 'Gleyzes') || null; }), css('--s1')),
     barre('LPB', avecIndex.map(function (m) { return parMoisSoc(m, 'LPB') || null; }), css('--s2'))] }, options: optionsCommunes(false) });
-  tableTriable('tabIndex', [['Client', 'client', 'txt'], ['Activité', 'activite', 'txt'], ['Société', 'societe', 'txt'], ['Base facturée', 'base', 'eur'], ['Taux %', 'pct', 'nb'], ['Indexation', 'montant', 'eur'], ['Factures', 'factures', 'txt']],
-    (ctrl.indexation || []).filter(function (x) { return garderSociete(x.societe) && x.montant; }), function (o, k) { return o[k]; });
+  var socPrefac = {}; IX.forEach(function (x) { if (x.mois === M && x.source === 'prefac') socPrefac[x.societe] = 1; });
+  var lignesIx = (ctrl.indexation || []).filter(function (x) { return garderSociete(x.societe) && x.montant && !(x.activite === 'Inter' && socPrefac[x.societe]); })
+    .concat(IX.filter(function (x) { return x.mois === M && x.source === 'prefac' && garderSociete(x.societe); }).map(function (x) {
+      return { client: 'ITM contrat ' + x.contrat, activite: 'Inter', societe: x.societe, base: x.km && x.cours ? Math.round(x.km * x.cours * 100) / 100 : null,
+        pct: x.taux !== null && x.taux !== undefined ? Math.round(x.taux * 10000) / 100 : null, montant: x.montant,
+        factures: 'préfac ' + x.prefac + (x.km ? ' · ' + fmtNb.format(x.km) + ' km × ' + String(x.cours || '?').replace('.', ',') + ' € × ' + String(x.taux || '?').replace('.', ',') : '') };
+    }));
+  tableTriable('tabIndex', [['Client', 'client', 'txt'], ['Activité', 'activite', 'txt'], ['Société', 'societe', 'txt'], ['Base facturée', 'base', 'eur'], ['Taux %', 'pct', 'nb'], ['Indexation', 'montant', 'eur'], ['Factures / calcul', 'factures', 'txt']],
+    lignesIx, function (o, k) { return o[k]; });
 
   // Factures déposées du mois
   var parN = {};
