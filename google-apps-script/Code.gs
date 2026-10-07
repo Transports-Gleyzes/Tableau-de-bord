@@ -43,7 +43,8 @@ var FEUILLES = {
   PREFACTURES: ['N_Prefac', 'Date', 'Mois', 'Contrat', 'Societe', 'Type', 'Designation', 'Quantite', 'Unite', 'Prix_Unitaire', 'Montant_HT',
                 'Date_Tournee', 'Tournee', 'KM', 'Livraisons', 'Total_HT', 'Depose_Le', 'Cours'],
   PEAGES: ['Mois', 'Quinzaine', 'Facture_Badge', 'Immatriculation', 'Date_Entree', 'Heure_Entree', 'Gare_Entree', 'Autoroute_Entree',
-           'Date_Sortie', 'Heure_Sortie', 'Gare_Sortie', 'Autoroute_Sortie', 'Societe_Autoroute', 'KM', 'Montant_HT', 'Montant_TTC', 'Contrat', 'Rembourse', 'Depose_Le'],
+           'Date_Sortie', 'Heure_Sortie', 'Gare_Sortie', 'Autoroute_Sortie', 'Societe_Autoroute', 'KM', 'Montant_HT', 'Montant_TTC', 'Contrat', 'Rembourse', 'Depose_Le', 'Manuel'],
+  PEAGES_BADGES: ['Mois', 'Badge', 'Camion_Reel', 'Du', 'Au', 'Commentaire', 'Documents', 'Modifie_Le'],
   BALANCE: ['Societe', 'Du', 'Au', 'Compte', 'Libelle', 'Debit', 'Credit', 'Poste', 'Camion', 'Importe_Le'],
   CORRESPONDANCES: ['Type', 'Sur_la_facture', 'Sur_le_planning', 'Remarque'],
   FACTURES_CLIENTS: ['N_Facture', 'Date_Facture', 'Mois', 'Societe', 'Client', 'Ref_Client', 'Activite', 'Nature', 'Lieu',
@@ -287,6 +288,7 @@ function getDonnees() {
   };
   try { d.PREFACS = controlePrefacs_(ss, minuit_(new Date())).mois; } catch (e) { d.PREFACS = {}; d.erreurs.push('Préfacs Intermarché : ' + e.message); }
   try { d.PEAGES_DETAIL = detailPeages_(ss); } catch (e) { d.PEAGES_DETAIL = {}; }
+  try { d.PEAGES_BADGES = badgesMois_(ss); } catch (e) { d.PEAGES_BADGES = {}; }
   try { d.PEAGES = synthesePeages_(ss); } catch (e) { d.PEAGES = []; d.erreurs.push('Péages : ' + e.message); }
   try { d.COMPTA = balances_(ss).map(syntheseBalance_); } catch (e) { d.COMPTA = []; d.erreurs.push('Balance comptable : ' + e.message); }
   try { d.CONTROLE = controleFactures_(ss, minuit_(new Date())).mois; } catch (e) { d.CONTROLE = {}; d.erreurs.push('Contrôle des factures : ' + e.message); }
@@ -1219,30 +1221,18 @@ function tourneesParCamion_(ss) {
 function deposerPeages(r) {
   if (!r || !Array.isArray(r.lignes) || !r.lignes.length) throw new Error('Aucun trajet lu dans le relevé');
   var ss = classeur_(), p = lireParametres_(ss), prefixe = String(p.PREFIXE_PEAGES_REMBOURSES || '7531').trim();
-  var idx = tourneesParCamion_(ss);
   // Mois et quinzaine du relevé : ceux de la majorité des trajets
   var compte = {};
   r.lignes.forEach(function (l) { var d = l.dateSortie || l.dateEntree; if (d) { var k = d.slice(0, 7) + '|' + (+d.slice(8, 10) <= 15 ? 1 : 2); compte[k] = (compte[k] || 0) + 1; } });
   var maj = Object.keys(compte).sort(function (a, b) { return compte[b] - compte[a]; })[0];
   if (!maj) throw new Error('Dates illisibles dans le relevé');
   var mois = maj.split('|')[0], quinz = +maj.split('|')[1];
-  var parImmat = {};
-  r.lignes.forEach(function (l) {
-    var im = plaque_(l.immat), d = l.dateSortie || l.dateEntree, cands = [];
-    [l.dateEntree, d].forEach(function (x) { if (!cands.length && x && idx[im + '|' + x]) cands = idx[im + '|' + x]; });   // jour d'entrée, sinon de sortie
-    l.contrat = cands.join('/'); l.rembourse = cands.some(function (c) { return c.indexOf(prefixe) === 0; });
-    (parImmat[im] = parImmat[im] || []).push(l);
-  });
-  var gardes = Object.keys(parImmat).filter(function (im) { return parImmat[im].some(function (l) { return l.contrat; }); });
-  var ecartes = Object.keys(parImmat).filter(function (im) { return gardes.indexOf(im) < 0; });
   var maintenant = new Date(), propre = function (x) { return String(x === undefined || x === null ? '' : x).replace(/^[=+\-@]/, "'$&").slice(0, 80); };
-  var lignes = [];
-  gardes.forEach(function (im) {
-    parImmat[im].forEach(function (l) {
-      lignes.push([mois, quinz, propre(r.facture), im, dateDepuisTexte_(l.dateEntree) || '', propre(l.heureEntree), propre(l.gareEntree), propre(l.autorouteEntree),
-        dateDepuisTexte_(l.dateSortie) || '', propre(l.heureSortie), propre(l.gareSortie), propre(l.autorouteSortie), propre(l.societe), nombre_(l.km, ''),
-        nombre_(l.ht, 0), nombre_(l.ttc, 0), l.contrat || '', l.contrat ? (l.rembourse ? 'OUI' : 'NON') : 'À AFFECTER', maintenant]);
-    });
+  // Tous les trajets sont gardés (contrat et statut calculés ensuite : un badge « écarté » peut être réaffecté à un autre camion)
+  var lignes = r.lignes.map(function (l) {
+    return [mois, quinz, propre(r.facture), plaque_(l.immat), dateDepuisTexte_(l.dateEntree) || '', propre(l.heureEntree), propre(l.gareEntree), propre(l.autorouteEntree),
+      dateDepuisTexte_(l.dateSortie) || '', propre(l.heureSortie), propre(l.gareSortie), propre(l.autorouteSortie), propre(l.societe), nombre_(l.km, ''),
+      nombre_(l.ht, 0), nombre_(l.ttc, 0), '', '', maintenant, ''];
   });
   var verrou = LockService.getScriptLock();
   verrou.waitLock(15000);
@@ -1258,11 +1248,93 @@ function deposerPeages(r) {
   } finally {
     verrou.releaseLock();
   }
-  var somme = function (f) { return Math.round(lignes.filter(f).reduce(function (t, l) { return t + l[14]; }, 0) * 100) / 100; };
-  return { mois: mois, quinzaine: quinz, trajets: lignes.length, camions: gardes, ecartes: ecartes,
-    rembourseHT: somme(function (l) { return l[17] === 'OUI'; }), nonRembourseHT: somme(function (l) { return l[17] === 'NON'; }),
-    aAffecter: lignes.filter(function (l) { return l[17] === 'À AFFECTER'; }).map(function (l) { return l[3] + ' ' + Utilities.formatDate(l[8] || l[4], FUSEAU, 'dd/MM'); })
-      .filter(function (v, i, a) { return a.indexOf(v) === i; }) };
+  recalculerPeages_(ss, mois);
+  var miennes = peages_(ss).filter(function (l) { return String(l.Facture_Badge) === String(r.facture); });
+  var somme = function (f) { return Math.round(miennes.filter(f).reduce(function (t, l) { return t + nombre_(l.Montant_HT, 0); }, 0) * 100) / 100; };
+  var uniques = function (a) { return a.filter(function (v, i) { return a.indexOf(v) === i; }); };
+  return { mois: mois, quinzaine: quinz, trajets: miennes.filter(function (l) { return l.Rembourse !== 'ÉCARTÉ'; }).length,
+    camions: uniques(miennes.filter(function (l) { return l.Rembourse !== 'ÉCARTÉ'; }).map(function (l) { return l.Immatriculation; })),
+    ecartes: uniques(miennes.filter(function (l) { return l.Rembourse === 'ÉCARTÉ'; }).map(function (l) { return l.Immatriculation; })),
+    rembourseHT: somme(function (l) { return l.Rembourse === 'OUI'; }), nonRembourseHT: somme(function (l) { return l.Rembourse === 'NON'; }),
+    aAffecter: uniques(miennes.filter(function (l) { return l.Rembourse === 'À AFFECTER'; }).map(function (l) { return l.Immatriculation + ' ' + String(l.Date_Sortie || l.Date_Entree).slice(8, 10) + '/' + String(l.Date_Sortie || l.Date_Entree).slice(5, 7); })) };
+}
+
+/** Fiches badge (camion réel, période, commentaire, documents) : { 'AAAA-MM|BADGE': {...} } */
+function badgesPeages_(ss) {
+  var sh = ss.getSheetByName('PEAGES_BADGES'), res = {};
+  var iso = function (v) { return v instanceof Date ? Utilities.formatDate(v, FUSEAU, 'yyyy-MM-dd') : String(v || ''); };
+  (sh ? lireTable_(sh) : []).forEach(function (l) {
+    var m = moisTexte_(l.Mois) || String(l.Mois), b = plaque_(l.Badge); if (!m || !b) return;
+    res[m + '|' + b] = { mois: m, badge: b, camionReel: plaque_(l.Camion_Reel), du: iso(l.Du), au: iso(l.Au), commentaire: String(l.Commentaire || ''),
+      documents: String(l.Documents || '').split('\n').filter(String).map(function (d) { var p = d.split('|'); return { nom: p[0], url: p.slice(1).join('|') }; }) };
+  });
+  return res;
+}
+
+/**
+ * Recalcule contrat et statut des trajets d'un mois : camion = celui du badge, ou le « camion réel » de la fiche badge
+ * sur sa période ; contrat = tournée Inter de ce camion le même jour. Statut : OUI / NON (remboursé ou pas),
+ * À AFFECTER (badge Intermarché, jour sans tournée), ÉCARTÉ (badge sans aucune tournée Intermarché ce mois-là).
+ * Les contrats saisis à la main (✎) sont conservés.
+ */
+function recalculerPeages_(ss, mois) {
+  var sh = ss.getSheetByName('PEAGES'); if (!sh || sh.getLastRow() < 2) return;
+  var prefixe = String(lireParametres_(ss).PREFIXE_PEAGES_REMBOURSES || '7531').trim();
+  var idx = tourneesParCamion_(ss), fiches = badgesPeages_(ss);
+  var v = sh.getRange(1, 1, sh.getLastRow(), Math.max(FEUILLES.PEAGES.length, sh.getLastColumn())).getValues(), e = v[0].map(String);
+  var col = function (h) { return e.indexOf(h); }, cM = col('Mois'), cI = col('Immatriculation'), cDE = col('Date_Entree'), cDS = col('Date_Sortie'), cC = col('Contrat'), cR = col('Rembourse'), cMa = col('Manuel');
+  var iso = function (x) { return x instanceof Date ? Utilities.formatDate(x, FUSEAU, 'yyyy-MM-dd') : String(x || ''); };
+  var lignes = [], parBadge = {};
+  for (var i = 1; i < v.length; i++) {
+    if ((moisTexte_(v[i][cM]) || String(v[i][cM])) !== mois) continue;
+    var badge = plaque_(v[i][cI]), dE = iso(v[i][cDE]), dS = iso(v[i][cDS]), jour = dS || dE, f = fiches[mois + '|' + badge];
+    var camion = f && f.camionReel && (!f.du || jour >= f.du) && (!f.au || jour <= f.au) ? f.camionReel : badge;
+    var manuel = cMa >= 0 && String(v[i][cMa]) === 'OUI';
+    var cands = []; [dE, dS].forEach(function (x) { if (!cands.length && x && idx[camion + '|' + x]) cands = idx[camion + '|' + x]; });
+    var contrat = manuel ? String(v[i][cC] || '') : cands.join('/');
+    lignes.push({ i: i, badge: badge, contrat: contrat, manuel: manuel });
+    if (contrat) parBadge[badge] = 1;
+  }
+  lignes.forEach(function (l) {
+    v[l.i][cC] = l.contrat;
+    v[l.i][cR] = l.contrat ? (l.contrat.split('/').some(function (x) { return x.indexOf(prefixe) === 0; }) ? 'OUI' : 'NON') : (parBadge[l.badge] ? 'À AFFECTER' : 'ÉCARTÉ');
+  });
+  if (lignes.length) sh.getRange(2, cC + 1, v.length - 1, 2).setValues(v.slice(1).map(function (r) { return [r[cC], r[cR]]; }));
+}
+
+/** Depuis le site : fiche d'un badge pour un mois (camion réel et période, commentaire), puis recalcul des contrats. */
+function enregistrerFicheBadge(f) {
+  var mois = String(f && f.mois || ''), badge = plaque_(f && f.badge);
+  if (!/^\d{4}-\d{2}$/.test(mois) || !badge) throw new Error('Mois ou badge invalide');
+  var ss = classeur_(), sh = ss.getSheetByName('PEAGES_BADGES');
+  if (!sh) { sh = ss.insertSheet('PEAGES_BADGES'); sh.setFrozenRows(1); }
+  sh.getRange(1, 1, 1, FEUILLES.PEAGES_BADGES.length).setValues([FEUILLES.PEAGES_BADGES]).setFontWeight('bold');
+  var propre = function (x) { return String(x === undefined || x === null ? '' : x).replace(/^[=+\-@]/, "'$&").slice(0, 2000); };
+  var v = sh.getDataRange().getValues(), ligne = -1;
+  for (var i = 1; i < v.length; i++) if ((moisTexte_(v[i][0]) || String(v[i][0])) === mois && plaque_(v[i][1]) === badge) ligne = i + 1;
+  var docs = ligne > 0 ? String(v[ligne - 1][6] || '') : '';
+  var vals = [[mois, badge, plaque_(f.camionReel), dateDepuisTexte_(f.du) || '', dateDepuisTexte_(f.au) || '', propre(f.commentaire), docs, new Date()]];
+  if (ligne > 0) sh.getRange(ligne, 1, 1, vals[0].length).setValues(vals); else sh.getRange(sh.getLastRow() + 1, 1, 1, vals[0].length).setValues(vals);
+  recalculerPeages_(ss, mois);
+  return true;
+}
+
+/** Depuis le site : document joint à la fiche d'un badge (rangé dans Drive : Tableau de bord - Péages Intermarché / AAAA-MM). */
+function joindreDocumentPeages(mois, badge, nom, base64, typeMime) {
+  if (!/^\d{4}-\d{2}$/.test(String(mois)) || !plaque_(badge)) throw new Error('Mois ou badge invalide');
+  var it = DriveApp.getFoldersByName('Tableau de bord - Péages Intermarché'), racine = it.hasNext() ? it.next() : DriveApp.createFolder('Tableau de bord - Péages Intermarché');
+  var sous = racine.getFoldersByName(mois), dossier = sous.hasNext() ? sous.next() : racine.createFolder(mois);
+  var nomF = plaque_(badge) + ' - ' + String(nom || 'document').replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
+  var url = dossier.createFile(Utilities.newBlob(Utilities.base64Decode(base64), typeMime || 'application/octet-stream', nomF)).getUrl();
+  var ss = classeur_(), sh = ss.getSheetByName('PEAGES_BADGES');
+  if (!sh) { sh = ss.insertSheet('PEAGES_BADGES'); sh.setFrozenRows(1); }
+  sh.getRange(1, 1, 1, FEUILLES.PEAGES_BADGES.length).setValues([FEUILLES.PEAGES_BADGES]).setFontWeight('bold');
+  var v = sh.getDataRange().getValues(), ligne = -1;
+  for (var i = 1; i < v.length; i++) if ((moisTexte_(v[i][0]) || String(v[i][0])) === mois && plaque_(v[i][1]) === plaque_(badge)) ligne = i + 1;
+  var entree = String(nom || 'document').replace(/[|\n]/g, ' ') + '|' + url;
+  if (ligne > 0) sh.getRange(ligne, 7, 1, 2).setValues([[(String(v[ligne - 1][6] || '') ? String(v[ligne - 1][6]) + '\n' : '') + entree, new Date()]]);
+  else sh.getRange(sh.getLastRow() + 1, 1, 1, 8).setValues([[mois, plaque_(badge), '', '', '', '', entree, new Date()]]);
+  return { nom: nom, url: url };
 }
 
 /** Lignes PEAGES (dates en texte AAAA-MM-JJ). */
@@ -1279,6 +1351,7 @@ function affecterPeages(mois, immat, jour, contrat) {
   var ss = classeur_(), sh = ss.getSheetByName('PEAGES'); if (!sh) throw new Error('Aucun péage enregistré');
   var prefixe = String(lireParametres_(ss).PREFIXE_PEAGES_REMBOURSES || '7531').trim();
   var c = String(contrat || '').replace(/[^\d\/]/g, '');
+  sh.getRange(1, 1, 1, FEUILLES.PEAGES.length).setValues([FEUILLES.PEAGES]);
   var v = sh.getDataRange().getValues(), e = v[0].map(String), col = function (h) { return e.indexOf(h); }, n = 0;
   var iso = function (x) { return x instanceof Date ? Utilities.formatDate(x, FUSEAU, 'yyyy-MM-dd') : String(x || ''); };
   for (var i = 1; i < v.length; i++) {
@@ -1286,6 +1359,7 @@ function affecterPeages(mois, immat, jour, contrat) {
     if ((moisTexte_(l[col('Mois')]) || String(l[col('Mois')])) !== mois || plaque_(l[col('Immatriculation')]) !== plaque_(immat)) continue;
     if ((iso(l[col('Date_Sortie')]) || iso(l[col('Date_Entree')])) !== jour) continue;
     sh.getRange(i + 1, col('Contrat') + 1, 1, 2).setValues([[c, !c ? 'À AFFECTER' : (c.split('/').some(function (x) { return x.indexOf(prefixe) === 0; }) ? 'OUI' : 'NON')]]);
+    if (col('Manuel') >= 0) sh.getRange(i + 1, col('Manuel') + 1).setValue(c ? 'OUI' : '');
     n++;
   }
   return n;
@@ -1297,10 +1371,28 @@ function detailPeages_(ss) {
   lignes.forEach(function (l) { mois[l.Mois] = 1; });
   var garder = Object.keys(mois).sort().reverse().slice(0, 4), res = {};
   lignes.forEach(function (l) {
-    if (garder.indexOf(l.Mois) < 0) return;
+    if (garder.indexOf(l.Mois) < 0 || l.Rembourse === 'ÉCARTÉ') return;
     (res[l.Mois] = res[l.Mois] || []).push([+l.Quinzaine, l.Immatriculation, l.Date_Entree, l.Heure_Entree, l.Gare_Entree, l.Autoroute_Entree, l.Date_Sortie, l.Heure_Sortie,
       l.Gare_Sortie, l.Autoroute_Sortie, l.Societe_Autoroute, nombre_(l.KM, ''), nombre_(l.Montant_HT, 0), nombre_(l.Montant_TTC, 0), String(l.Contrat || ''), l.Rembourse]);
   });
+  return res;
+}
+
+/** Badges des 4 derniers mois : trajets, montant, statut (Intermarché ou écarté), fiche (camion réel, commentaire, documents). */
+function badgesMois_(ss) {
+  var fiches = badgesPeages_(ss), res = {}, mois = {};
+  peages_(ss).forEach(function (l) {
+    var k = l.Mois + '|' + l.Immatriculation, b = mois[k] = mois[k] || { mois: l.Mois, badge: l.Immatriculation, trajets: 0, ht: 0, ecarte: true };
+    b.trajets++; b.ht += nombre_(l.Montant_HT, 0); if (l.Rembourse !== 'ÉCARTÉ') b.ecarte = false;
+  });
+  Object.keys(fiches).forEach(function (k) { if (!mois[k]) mois[k] = { mois: fiches[k].mois, badge: fiches[k].badge, trajets: 0, ht: 0, ecarte: true }; });
+  var garder = Object.keys(mois).map(function (k) { return mois[k].mois; }).filter(function (m, i, a) { return a.indexOf(m) === i; }).sort().reverse().slice(0, 4);
+  Object.keys(mois).forEach(function (k) {
+    var b = mois[k]; if (garder.indexOf(b.mois) < 0) return;
+    b.ht = Math.round(b.ht * 100) / 100; b.fiche = fiches[k] || null;
+    (res[b.mois] = res[b.mois] || []).push(b);
+  });
+  Object.keys(res).forEach(function (m) { res[m].sort(function (a, b) { return a.ecarte - b.ecarte || a.badge.localeCompare(b.badge); }); });
   return res;
 }
 
@@ -1315,6 +1407,7 @@ function marquerPeagesEnvoyes(mois, envoye) {
 function synthesePeages_(ss) {
   var par = {}, pr = PropertiesService.getScriptProperties().getProperties();
   peages_(ss).forEach(function (l) {
+    if (l.Rembourse === 'ÉCARTÉ') return;   // badge sans tournée Intermarché ce mois-là
     var m = par[l.Mois] = par[l.Mois] || { mois: l.Mois, quinzaines: {}, contrats: {}, tousContrats: {}, camions: {}, rembourse: 0, nonRembourse: 0, aAffecter: [], envoye: pr['PEAGES_ENVOYE_' + l.Mois] || '' };
     var ht = nombre_(l.Montant_HT, 0);
     m.quinzaines[l.Quinzaine] = (m.quinzaines[l.Quinzaine] || 0) + 1;

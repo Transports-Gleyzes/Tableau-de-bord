@@ -140,11 +140,69 @@ button.petit { padding: 2px 8px; font-size: 12px; }
 .legende { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
 .legende i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 @media (max-width: 600px) { header h1 { font-size: 16px; } .tuile .val { font-size: 20px; } .graph { height: 240px; } }
+
+/* ---------- habillage : en-tête bleu marine, onglets en pastilles, cartes arrondies ---------- */
+:root { --page: #eef2f7; --surface: #ffffff; --surface-2: #f3f6fa; --border: #dfe5ee; --marine: #13294b; --marine-2: #1f4f8f; --ombre: 0 1px 2px rgba(19,41,75,.06), 0 4px 14px rgba(19,41,75,.06); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --page: #0f1218; --surface: #181c24; --surface-2: #20252f; --border: #2c3340; --marine: #0b1a33; --marine-2: #163a6b; --ombre: 0 1px 2px rgba(0,0,0,.4); } }
+:root[data-theme="dark"] { --page: #0f1218; --surface: #181c24; --surface-2: #20252f; --border: #2c3340; --marine: #0b1a33; --marine-2: #163a6b; --ombre: 0 1px 2px rgba(0,0,0,.4); }
+body { background: var(--page); }
+header { background: linear-gradient(120deg, var(--marine) 0%, var(--marine-2) 100%); color: #fff; border-bottom: 0; padding: 14px 20px; }
+header .marque { display: flex; align-items: center; gap: 12px; flex: 1 1 auto; min-width: 0; }
+header .logo { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; font-size: 22px; background: rgba(255,255,255,.14); flex: none; }
+header h1 { font-size: 20px; color: #fff; letter-spacing: .01em; }
+header .sous-marque { font-size: 12px; color: rgba(255,255,255,.75); }
+header .maj { color: rgba(255,255,255,.75); }
+header select, header button { background: rgba(255,255,255,.12); color: #fff; border-color: rgba(255,255,255,.28); }
+header select option { color: #111; }
+header button:hover { background: rgba(255,255,255,.22); }
+nav { background: var(--surface); padding: 10px 16px; gap: 6px; border-bottom: 1px solid var(--border); box-shadow: var(--ombre); position: sticky; top: 0; z-index: 5; }
+nav button { border: 1px solid transparent; border-radius: 999px; padding: 7px 14px; color: var(--text-2); }
+nav button:hover { background: var(--surface-2); color: var(--text); }
+nav button[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+nav .ico-onglet { margin-right: 6px; }
+main { padding: 20px 16px 40px; }
+.carte, .tuile, .attention { border-radius: 14px; border-color: var(--border); box-shadow: var(--ombre); }
+.carte { padding: 16px 18px; }
+.carte h2 { font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.carte h2::before { content: ''; width: 4px; height: 16px; border-radius: 2px; background: var(--accent); flex: none; }
+.carte.inter h2::before, .carte.carbu h2::before { display: none; }
+.carte.inter { border-top-color: var(--s1); } .carte.carbu { border-top-color: var(--s2); }
+.tuile { position: relative; overflow: hidden; padding: 14px 16px 12px; }
+.tuile::before { content: ''; position: absolute; left: 0; top: 0; right: 0; height: 4px; background: var(--s1); }
+.tuiles .tuile:nth-child(6n+2)::before { background: var(--s3); }
+.tuiles .tuile:nth-child(6n+3)::before { background: var(--s2); }
+.tuiles .tuile:nth-child(6n+4)::before { background: var(--s6); }
+.tuiles .tuile:nth-child(6n+5)::before { background: var(--s4); }
+.tuiles .tuile:nth-child(6n+6)::before { background: var(--s5); }
+.tuile .lib { text-transform: uppercase; letter-spacing: .04em; font-size: 11px; font-weight: 600; }
+.tuile .val { font-weight: 700; }
+th { background: var(--surface-2); }
+tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+tbody tr:hover td { background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+button { border-radius: 8px; transition: background .15s, border-color .15s; }
+button:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+button.primaire { background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 88%, #fff), var(--accent)); box-shadow: 0 1px 2px rgba(19,41,75,.2); }
+button.primaire:hover { filter: brightness(1.05); }
+select, input, textarea { border-radius: 8px; }
+input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 1px; }
+.depot { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); background: color-mix(in srgb, var(--accent) 4%, var(--surface)); border-radius: 12px; }
+.depot:hover { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.attention { border-left-width: 6px; }
+.badge { border-radius: 999px; }
+.sous-titre { font-size: 14px; margin: 16px 0 4px; }
+details.badge-peage { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; margin-top: 8px; background: var(--surface); }
+details.badge-peage.ecarte { background: var(--surface-2); }
+details.badge-peage > summary { cursor: pointer; line-height: 1.9; }
+details.badge-peage .fiche { margin-top: 8px; }
+details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; font-size: 13px; }
+.bouton-fichier { display: inline-block; cursor: pointer; border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; background: var(--surface); color: var(--text); font-size: 14px; }
+.bouton-fichier:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+@media (max-width: 600px) { header { padding: 12px 16px; } header .logo { width: 36px; height: 36px; font-size: 18px; } nav { padding: 8px 10px; } nav button { padding: 6px 10px; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>Tableau de bord Gleyzes / LPB</h1>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports</div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -153,18 +211,18 @@ button.petit { padding: 2px 8px; font-size: 12px; }
   <span class="maj" id="maj"></span>
 </header>
 <nav role="tablist" id="onglets">
-  <button role="tab" data-onglet="accueil" aria-selected="true">Accueil</button>
-  <button role="tab" data-onglet="finances">Finances</button>
-  <button role="tab" data-onglet="charges">Charges</button>
-  <button role="tab" data-onglet="flotte">Flotte</button>
-  <button role="tab" data-onglet="salaries">Salariés</button>
-  <button role="tab" data-onglet="activite">Activité</button>
-  <button role="tab" data-onglet="conso">Consommation</button>
-  <button role="tab" data-onglet="factures">Factures</button>
-  <button role="tab" data-onglet="facturation">Contrôle factures</button>
-  <button role="tab" data-onglet="compta">Comptabilité</button>
-  <button role="tab" data-onglet="alertes">Alertes <span class="pastille" id="nbAlertes" hidden></span></button>
-  <button role="tab" data-onglet="saisie">Saisie rapide</button>
+  <button role="tab" data-onglet="accueil" aria-selected="true"><span class="ico-onglet" aria-hidden="true">🏠</span>Accueil</button>
+  <button role="tab" data-onglet="finances"><span class="ico-onglet" aria-hidden="true">💶</span>Finances</button>
+  <button role="tab" data-onglet="charges"><span class="ico-onglet" aria-hidden="true">🧾</span>Charges</button>
+  <button role="tab" data-onglet="flotte"><span class="ico-onglet" aria-hidden="true">🚛</span>Flotte</button>
+  <button role="tab" data-onglet="salaries"><span class="ico-onglet" aria-hidden="true">👥</span>Salariés</button>
+  <button role="tab" data-onglet="activite"><span class="ico-onglet" aria-hidden="true">📦</span>Activité</button>
+  <button role="tab" data-onglet="conso"><span class="ico-onglet" aria-hidden="true">⛽</span>Consommation</button>
+  <button role="tab" data-onglet="factures"><span class="ico-onglet" aria-hidden="true">📄</span>Factures</button>
+  <button role="tab" data-onglet="facturation"><span class="ico-onglet" aria-hidden="true">✅</span>Contrôle factures</button>
+  <button role="tab" data-onglet="compta"><span class="ico-onglet" aria-hidden="true">📊</span>Comptabilité</button>
+  <button role="tab" data-onglet="alertes"><span class="ico-onglet" aria-hidden="true">🔔</span>Alertes <span class="pastille" id="nbAlertes" hidden></span></button>
+  <button role="tab" data-onglet="saisie"><span class="ico-onglet" aria-hidden="true">✏️</span>Saisie rapide</button>
 </nav>
 <main>
   <div id="chargement">Chargement des données…</div>
@@ -378,6 +436,7 @@ button.petit { padding: 2px 8px; font-size: 12px; }
       <div class="tableau" style="margin-top:10px"><table id="tabPeages" class="serre"></table></div>
       <div class="barre" style="margin-top:12px"><label for="moisPeages">Planning des péages</label><select id="moisPeages"></select>
         <button id="dlPeages" class="primaire">⬇ Télécharger le fichier Excel</button><span class="msg" id="msgPeages"></span></div>
+      <div id="badgesPeages"></div>
       <div id="planningPeages"></div>
     </div>
     <div class="carte">
@@ -1730,7 +1789,8 @@ function rendrePeages() {
   document.querySelectorAll('[data-penv]').forEach(function (b) {
     b.onclick = function () { appelServeur('marquerPeagesEnvoyes', b.dataset.penv, b.dataset.v === '1').then(function () { charger(); }).catch(function (e) { alert(e.message); }); };
   });
-  var sel = document.getElementById('moisPeages'), ancien = sel.value, moisDispo = Object.keys(D.PEAGES_DETAIL || {}).sort().reverse();
+  var mp = {}; Object.keys(D.PEAGES_DETAIL || {}).concat(Object.keys(D.PEAGES_BADGES || {})).forEach(function (m) { mp[m] = 1; });
+  var sel = document.getElementById('moisPeages'), ancien = sel.value, moisDispo = Object.keys(mp).sort().reverse();
   sel.innerHTML = moisDispo.map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
   if (moisDispo.indexOf(ancien) >= 0) sel.value = ancien;
   sel.onchange = rendrePlanningPeages;
@@ -1756,8 +1816,48 @@ function planPeages(M) {
   });
   return res;
 }
+function ficheBadge(M, b) { return ((D.PEAGES_BADGES || {})[M] || []).filter(function (x) { return x.badge === b; }).map(function (x) { return x.fiche; })[0] || null; }
+function rendreBadgesPeages(M) {
+  var z = document.getElementById('badgesPeages'), liste = (D.PEAGES_BADGES || {})[M] || [];
+  if (!liste.length) { z.innerHTML = ''; return; }
+  z.innerHTML = '<h3 class="sous-titre">Badges de ' + txt(nomMois(M)) + ' : commentaires et documents</h3><p class="note">Un badge était dans un autre tracteur ? Indiquez le camion réel (et la période) : ses péages sont rattachés aux tournées de ce camion. ' +
+    'Ajoutez un commentaire et les justificatifs (PDF, photo, mail).</p>' +
+    liste.map(function (b, i) {
+      var f = b.fiche || {}, docs = f.documents || [];
+      return '<details class="badge-peage' + (b.ecarte ? ' ecarte' : '') + '"' + (f.commentaire || f.camionReel ? ' open' : '') + '><summary><b>' + txt(b.badge) + '</b> · ' + b.trajets + ' trajets · ' + fmtEur2.format(b.ht) + ' HT · ' +
+        (b.ecarte ? '<span class="ou-prefac">écarté : aucune tournée Intermarché</span>' : '<span class="ou-planning">Intermarché</span>') +
+        (f.camionReel ? ' · dans ' + txt(f.camionReel) : '') + (f.commentaire ? ' · 💬' : '') + (docs.length ? ' · 📎 ' + docs.length : '') + '</summary>' +
+        '<div class="fiche" data-b="' + txt(b.badge) + '"><div class="barre"><label>Badge dans le camion<input data-f="camionReel" value="' + txt(f.camionReel || '') + '" placeholder="ex. GE606BF" size="10"></label>' +
+        '<label>du<input type="date" data-f="du" value="' + txt(f.du || '') + '"></label><label>au<input type="date" data-f="au" value="' + txt(f.au || '') + '"></label></div>' +
+        '<textarea data-f="commentaire" rows="3" style="width:100%;margin-top:6px" placeholder="Commentaire (ex. le badge GD042ZC était dans le tracteur GE606BF du 3 au 14/08)">' + txt(f.commentaire || '') + '</textarea>' +
+        '<div class="docs">' + docs.map(function (d) { return '<a href="' + txt(d.url) + '" target="_blank" rel="noopener">📎 ' + txt(d.nom) + '</a>'; }).join(' ') + '</div>' +
+        '<div class="barre" style="margin-top:6px"><button class="primaire" data-a="enreg">Enregistrer</button>' +
+        '<label class="bouton-fichier">📎 Joindre des documents<input type="file" data-a="docs" multiple hidden></label><span class="msg"></span></div></div></details>';
+    }).join('');
+  z.querySelectorAll('.fiche').forEach(function (fi) {
+    var badgeF = fi.dataset.b, msg = fi.querySelector('.msg');
+    var val = function (k) { return fi.querySelector('[data-f=' + k + ']').value.trim(); };
+    fi.querySelector('[data-a=enreg]').onclick = function () {
+      msg.className = 'msg'; msg.textContent = 'Enregistrement…';
+      appelServeur('enregistrerFicheBadge', { mois: M, badge: badgeF, camionReel: val('camionReel').toUpperCase().replace(/[\s-]/g, ''), du: val('du'), au: val('au'), commentaire: val('commentaire') })
+        .then(function () { msg.className = 'msg ok'; msg.textContent = '✓ Enregistré'; charger(); }).catch(function (e) { msg.className = 'msg err'; msg.textContent = '⚠ ' + e.message; });
+    };
+    fi.querySelector('[data-a=docs]').onchange = function (e) {
+      var fichiers = Array.prototype.slice.call(e.target.files), suite = Promise.resolve();
+      fichiers.forEach(function (f) {
+        suite = suite.then(function () {
+          msg.className = 'msg'; msg.textContent = 'Envoi de ' + f.name + '…';
+          return f.arrayBuffer().then(function (b) { return appelServeur('joindreDocumentPeages', M, badgeF, f.name, base64Depuis(b), f.type); });
+        });
+      });
+      suite.then(function () { msg.className = 'msg ok'; msg.textContent = '✓ ' + fichiers.length + ' document(s) joint(s)'; charger(); })
+        .catch(function (er) { msg.className = 'msg err'; msg.textContent = '⚠ ' + er.message; });
+    };
+  });
+}
 function rendrePlanningPeages() {
   var M = document.getElementById('moisPeages').value, plan = planPeages(M), z = document.getElementById('planningPeages');
+  rendreBadgesPeages(M);
   if (!plan.length) { z.innerHTML = ''; return; }
   z.innerHTML = plan.map(function (p) {
     return '<details' + (plan.length === 1 ? ' open' : '') + ' style="margin-top:8px"><summary><b>' + (p.q === 1 ? 'Première' : 'Deuxième') + ' quinzaine</b> · ' +
@@ -1774,7 +1874,7 @@ function rendrePlanningPeages() {
               '</td><td>' + txt(l[8]) + '</td><td class="n">' + (l[11] === '' ? '' : fmtNb.format(l[11])) + '</td><td class="n"' + style + '>' + fmtEur2.format(l[12]) +
               '</td><td class="n"' + style + '>' + fmtEur2.format(l[13]) + '</td>' + cellC + '</tr>';
           }).join('');
-        }).join('') + '<tr><td colspan="5"><b>Total badge ' + txt(c.immat) + '</b></td><td class="n"><b>' + fmtEur2.format(c.ht) + '</b></td><td class="n"><b>' + fmtEur2.format(c.ttc) + '</b></td><td></td></tr>';
+        }).join('') + '<tr><td colspan="5"><b>Total badge ' + txt(c.immat) + '</b>' + (function () { var f = ficheBadge(M, c.immat); return f && (f.commentaire || f.camionReel) ? '<div class="note">' + (f.camionReel ? 'Badge dans ' + txt(f.camionReel) + (f.du || f.au ? ' (' + dateFr(f.du) + ' → ' + dateFr(f.au) + ')' : '') + '. ' : '') + txt(f.commentaire || '') + '</div>' : ''; })() + '</td><td class="n"><b>' + fmtEur2.format(c.ht) + '</b></td><td class="n"><b>' + fmtEur2.format(c.ttc) + '</b></td><td></td></tr>';
       }).join('') + '</tbody></table></div></details>';
   }).join('');
   z.querySelectorAll('[data-aff]').forEach(function (b) {
@@ -1800,7 +1900,7 @@ function telechargerPeages(M) {
   chargerXlsx().then(function () {
     var nomM = ['JANVIER', 'FEVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN', 'JUILLET', 'AOUT', 'SEPTEMBRE', 'OCTOBRE', 'NOVEMBRE', 'DECEMBRE'][+M.slice(5, 7) - 1], wb = XLSX.utils.book_new();
     planPeages(M).forEach(function (p) {
-      var aoa = [COLS_PEAGES], merges = [];
+      var aoa = [COLS_PEAGES.concat(['COMMENTAIRE'])], merges = [], avecCom = false;
       var d = function (iso) { if (!iso) return ''; var x = String(iso).split('-'); return new Date(Date.UTC(+x[0], +x[1] - 1, +x[2])); };
       p.camions.forEach(function (c) {
         var debut = aoa.length + 1;
@@ -1814,12 +1914,15 @@ function telechargerPeages(M) {
           if (b.lignes.length > 1) merges.push({ s: { r: r0, c: 14 }, e: { r: r0 + b.lignes.length - 1, c: 14 } });
         });
         var fin = aoa.length;
+        var fb = ficheBadge(M, c.immat), com = fb ? ((fb.camionReel ? 'Badge dans ' + fb.camionReel + (fb.du || fb.au ? ' (' + dateFr(fb.du) + ' - ' + dateFr(fb.au) + ')' : '') + '. ' : '') + (fb.commentaire || '')).trim() : '';
         aoa.push(['Total badge', c.immat, '', '', '', '', '', '', '', '', '', '', { f: 'SUM(M' + debut + ':M' + fin + ')', v: Math.round(c.ht * 100) / 100 },
-          { f: 'SUM(N' + debut + ':N' + fin + ')', v: Math.round(c.ttc * 100) / 100 }, '']);
+          { f: 'SUM(N' + debut + ':N' + fin + ')', v: Math.round(c.ttc * 100) / 100 }, '', com]);
+        if (com) avecCom = true;
       });
+      if (!avecCom) aoa = aoa.map(function (r) { return r.slice(0, 15); });
       var ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true, dateNF: 'dd/mm/yyyy' });
       ws['!merges'] = merges;
-      ws['!cols'] = [36, 12, 11, 9, 22, 8, 11, 9, 22, 8, 10, 7, 12, 12, 12].map(function (w) { return { wch: w }; });
+      ws['!cols'] = [36, 12, 11, 9, 22, 8, 11, 9, 22, 8, 10, 7, 12, 12, 12, 50].map(function (w) { return { wch: w }; });
       XLSX.utils.book_append_sheet(wb, ws, ('PEAGES ' + (p.q === 1 ? 'PREMIERE' : 'DEUXIEME') + ' QUINZAINE ' + nomM).slice(0, 31));
     });
     XLSX.writeFile(wb, 'PEAGES ' + nomM + ' ' + M.slice(0, 4) + '.xlsx');
