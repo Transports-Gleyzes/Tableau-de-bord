@@ -44,7 +44,7 @@ var FEUILLES = {
                 'Date_Tournee', 'Tournee', 'KM', 'Livraisons', 'Total_HT', 'Depose_Le', 'Cours'],
   PEAGES: ['Mois', 'Quinzaine', 'Facture_Badge', 'Immatriculation', 'Date_Entree', 'Heure_Entree', 'Gare_Entree', 'Autoroute_Entree',
            'Date_Sortie', 'Heure_Sortie', 'Gare_Sortie', 'Autoroute_Sortie', 'Societe_Autoroute', 'KM', 'Montant_HT', 'Montant_TTC', 'Contrat', 'Rembourse', 'Depose_Le', 'Manuel'],
-  PEAGES_REGLES: ['Type', 'Badge', 'Camion', 'Contrat', 'Du', 'Au', 'Note', 'Modifie_Le'],
+  PEAGES_REGLES: ['Type', 'Badge', 'Camion', 'Chauffeur', 'Contrat', 'Du', 'Au', 'Note', 'Modifie_Le'],
   PEAGES_BADGES: ['Mois', 'Badge', 'Camion_Reel', 'Du', 'Au', 'Commentaire', 'Documents', 'Modifie_Le'],
   BALANCE: ['Societe', 'Du', 'Au', 'Compte', 'Libelle', 'Debit', 'Credit', 'Poste', 'Camion', 'Importe_Le'],
   CORRESPONDANCES: ['Type', 'Sur_la_facture', 'Sur_le_planning', 'Remarque'],
@@ -1205,10 +1205,11 @@ function genererFactureScaped(mois) {
 function tourneesParCamion_(ss) {
   var idx = {};
   plannings_(ss).forEach(function (l) {
-    if (l.activite !== 'Inter' || !l.camion) return;
-    var k = plaque_(l.camion) + '|' + Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM-dd'), x = idx[k] = idx[k] || [];
-    var c = l.numContrat || '?';
-    if (x.indexOf(c) < 0) x.push(c);
+    if (l.activite !== 'Inter') return;
+    var jour = Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM-dd'), c = l.numContrat || '?';
+    var ajoute = function (k) { var x = idx[k] = idx[k] || []; if (x.indexOf(c) < 0) x.push(c); };
+    if (l.camion) ajoute(plaque_(l.camion) + '|' + jour);
+    if (l.chauffeur) ajoute('CH|' + cle_(l.chauffeur) + '|' + jour);
   });
   return idx;
 }
@@ -1265,15 +1266,18 @@ function deposerPeages(r) {
  *  BADGE     : le badge X correspond au camion Y (période facultative)
  *  SEULEMENT : ne prendre en compte que ces immatriculations (badge ou camion) — dès qu'il y en a une, les autres sont écartées
  *  IGNORER   : toujours écarter ce badge / ce camion
+ *  CHAUFFEUR : tel chauffeur avait ce camion sur la période → contrats de ses tournées (planning Inter, colonne CHAUFFEUR)
  *  CONTRAT   : contrat à utiliser pour ce camion quand le planning n'a pas de tournée ce jour-là
  *  NOTE      : simple information (rappel affiché au dépôt) */
+var TYPES_REGLES_PEAGES = ['BADGE', 'CHAUFFEUR', 'SEULEMENT', 'IGNORER', 'CONTRAT', 'NOTE'];
 function reglesPeages_(ss) {
   var sh = ss.getSheetByName('PEAGES_REGLES');
   var iso = function (v) { return v instanceof Date ? Utilities.formatDate(v, FUSEAU, 'yyyy-MM-dd') : String(v || '').trim(); };
   return (sh ? lireTable_(sh) : []).map(function (l) {
-    return { type: cle_(l.Type), badge: plaque_(l.Badge), camion: plaque_(l.Camion), contrat: String(l.Contrat || '').replace(/\.0+$/, '').replace(/[^\d\/]/g, ''),
+    var badges = String(l.Badge || '').split(/[,;\/\n]+|\s+ET\s+|\s{2,}/i).map(plaque_).filter(String);
+    return { type: cle_(l.Type), badge: badges.join(', '), badges: badges, camion: plaque_(l.Camion), chauffeur: cle_(l.Chauffeur), contrat: String(l.Contrat || '').replace(/\.0+$/, '').replace(/[^\d\/]/g, ''),
       du: iso(l.Du), au: iso(l.Au), note: String(l.Note || '') };
-  }).filter(function (r) { return ['BADGE', 'SEULEMENT', 'IGNORER', 'CONTRAT', 'NOTE'].indexOf(r.type) >= 0; });
+  }).filter(function (r) { return TYPES_REGLES_PEAGES.indexOf(r.type) >= 0; });
 }
 
 /** Depuis le site : remplace toutes les règles, puis recalcule les mois de péages déjà déposés. */
@@ -1282,12 +1286,14 @@ function enregistrerReglesPeages(liste) {
   var propre = function (x) { return String(x === undefined || x === null ? '' : x).replace(/^[=+\-@]/, "'$&").slice(0, 500); };
   var lignes = liste.map(function (r, i) {
     var t = cle_(r.type);
-    if (['BADGE', 'SEULEMENT', 'IGNORER', 'CONTRAT', 'NOTE'].indexOf(t) < 0) throw new Error('Règle ' + (i + 1) + ' : type inconnu');
-    if (t !== 'NOTE' && !plaque_(r.badge)) throw new Error('Règle ' + (i + 1) + ' : immatriculation / badge manquant');
+    if (TYPES_REGLES_PEAGES.indexOf(t) < 0) throw new Error('Règle ' + (i + 1) + ' : type inconnu');
+    var badges = String(r.badge || '').split(/[,;\/\n]+|\s+ET\s+|\s{2,}/i).map(plaque_).filter(String).join(', ');
+    if (t !== 'NOTE' && !badges) throw new Error('Règle ' + (i + 1) + ' : immatriculation / badge manquant');
+    if (t === 'CHAUFFEUR' && !String(r.chauffeur || '').trim()) throw new Error('Règle ' + (i + 1) + ' : chauffeur manquant');
     if (t === 'BADGE' && !plaque_(r.camion)) throw new Error('Règle ' + (i + 1) + ' : camion réel manquant');
     if (t === 'CONTRAT' && !/^\d{6}/.test(String(r.contrat || ''))) throw new Error('Règle ' + (i + 1) + ' : n° de contrat manquant');
     if (t === 'NOTE' && !String(r.note || '').trim()) throw new Error('Règle ' + (i + 1) + ' : note vide');
-    return [t, plaque_(r.badge), plaque_(r.camion), propre(r.contrat), dateDepuisTexte_(r.du) || '', dateDepuisTexte_(r.au) || '', propre(r.note), new Date()];
+    return [t, badges, plaque_(r.camion), propre(String(r.chauffeur || '').trim().toUpperCase()), propre(r.contrat), dateDepuisTexte_(r.du) || '', dateDepuisTexte_(r.au) || '', propre(r.note), new Date()];
   });
   var ss = classeur_(), sh = ss.getSheetByName('PEAGES_REGLES');
   if (!sh) { sh = ss.insertSheet('PEAGES_REGLES'); sh.setFrozenRows(1); }
@@ -1323,6 +1329,16 @@ function recalculerPeages_(ss, mois) {
   var idx = tourneesParCamion_(ss), fiches = badgesPeages_(ss), regles = reglesPeages_(ss);
   var dans = function (r, jour) { return (!r.du || jour >= r.du) && (!r.au || jour <= r.au); };
   var seulement = regles.filter(function (r) { return r.type === 'SEULEMENT'; });
+  var vise = function (r, badge, camion) { return r.badges.indexOf(badge) >= 0 || r.badges.indexOf(camion) >= 0; };
+  // chauffeurs du planning Inter (pour retrouver « LOIC » dans « LOIC DUPONT »)
+  var chauffeurs = {}; Object.keys(idx).forEach(function (k) { if (k.indexOf('CH|') === 0) chauffeurs[k.split('|')[1]] = 1; });
+  var tourneesChauffeur = function (nom, jour) {
+    var mots = function (x) { return x.split(/[^A-Z]+/).filter(String); }, n = mots(cle_(nom)), res = [];
+    var noms = Object.keys(chauffeurs).filter(function (c) { var m = mots(c), court = m.length < n.length ? m : n, long = court === m ? n : m;
+      return court.length && court.every(function (w) { return long.indexOf(w) >= 0; }); });
+    noms.forEach(function (c) { (idx['CH|' + c + '|' + jour] || []).forEach(function (x) { if (res.indexOf(x) < 0) res.push(x); }); });
+    return res;
+  };
   var v = sh.getRange(1, 1, sh.getLastRow(), Math.max(FEUILLES.PEAGES.length, sh.getLastColumn())).getValues(), e = v[0].map(String);
   var col = function (h) { return e.indexOf(h); }, cM = col('Mois'), cI = col('Immatriculation'), cDE = col('Date_Entree'), cDS = col('Date_Sortie'), cC = col('Contrat'), cR = col('Rembourse'), cMa = col('Manuel');
   var iso = function (x) { return x instanceof Date ? Utilities.formatDate(x, FUSEAU, 'yyyy-MM-dd') : String(x || ''); };
@@ -1331,13 +1347,16 @@ function recalculerPeages_(ss, mois) {
     if ((moisTexte_(v[i][cM]) || String(v[i][cM])) !== mois) continue;
     var badge = plaque_(v[i][cI]), dE = iso(v[i][cDE]), dS = iso(v[i][cDS]), jour = dS || dE, f = fiches[mois + '|' + badge];
     // camion réel : fiche du mois, sinon règle « le badge X correspond au camion Y »
-    var rb = regles.filter(function (r) { return r.type === 'BADGE' && r.badge === badge && r.camion && dans(r, jour); })[0];
+    var rb = regles.filter(function (r) { return r.type === 'BADGE' && r.badges.indexOf(badge) >= 0 && r.camion && dans(r, jour); })[0];
     var camion = f && f.camionReel && (!f.du || jour >= f.du) && (!f.au || jour <= f.au) ? f.camionReel : (rb ? rb.camion : badge);
     var manuel = cMa >= 0 && String(v[i][cMa]) === 'OUI';
-    var ignore = regles.some(function (r) { return r.type === 'IGNORER' && (r.badge === badge || r.badge === camion) && dans(r, jour); }) ||
-      (seulement.length && !seulement.some(function (r) { return (r.badge === badge || r.badge === camion) && dans(r, jour); }));
-    var cands = []; [dE, dS].forEach(function (x) { if (!cands.length && x && idx[camion + '|' + x]) cands = idx[camion + '|' + x]; });
-    var rc = !cands.length ? regles.filter(function (r) { return r.type === 'CONTRAT' && r.contrat && (r.badge === camion || r.badge === badge) && dans(r, jour); })[0] : null;
+    var ignore = regles.some(function (r) { return r.type === 'IGNORER' && vise(r, badge, camion) && dans(r, jour); }) ||
+      (seulement.length && !seulement.some(function (r) { return vise(r, badge, camion) && dans(r, jour); }));
+    // « LOIC a pris le FS238WL à partir du 21/09 » : les tournées de ce chauffeur ce jour-là
+    var cands = [], rch = regles.filter(function (r) { return r.type === 'CHAUFFEUR' && r.chauffeur && vise(r, badge, camion) && dans(r, jour); });
+    rch.forEach(function (r) { [dE, dS].forEach(function (x) { if (!cands.length && x) cands = tourneesChauffeur(r.chauffeur, x); }); });
+    [dE, dS].forEach(function (x) { if (!cands.length && x && idx[camion + '|' + x]) cands = idx[camion + '|' + x]; });
+    var rc = !cands.length ? regles.filter(function (r) { return r.type === 'CONTRAT' && r.contrat && vise(r, badge, camion) && dans(r, jour); })[0] : null;
     var contrat = manuel ? String(v[i][cC] || '') : (rc ? rc.contrat : cands.join('/'));
     lignes.push({ i: i, badge: badge, contrat: ignore && !manuel ? '' : contrat, ignore: ignore && !manuel });
     if (contrat && !(ignore && !manuel)) parBadge[badge] = 1;

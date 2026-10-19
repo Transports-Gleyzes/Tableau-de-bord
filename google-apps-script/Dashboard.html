@@ -432,10 +432,14 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
         Le planning des péages s'affiche ci-dessous ; « Télécharger » donne le fichier Excel « PEAGES &lt;MOIS&gt; » à envoyer à Intermarché avant le 15.</p>
       <details id="reglesPeages" class="regles-peages"><summary><b>📝 Mes règles de rapprochement</b> <span class="note" id="resumeRegles"></span></summary>
         <p class="note">Notez ici vos consignes : le site les applique à chaque dépôt de relevé (et recalcule les mois déjà déposés quand vous enregistrez).
-          <b>Badge → camion</b> : le badge X roule dans le camion Y (ses péages suivent les tournées de Y). <b>Seulement</b> : ne prendre en compte que ces immatriculations (les autres sont écartées).
+          <b>Chauffeur</b> : tel chauffeur avait ce camion sur la période (les péages reçoivent les contrats de ses tournées).
+          <b>Badge → camion</b> : le badge X roule dans le camion Y (ses péages suivent les tournées de Y). <b>Seulement</b> : ne garder que ces immatriculations (plusieurs possibles, séparées par des virgules) : les autres sont retirées du planning et du fichier Excel.
           <b>Ignorer</b> : toujours écarter ce badge. <b>Contrat par défaut</b> : contrat à mettre quand le planning n'a pas de tournée ce jour-là. <b>Note</b> : simple rappel.
           Dates facultatives (vide = toujours).</p>
-        <div class="tableau"><table class="serre"><thead><tr><th>Type</th><th>Badge / immat</th><th>Camion réel</th><th>Contrat</th><th>Du</th><th>Au</th><th>Note</th><th></th></tr></thead><tbody id="tabRegles"></tbody></table></div>
+        <div class="barre" style="align-items:flex-start"><textarea id="consignePeages" rows="3" style="flex:1;min-width:260px" placeholder="Écrivez simplement, ex. : LOIC a pris le FS238WL à partir du 21/09 et il avait le GD045RT du 01 au 20/09. Ne prendre en compte que le GB050RT, FS238WL."></textarea>
+          <button id="lireConsigne">➜ Transformer en règles</button></div>
+        <p class="note" id="msgConsigne"></p>
+        <div class="tableau"><table class="serre"><thead><tr><th>Type</th><th>Badge / immat</th><th>Camion réel</th><th>Chauffeur</th><th>Contrat</th><th>Du</th><th>Au</th><th>Note</th><th></th></tr></thead><tbody id="tabRegles"></tbody></table></div>
         <div class="barre" style="margin-top:6px"><button id="ajoutRegle">+ Ajouter une règle</button><button id="enregRegles" class="primaire">Enregistrer et appliquer</button><span class="msg" id="msgRegles"></span></div>
       </details>
       <div class="depot" id="zonePeages">🛣️ Glissez les relevés CSV ici, ou cliquez pour les choisir
@@ -443,7 +447,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
       <div id="listePeages"></div>
       <div class="tableau" style="margin-top:10px"><table id="tabPeages" class="serre"></table></div>
       <div class="barre" style="margin-top:12px"><label for="moisPeages">Planning des péages</label><select id="moisPeages"></select>
-        <button id="dlPeages" class="primaire">⬇ Télécharger le fichier Excel</button><span class="msg" id="msgPeages"></span></div>
+        <button id="dlPeages" class="primaire">⬇ Télécharger le fichier Excel</button><label><input type="checkbox" id="comPeages"> mettre les commentaires dans l'Excel</label><span class="msg" id="msgPeages"></span></div>
       <div id="badgesPeages"></div>
       <div id="planningPeages"></div>
     </div>
@@ -1782,14 +1786,42 @@ function traiterPeages(fichiers) {
   ['dragleave', 'drop'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.remove('survol'); }); });
   zone.addEventListener('drop', function (e) { traiterPeages(e.dataTransfer.files); });
 })();
-var TYPES_REGLES = { BADGE: 'Badge → camion', SEULEMENT: 'Seulement ces immat', IGNORER: 'Ignorer ce badge', CONTRAT: 'Contrat par défaut', NOTE: 'Note' };
+var TYPES_REGLES = { CHAUFFEUR: 'Chauffeur a ce camion', BADGE: 'Badge → camion', SEULEMENT: 'Seulement ces immat', IGNORER: 'Ignorer ce badge', CONTRAT: 'Contrat par défaut', NOTE: 'Note' };
 function ligneRegle(r) {
   r = r || { type: 'BADGE' };
   return '<tr><td><select data-r="type">' + Object.keys(TYPES_REGLES).map(function (t) { return '<option value="' + t + '"' + (r.type === t ? ' selected' : '') + '>' + TYPES_REGLES[t] + '</option>'; }).join('') + '</select></td>' +
-    '<td><input data-r="badge" size="9" value="' + txt(r.badge || '') + '" placeholder="GD042ZC"></td><td><input data-r="camion" size="9" value="' + txt(r.camion || '') + '" placeholder="GE606BF"></td>' +
+    '<td><input data-r="badge" size="14" value="' + txt(r.badge || '') + '" placeholder="GD042ZC"></td><td><input data-r="camion" size="9" value="' + txt(r.camion || '') + '" placeholder="GE606BF"></td>' +
+    '<td><input data-r="chauffeur" size="10" value="' + txt(r.chauffeur || '') + '" placeholder="LOIC"></td>' +
     '<td><input data-r="contrat" size="7" value="' + txt(r.contrat || '') + '" placeholder="7531xx"></td><td><input type="date" data-r="du" value="' + txt(r.du || '') + '"></td>' +
     '<td><input type="date" data-r="au" value="' + txt(r.au || '') + '"></td><td><input data-r="note" size="24" value="' + txt(r.note || '') + '"></td>' +
     '<td><button class="suppr" data-r-suppr title="Supprimer">✕</button></td></tr>';
+}
+/** Transforme une consigne écrite (« LOIC a pris le FS238WL à partir du 21/09… ») en règles. M = 'AAAA-MM' pour l'année. */
+function lireConsignePeages(texte, M) {
+  var res = [], dernier = '', an = +String(M).slice(0, 4) || new Date().getFullYear();
+  var reImmat = /\b[A-Z]{2}[ -]?\d{3}[ -]?[A-Z]{2}\b/g, sans = function (x) { return x.normalize('NFD').replace(/[̀-ͯ]/g, ''); };
+  var iso = function (j, m, a) { a = a ? (+a < 100 ? 2000 + +a : +a) : an; return a + '-' + String(m).padStart(2, '0') + '-' + String(j).padStart(2, '0'); };
+  var MOTS = /^(IL|ELLE|LE|LA|LES|DU|AU|ET|PUIS|ALORS|OU|ON|NE|QUE|BADGE|CAMION|TRACTEUR|IMMAT|A|EST|ETAIT|DEPUIS|PARTIR|JUSQU|ENSUITE)$/;
+  String(texte || '').toUpperCase().split(/[.\n;]+|\bET\b(?=\s+(?:IL|ELLE|[A-Z]+\s+(?:A|AVAIT|PREND|ROULE)\b))|\bOU ALORS\b|\bPUIS\b/).forEach(function (ph) {
+    ph = sans(ph).trim(); if (!ph) return;
+    var immats = (ph.match(reImmat) || []).map(function (x) { return x.replace(/[ -]/g, ''); }); if (!immats.length) return;
+    var du = '', au = '', m;
+    if ((m = ph.match(/\bDU\s+(\d{1,2})(?:\/(\d{1,2})(?:\/(\d{2,4}))?)?\s+AU\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/))) { du = iso(m[1], m[2] || m[5], m[3] || m[6]); au = iso(m[4], m[5], m[6]); }
+    else {
+      if ((m = ph.match(/(?:A PARTIR DU|DEPUIS LE|DEPUIS|DES LE|DU)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/))) du = iso(m[1], m[2], m[3]);
+      if ((m = ph.match(/(?:JUSQU'?\s*AU|JUSQU A|AU)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/))) au = iso(m[1], m[2], m[3]);
+    }
+    if (/NE (?:PRENDRE|GARDER|COMPTER)|QUE (?:LE|LES|CES)?\s*[A-Z]{2}\d|SEULEMENT|UNIQUEMENT/.test(ph)) { res.push({ type: 'SEULEMENT', badge: immats.join(', '), du: du, au: au }); return; }
+    if (/IGNORER|ENLEVER|SUPPRIMER|RETIRER|PAS PRENDRE|ECARTER/.test(ph)) { res.push({ type: 'IGNORER', badge: immats.join(', '), du: du, au: au }); return; }
+    if (/BADGE/.test(ph) && immats.length >= 2) { res.push({ type: 'BADGE', badge: immats[0], camion: immats[1], du: du, au: au }); return; }
+    // chauffeur : mot(s) avant « a pris / avait / prend / roule »
+    m = ph.match(/^(?:(.*?)\s+)?(?:A PRIS|AVAIT|PREND|A|ROULE (?:AVEC|SUR|DANS)|EST (?:SUR|DANS)|ETAIT (?:SUR|DANS))\s+(?:LE |LA |LES )?(?:CAMION |TRACTEUR |BADGE )?[A-Z]{2}[ -]?\d{3}/);
+    var nom = m && m[1] ? m[1].split(/\s+/).filter(function (w) { return w && !MOTS.test(w); }).join(' ') : '';
+    if (nom) dernier = nom; else if (/^(IL|ELLE)\b/.test(ph) || m) nom = dernier;
+    if (nom) immats.forEach(function (im) { res.push({ type: 'CHAUFFEUR', badge: im, chauffeur: nom, du: du, au: au }); });
+    else res.push({ type: 'NOTE', badge: immats.join(', '), note: ph, du: du, au: au });
+  });
+  return res;
 }
 function rendreReglesPeages() {
   var regles = D.PEAGES_REGLES || [], tb = document.getElementById('tabRegles');
@@ -1798,11 +1830,19 @@ function rendreReglesPeages() {
   var brancher = function () { tb.querySelectorAll('[data-r-suppr]').forEach(function (b) { b.onclick = function () { b.closest('tr').remove(); }; }); };
   brancher();
   document.getElementById('ajoutRegle').onclick = function () { tb.insertAdjacentHTML('beforeend', ligneRegle()); brancher(); };
+  document.getElementById('lireConsigne').onclick = function () {
+    var ta = document.getElementById('consignePeages'), mc = document.getElementById('msgConsigne'), M = document.getElementById('moisPeages').value;
+    var r = lireConsignePeages(ta.value, M || new Date().toISOString().slice(0, 7));
+    if (!r.length) { mc.textContent = '⚠ Je n\'ai pas reconnu de consigne : ajoutez la règle à la main avec « + Ajouter une règle ».'; return; }
+    r.forEach(function (x) { tb.insertAdjacentHTML('beforeend', ligneRegle(x)); });
+    brancher(); ta.value = '';
+    mc.textContent = '✓ ' + r.length + ' règle(s) ajoutée(s) au tableau : vérifiez-les puis cliquez « Enregistrer et appliquer ».';
+  };
   document.getElementById('enregRegles').onclick = function () {
-    var msg = document.getElementById('msgRegles'), plaque = function (x) { return x.toUpperCase().replace(/[\s-]/g, ''); };
+    var msg = document.getElementById('msgRegles'), plaque = function (x) { return x.toUpperCase().trim(); };
     var liste = Array.prototype.map.call(tb.querySelectorAll('tr'), function (tr) {
       var v = function (k) { return tr.querySelector('[data-r=' + k + ']').value.trim(); };
-      return { type: v('type'), badge: plaque(v('badge')), camion: plaque(v('camion')), contrat: v('contrat'), du: v('du'), au: v('au'), note: v('note') };
+      return { type: v('type'), badge: plaque(v('badge')), camion: plaque(v('camion')).replace(/[\s-]/g, ''), chauffeur: v('chauffeur').toUpperCase(), contrat: v('contrat'), du: v('du'), au: v('au'), note: v('note') };
     }).filter(function (r) { return r.badge || r.camion || r.contrat || r.note; });
     msg.className = 'msg'; msg.textContent = 'Enregistrement et recalcul…';
     appelServeur('enregistrerReglesPeages', liste).then(function (n) { msg.className = 'msg ok'; msg.textContent = '✓ ' + n + ' règle(s) appliquée(s)'; charger(); })
@@ -1953,6 +1993,7 @@ function telechargerPeages(M) {
         var fb = ficheBadge(M, c.immat), com = fb ? ((fb.camionReel ? 'Badge dans ' + fb.camionReel + (fb.du || fb.au ? ' (' + dateFr(fb.du) + ' - ' + dateFr(fb.au) + ')' : '') + '. ' : '') + (fb.commentaire || '')).trim() : '';
         aoa.push(['Total badge', c.immat, '', '', '', '', '', '', '', '', '', '', { f: 'SUM(M' + debut + ':M' + fin + ')', v: Math.round(c.ht * 100) / 100 },
           { f: 'SUM(N' + debut + ':N' + fin + ')', v: Math.round(c.ttc * 100) / 100 }, '', com]);
+        if (!document.getElementById('comPeages').checked) com = '';
         if (com) avecCom = true;
       });
       if (!avecCom) aoa = aoa.map(function (r) { return r.slice(0, 15); });
