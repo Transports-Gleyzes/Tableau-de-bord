@@ -430,6 +430,14 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
       <p class="note">Déposez les relevés de badge de chaque quinzaine (fichiers CSV « FR… »). Chaque trajet reçoit le contrat de la tournée Inter du même camion le même jour
         (planning Inter, colonne CAMION) : contrats 7531… remboursés, 7539… non remboursés (montants vidés). Les camions sans tournée Intermarché sont écartés.
         Le planning des péages s'affiche ci-dessous ; « Télécharger » donne le fichier Excel « PEAGES &lt;MOIS&gt; » à envoyer à Intermarché avant le 15.</p>
+      <details id="reglesPeages" class="regles-peages"><summary><b>📝 Mes règles de rapprochement</b> <span class="note" id="resumeRegles"></span></summary>
+        <p class="note">Notez ici vos consignes : le site les applique à chaque dépôt de relevé (et recalcule les mois déjà déposés quand vous enregistrez).
+          <b>Badge → camion</b> : le badge X roule dans le camion Y (ses péages suivent les tournées de Y). <b>Seulement</b> : ne prendre en compte que ces immatriculations (les autres sont écartées).
+          <b>Ignorer</b> : toujours écarter ce badge. <b>Contrat par défaut</b> : contrat à mettre quand le planning n'a pas de tournée ce jour-là. <b>Note</b> : simple rappel.
+          Dates facultatives (vide = toujours).</p>
+        <div class="tableau"><table class="serre"><thead><tr><th>Type</th><th>Badge / immat</th><th>Camion réel</th><th>Contrat</th><th>Du</th><th>Au</th><th>Note</th><th></th></tr></thead><tbody id="tabRegles"></tbody></table></div>
+        <div class="barre" style="margin-top:6px"><button id="ajoutRegle">+ Ajouter une règle</button><button id="enregRegles" class="primaire">Enregistrer et appliquer</button><span class="msg" id="msgRegles"></span></div>
+      </details>
       <div class="depot" id="zonePeages">🛣️ Glissez les relevés CSV ici, ou cliquez pour les choisir
         <input type="file" id="choixPeages" accept=".csv,text/csv" multiple hidden></div>
       <div id="listePeages"></div>
@@ -1774,7 +1782,35 @@ function traiterPeages(fichiers) {
   ['dragleave', 'drop'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.remove('survol'); }); });
   zone.addEventListener('drop', function (e) { traiterPeages(e.dataTransfer.files); });
 })();
+var TYPES_REGLES = { BADGE: 'Badge → camion', SEULEMENT: 'Seulement ces immat', IGNORER: 'Ignorer ce badge', CONTRAT: 'Contrat par défaut', NOTE: 'Note' };
+function ligneRegle(r) {
+  r = r || { type: 'BADGE' };
+  return '<tr><td><select data-r="type">' + Object.keys(TYPES_REGLES).map(function (t) { return '<option value="' + t + '"' + (r.type === t ? ' selected' : '') + '>' + TYPES_REGLES[t] + '</option>'; }).join('') + '</select></td>' +
+    '<td><input data-r="badge" size="9" value="' + txt(r.badge || '') + '" placeholder="GD042ZC"></td><td><input data-r="camion" size="9" value="' + txt(r.camion || '') + '" placeholder="GE606BF"></td>' +
+    '<td><input data-r="contrat" size="7" value="' + txt(r.contrat || '') + '" placeholder="7531xx"></td><td><input type="date" data-r="du" value="' + txt(r.du || '') + '"></td>' +
+    '<td><input type="date" data-r="au" value="' + txt(r.au || '') + '"></td><td><input data-r="note" size="24" value="' + txt(r.note || '') + '"></td>' +
+    '<td><button class="suppr" data-r-suppr title="Supprimer">✕</button></td></tr>';
+}
+function rendreReglesPeages() {
+  var regles = D.PEAGES_REGLES || [], tb = document.getElementById('tabRegles');
+  document.getElementById('resumeRegles').textContent = regles.length ? '(' + regles.length + ' règle' + (regles.length > 1 ? 's' : '') + ' active' + (regles.length > 1 ? 's' : '') + ')' : '(aucune)';
+  tb.innerHTML = regles.map(ligneRegle).join('');
+  var brancher = function () { tb.querySelectorAll('[data-r-suppr]').forEach(function (b) { b.onclick = function () { b.closest('tr').remove(); }; }); };
+  brancher();
+  document.getElementById('ajoutRegle').onclick = function () { tb.insertAdjacentHTML('beforeend', ligneRegle()); brancher(); };
+  document.getElementById('enregRegles').onclick = function () {
+    var msg = document.getElementById('msgRegles'), plaque = function (x) { return x.toUpperCase().replace(/[\s-]/g, ''); };
+    var liste = Array.prototype.map.call(tb.querySelectorAll('tr'), function (tr) {
+      var v = function (k) { return tr.querySelector('[data-r=' + k + ']').value.trim(); };
+      return { type: v('type'), badge: plaque(v('badge')), camion: plaque(v('camion')), contrat: v('contrat'), du: v('du'), au: v('au'), note: v('note') };
+    }).filter(function (r) { return r.badge || r.camion || r.contrat || r.note; });
+    msg.className = 'msg'; msg.textContent = 'Enregistrement et recalcul…';
+    appelServeur('enregistrerReglesPeages', liste).then(function (n) { msg.className = 'msg ok'; msg.textContent = '✓ ' + n + ' règle(s) appliquée(s)'; charger(); })
+      .catch(function (e) { msg.className = 'msg err'; msg.textContent = '⚠ ' + e.message; });
+  };
+}
 function rendrePeages() {
+  rendreReglesPeages();
   var liste = (D.PEAGES || []).slice(0, 6);
   document.getElementById('tabPeages').innerHTML = !liste.length ? '' :
     '<thead><tr><th>Mois</th><th>Quinzaines</th><th>Camions</th><th class="n">Remboursés HT</th><th>Par contrat</th><th class="n">Non remboursés</th><th>Envoi Intermarché</th></tr></thead><tbody>' +
