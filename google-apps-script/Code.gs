@@ -295,6 +295,7 @@ function getDonnees() {
   try { d.PEAGES_BADGES = badgesMois_(ss); } catch (e) { d.PEAGES_BADGES = {}; }
   try { d.PEAGES_REGLES = reglesPeages_(ss); } catch (e) { d.PEAGES_REGLES = []; }
   try { d.PEAGES_RELEVES = relevesPeages_(ss); } catch (e) { d.PEAGES_RELEVES = []; }
+  try { d.PEAGES_FICHIERS = fichiersPeages_(ss); } catch (e) { d.PEAGES_FICHIERS = []; }
   try { d.PEAGES_CONTROLE = controlePeagesTournees_(ss); } catch (e) { d.PEAGES_CONTROLE = {}; d.erreurs.push('Contrôle péages : ' + e.message); }
   try { d.PEAGES = synthesePeages_(ss); } catch (e) { d.PEAGES = []; d.erreurs.push('Péages : ' + e.message); }
   try { d.COMPTA = balances_(ss).map(syntheseBalance_); } catch (e) { d.COMPTA = []; d.erreurs.push('Balance comptable : ' + e.message); }
@@ -1489,12 +1490,35 @@ function societePeagesReleve(facture, societe) {
 function relevesPeages_(ss) {
   var par = {}, mois = {};
   peages_(ss).forEach(function (l) {
-    var k = String(l.Facture_Badge), x = par[k] = par[k] || { facture: k, mois: l.Mois, quinzaine: +l.Quinzaine, societe: societeReleve_(l.Societe_Releve), trajets: 0, ht: 0 };
+    var k = String(l.Facture_Badge), x = par[k] = par[k] || { facture: k, mois: l.Mois, quinzaine: +l.Quinzaine, societe: societeReleve_(l.Societe_Releve), trajets: 0, ht: 0, depose: '' };
     x.trajets++; x.ht += nombre_(l.Montant_HT, 0); mois[l.Mois] = 1;
+    var dp = String(l.Depose_Le || '').slice(0, 10); if (dp > x.depose) x.depose = dp;
   });
   var garder = Object.keys(mois).sort().reverse().slice(0, 4);
   return Object.keys(par).map(function (k) { par[k].ht = Math.round(par[k].ht * 100) / 100; return par[k]; })
     .filter(function (x) { return garder.indexOf(x.mois) >= 0; }).sort(function (a, b) { return (b.mois + b.quinzaine).localeCompare(a.mois + a.quinzaine) || a.societe.localeCompare(b.societe); });
+}
+
+/**
+ * Historique des fichiers péages Intermarché : un fichier par mois et par société (onglets 1re / 2e quinzaine),
+ * avec les relevés déposés, le montant remboursable et la date d'envoi.
+ */
+function fichiersPeages_(ss) {
+  var lignes = peages_(ss), soc = societesPeages_(ss, lignes), pr = PropertiesService.getScriptProperties().getProperties(), par = {};
+  var F = function (m, s) { var k = m + '|' + s; return par[k] = par[k] || { mois: m, societe: s, quinzaines: {}, rembourse: 0, trajets: 0 }; };
+  relevesPeages_(ss).forEach(function (r) {
+    var f = F(r.mois, r.societe || '?'), q = f.quinzaines[r.quinzaine] = f.quinzaines[r.quinzaine] || { releves: [], trajets: 0, depose: '' };
+    q.releves.push(r.facture); q.trajets += r.trajets; if (r.depose > q.depose) q.depose = r.depose;
+  });
+  lignes.forEach(function (l) {
+    var k = l.Mois + '|' + (soc(l) || '?'); if (!par[k] || l.Rembourse === 'ÉCARTÉ') return;
+    par[k].trajets++; if (l.Rembourse === 'OUI') par[k].rembourse += nombre_(l.Montant_HT, 0);
+  });
+  return Object.keys(par).map(function (k) {
+    var f = par[k]; f.rembourse = Math.round(f.rembourse * 100) / 100;
+    f.envoye = pr['PEAGES_ENVOYE_' + f.mois + '_' + String(f.societe).toUpperCase()] || pr['PEAGES_ENVOYE_' + f.mois] || '';
+    return f;
+  }).sort(function (a, b) { return b.mois.localeCompare(a.mois) || a.societe.localeCompare(b.societe); });
 }
 
 /** Société (Gleyzes / LPB) d'un trajet de péage : celle du relevé (choisie au dépôt) ; pour un ancien relevé sans société,
@@ -1583,8 +1607,8 @@ function badgesMois_(ss) {
 }
 
 /** Depuis le site : marque le planning des péages d'un mois comme envoyé à Intermarché (ou annule). */
-function marquerPeagesEnvoyes(mois, envoye) {
-  var pr = PropertiesService.getScriptProperties(), k = 'PEAGES_ENVOYE_' + mois;
+function marquerPeagesEnvoyes(mois, envoye, societe) {
+  var soc = societeReleve_(societe), pr = PropertiesService.getScriptProperties(), k = 'PEAGES_ENVOYE_' + mois + (soc ? '_' + soc.toUpperCase() : '');
   if (envoye) pr.setProperty(k, Utilities.formatDate(new Date(), FUSEAU, 'yyyy-MM-dd')); else pr.deleteProperty(k);
   return true;
 }
@@ -1621,9 +1645,12 @@ function alertesPeages_(ss, jour0) {
   if (j >= 5 && j <= 20 && (!m || Object.keys(m.quinzaines).length < 2))
     al.push({ niveau: j >= 10 ? 'urgent' : 'a_prevoir', categorie: 'peages', domaine: 'Péages', objet: 'Intermarché', sujet: 'Relevés de péages',
       message: 'Relevés de badge de ' + lib + ' à déposer (' + (m ? '1 quinzaine sur 2' : 'aucun') + ') pour préparer le planning des péages Intermarché', cle: 'PEAGES_RELEVES|' + prec + '|' + (m ? 1 : 0) });
-  if (m && !m.envoye && j >= 10 && j <= 20)
+  // un fichier par société : ceux du mois précédent pas encore envoyés
+  var aEnvoyer = m ? fichiersPeages_(ss).filter(function (f) { return f.mois === prec && !f.envoye; }) : [];
+  if (aEnvoyer.length && j >= 10 && j <= 20)
     al.push({ niveau: j >= 13 ? 'depasse' : 'urgent', categorie: 'peages', domaine: 'Péages', objet: 'Intermarché', sujet: 'Planning des péages',
-      message: 'Planning des péages de ' + lib + ' à envoyer à Intermarché avant le 15 (' + euros_(m.rembourse) + ' HT remboursables)', cle: 'PEAGES_ENVOI|' + prec });
+      message: 'Fichier(s) péages de ' + lib + ' à envoyer à Intermarché avant le 15 : ' + aEnvoyer.map(function (f) { return String(f.societe).toUpperCase() + ' (' + euros_(f.rembourse) + ' HT)'; }).join(', '),
+      cle: 'PEAGES_ENVOI|' + prec + '|' + aEnvoyer.map(function (f) { return f.societe; }).join(',') });
   var bizarres = m ? Object.keys(m.tousContrats).filter(function (c) { return c.split('/').some(function (x) { return !/^753\d{3}$/.test(x); }); }) : [];
   if (bizarres.length)
     al.push({ niveau: 'urgent', categorie: 'peages', domaine: 'Péages', objet: 'Intermarché', sujet: 'Contrat inhabituel',

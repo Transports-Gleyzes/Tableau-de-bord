@@ -1933,20 +1933,23 @@ function rendreRelevesPeages() {
 }
 function rendrePeages() {
   rendreReglesPeages();
-  var liste = (D.PEAGES || []).slice(0, 6);
-  document.getElementById('tabPeages').innerHTML = !liste.length ? '' :
-    '<thead><tr><th>Mois</th><th>Quinzaines</th><th>Camions</th><th class="n">Remboursés HT</th><th>Par contrat</th><th class="n">Non remboursés</th><th>Envoi Intermarché</th></tr></thead><tbody>' +
-    liste.map(function (m) {
-      var q = Object.keys(m.quinzaines).sort().map(function (k) { return k === '1' ? '1re' : '2e'; }).join(' + ');
-      return '<tr><td>' + txt(nomMois(m.mois)) + '</td><td>' + q + (Object.keys(m.quinzaines).length < 2 ? ' <span class="note">(incomplet)</span>' : '') + '</td><td>' + txt(m.camions.join(', ')) +
-        '</td><td class="n">' + eur(m.rembourse) + (function (c) { return c ? Object.keys(c.societes).sort().map(function (x) { return '<div class="note">' + txt(x) + ' ' + fmtEur2.format(c.societes[x].rembourse) + '</div>'; }).join('') : ''; })((D.PEAGES_CONTROLE || {})[m.mois]) + '</td><td class="note">' + Object.keys(m.contrats).sort().map(function (c) { return txt(c) + ' : ' + fmtEur2.format(m.contrats[c]); }).join('<br>') +
-        (m.aAffecter.length ? '<br>⚠ ' + m.aAffecter.length + ' jour(s) sans tournée' : '') + '</td><td class="n">' + eur(m.nonRembourse) +
-        '</td><td>' + (m.envoye ? '✓ envoyé le ' + dateFr(m.envoye) + ' <button class="suppr" data-penv="' + m.mois + '" data-v="0" title="Annuler">✕</button>'
-          : '<button data-penv="' + m.mois + '" data-v="1">Marquer envoyé</button>') + '</td></tr>';
+  // Historique des fichiers : un fichier par mois et par société, complété au dépôt de chaque quinzaine
+  var fichiers = D.PEAGES_FICHIERS || [];
+  var cellQ = function (q) { return q ? '✓ ' + q.trajets + ' trajets<div class="note">déposé le ' + dateFr(q.depose) + '</div>' : '<span class="note">en attente</span>'; };
+  document.getElementById('tabPeages').innerHTML = !fichiers.length ? '' :
+    '<caption style="text-align:left;font-weight:600;padding-bottom:6px">📁 Fichiers péages Intermarché</caption>' +
+    '<thead><tr><th>Mois</th><th>Fichier</th><th>1re quinzaine</th><th>2e quinzaine</th><th class="n">Remboursé HT</th><th>État</th><th></th></tr></thead><tbody>' +
+    fichiers.filter(function (f) { return (D.PEAGES_DETAIL || {})[f.mois]; }).map(function (f) {
+      var q1 = f.quinzaines[1], q2 = f.quinzaines[2], inconnu = f.societe === '?';
+      var etat = inconnu ? '<span class="ou-prefac">société à choisir (Relevés déposés)</span>' : f.envoye ? '✓ envoyé le ' + dateFr(f.envoye) + ' <button class="suppr" data-penv="' + f.mois + '" data-soc="' + f.societe + '" data-v="0" title="Annuler">✕</button>'
+        : q1 && q2 ? '<b>✓ prêt à envoyer</b> <button data-penv="' + f.mois + '" data-soc="' + f.societe + '" data-v="1">Marquer envoyé</button>' : '<span class="note">incomplet : ' + (q1 ? '2e' : '1re') + ' quinzaine à déposer</span>';
+      return '<tr><td>' + txt(nomMois(f.mois)) + '</td><td><b>PEAGES ' + txt(String(nomMois(f.mois)).toUpperCase()) + ' ' + txt(inconnu ? '?' : f.societe.toUpperCase()) + '</b></td><td>' + cellQ(q1) + '</td><td>' + cellQ(q2) +
+        '</td><td class="n">' + fmtEur2.format(f.rembourse) + '</td><td>' + etat + '</td><td>' + (inconnu ? '' : '<button class="primaire" data-dlm="' + f.mois + '" data-dls="' + f.societe + '">⬇ Excel</button>') + '</td></tr>';
     }).join('') + '</tbody>';
   document.querySelectorAll('[data-penv]').forEach(function (b) {
-    b.onclick = function () { appelServeur('marquerPeagesEnvoyes', b.dataset.penv, b.dataset.v === '1').then(function () { charger(); }).catch(function (e) { alert(e.message); }); };
+    b.onclick = function () { appelServeur('marquerPeagesEnvoyes', b.dataset.penv, b.dataset.v === '1', b.dataset.soc).then(function () { charger(); }).catch(function (e) { alert(e.message); }); };
   });
+  document.querySelectorAll('[data-dlm]').forEach(function (b) { b.onclick = function () { telechargerPeages(b.dataset.dlm, b.dataset.dls); }; });
   var mp = {}; Object.keys(D.PEAGES_DETAIL || {}).concat(Object.keys(D.PEAGES_BADGES || {})).forEach(function (m) { mp[m] = 1; });
   var sel = document.getElementById('moisPeages'), ancien = sel.value, moisDispo = Object.keys(mp).sort().reverse();
   sel.innerHTML = moisDispo.map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
