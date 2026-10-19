@@ -105,3 +105,9 @@ python3 exporter_finances_csv.py --classeur TABLEAU_DE_BORD_FLOTTE.xlsx --sortie
 - Plannings : si les plannings sont déjà dans un tableur, importer directement nombre de livraisons et CA au lieu de les ressaisir.
 - Comptabilité : importer la balance ou le grand livre (export CSV du logiciel comptable) pour les charges hors flotte (structure, assurances, frais bancaires…).
 - Litrage : importer automatiquement les relevés de carte carburant au lieu de saisir chaque plein.
+
+## Plannings : onglets CA et nouvelle année
+
+- **Tableau de bord > Planning Carburant : recalculer les onglets CA** : dans chaque onglet « CA <MOIS> <ANNÉE> » du planning Carburant, le CA Gleyzes / LPB de chaque chauffeur devient une formule (SOMME.SI.ENS sur la colonne CA de l'onglet du mois, le chauffeur et la société du client), avec le total et la ligne de contrôle « CA total du planning / Écart ». Colonne B : nom utilisé au planning quand il diffère (DANY pour Daniel, FAFA pour Fabrice). Réécrire les formules corrige aussi les #N/A / #REF!.
+- **Tableau de bord > Créer les plannings de l'année prochaine** : copie les plannings Inter et Carburant dans le même dossier Drive, renomme les onglets (JANVIER 2026 → JANVIER 2027, les formules suivent), efface les saisies des onglets mensuels (formules, mise en forme, TARIFS et CAMIONS conservés), met les titres des onglets CA / COMPARATIF à la nouvelle année et note le lien dans PARAMETRES (`ID_PLANNING_INTER_2027`, `ID_PLANNING_CARBURANT_2027`). Le tableau de bord lit l'ancien et le nouveau fichier.
+

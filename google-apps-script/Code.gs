@@ -117,6 +117,9 @@ function onOpen() {
     .addItem('Vérifier les alertes et envoyer le mail maintenant', 'verifierAlertesManuel')
     .addItem('Remplir la colonne CAMION des plannings', 'preparerCamionsManuel')
     .addItem('Préparer la facture SCAPED du mois', 'factureScapedManuel')
+    .addSeparator()
+    .addItem('Planning Carburant : recalculer les onglets CA', 'reparerCAPlanningManuel')
+    .addItem('Créer les plannings de l\'année prochaine', 'creerPlanningsAnneeSuivanteManuel')
     .addToUi();
 }
 
@@ -2398,8 +2401,7 @@ function plannings_(ss) {
   if (CACHE_PLANNINGS_) return CACHE_PLANNINGS_;
   var res = [];
   [['ID_PLANNING_INTER', 'Inter'], ['ID_PLANNING_CARBURANT', 'Carburant']].forEach(function (src) {
-    var ext = classeurParam_(ss, src[0]);
-    if (!ext) return;
+    classeursPlanning_(ss, src[0]).forEach(function (ext) {
     ext.getSheets().forEach(function (sh) {
       var nom = cle_(sh.getName());
       if (/^CA\b|TARIF|COMPARATIF|RECAP|CAMIONS/.test(nom)) return;
@@ -2462,6 +2464,7 @@ function plannings_(ss) {
         });
       });
     });
+    });
   });
   // Une facture = un client = une société : la société d'un client Carburant (client + lieu) est celle de la majorité
   // de ses lignes, quel que soit le chauffeur ; une ligne saisie avec l'autre société est ramenée à celle du client.
@@ -2487,6 +2490,151 @@ function plannings_(ss) {
 // Colonne CAMION des plannings : remplie automatiquement, modifiable à la main
 // ---------------------------------------------------------------------------
 var SOURCES_PLANNING = [['ID_PLANNING_INTER', 'Inter'], ['ID_PLANNING_CARBURANT', 'Carburant']];
+
+/** Fichiers d'un planning, du plus ancien au plus récent : PARAMETRES > ID_PLANNING_… puis ID_PLANNING_…_2027, _2028… */
+function classeursPlanning_(ss, base) {
+  var p = lireParametres_(ss), cles = Object.keys(p).filter(function (k) { return new RegExp('^' + base + '_20\\d\\d$').test(k) && String(p[k] || '').trim(); }).sort();
+  return [base].concat(cles).map(function (k) { return classeurParam_(ss, k); }).filter(Boolean);
+}
+
+// ---------------------------------------------------------------------------
+// Plannings : réparation des onglets « CA <MOIS> » (Carburant) et création des fichiers de l'année suivante
+// ---------------------------------------------------------------------------
+var SURNOMS_CHAUFFEURS_ = { DANIEL: 'DANY', FABRICE: 'FAFA' };
+var colLettre_ = function (n) { return colonneLettre_(n); };
+
+/**
+ * Onglets « CA <MOIS> <AN> » du planning Carburant : CA Gleyzes / LPB par chauffeur recalculés par formule depuis l'onglet du mois
+ * (colonne CA, chauffeur, société du client), total, contrôle « CA total du planning ». Colonne B : nom au planning si différent
+ * (Dany pour Daniel…). Les formules sont réécrites : Google les relit, ce qui corrige aussi les #N/A / #REF!.
+ */
+function reparerOngletsCA_(ext) {
+  var feuilles = ext.getSheets(), parNom = {}, faits = [];
+  feuilles.forEach(function (sh) { parNom[cle_(sh.getName())] = sh; });
+  feuilles.forEach(function (ca) {
+    var nomCa = cle_(ca.getName()); if (!/^CA /.test(nomCa)) return;
+    var mois = parNom[nomCa.replace(/^CA /, '')]; if (!mois || mois.getLastRow() < 1) return;
+    // colonnes de l'onglet du mois
+    var v = mois.getRange(1, 1, Math.min(6, mois.getLastRow()), mois.getLastColumn()).getValues(), ent = -1;
+    for (var i = 0; i < v.length; i++) if (v[i].some(function (x) { return cle_(x).indexOf('CHAUFFEUR') === 0; })) { ent = i; break; }
+    if (ent < 0) return;
+    var h = v[ent].map(cle_), cCh = -1, cSo = -1, cCa = -1;
+    h.forEach(function (x, k) { if (cCh < 0 && x.indexOf('CHAUFFEUR') === 0) cCh = k; if (x.indexOf('SOCIETE') === 0) cSo = k; if (x === 'CA') cCa = k; });
+    if (cCh < 0 || cCa < 0) return;
+    var d = ent + 2, f = Math.max(mois.getMaxRows(), 400), q = "'" + mois.getName().replace(/'/g, "''") + "'!";
+    // société du client : dernière colonne (avant le CA) remplie de GLEYZES / LPB, même si son titre a été effacé (MAI : « 3806/05 »)
+    var ech = mois.getRange(d, 1, Math.min(80, Math.max(1, mois.getLastRow() - d + 1)), cCa).getValues();
+    for (var k = cCa - 1; k >= 0; k--) {
+      var pl = ech.filter(function (l) { return String(l[k]).trim(); }), soc = pl.filter(function (l) { return /GLEYZES|LPB/i.test(l[k]); });
+      if (pl.length && soc.length >= pl.length * 0.8) { cSo = k; break; }
+    }
+    if (cSo < 0) return;
+    var plage = function (c) { var L = colLettre_(c + 1); return q + '$' + L + '$' + d + ':$' + L + '$' + f; };
+    var noms = mois.getRange(d, cCh + 1, Math.max(1, mois.getLastRow() - d + 1), 1).getValues().map(function (r) { return cle_(r[0]); }).join('|');
+    // onglet CA : ligne d'en-tête (« Chauffeur ») et colonnes Gleyzes / LPB / total
+    var w = ca.getRange(1, 1, Math.min(40, ca.getMaxRows()), Math.min(12, ca.getMaxColumns())).getValues(), lh = -1;
+    for (var r = 0; r < w.length; r++) if (cle_(w[r][2]) === 'CHAUFFEUR') { lh = r; break; }
+    if (lh < 0) return;
+    var cG = -1, cL = -1, cT = -1;
+    w[lh].forEach(function (x, k) { var t = cle_(x); if (t.indexOf('GLEYZES') >= 0 && cG < 0) cG = k; else if (t.indexOf('LPB') >= 0 && cL < 0) cL = k; else if (t.indexOf('TOTAL') === 0 && cT < 0) cT = k; });
+    if (cG < 0 || cL < 0) return;
+    var lignes = [], lt = -1;
+    for (r = lh + 1; r < w.length; r++) {
+      var n = cle_(w[r][2]); if (!n) continue;
+      if (n.indexOf('TOTAL') === 0) { lt = r; break; }
+      lignes.push(r);
+    }
+    if (lt < 0) return;
+    var G = colLettre_(cG + 1), Lp = colLettre_(cL + 1), T = cT >= 0 ? colLettre_(cT + 1) : null;
+    if (!String(w[lh][1] || '').trim()) ca.getRange(lh + 1, 2).setValue('Nom au planning (si différent)').setFontSize(8).setFontColor('#777777').setWrap(true);
+    lignes.forEach(function (r) {
+      var L = r + 1, nom = cle_(w[r][2]), sur = SURNOMS_CHAUFFEURS_[nom];
+      // surnom utilisé au planning (DANY pour DANIEL) : noté en colonne B si le vrai nom n'y figure pas
+      if (!String(w[r][1] || '').trim() && sur && noms.indexOf(nom) < 0 && noms.indexOf(sur) >= 0) ca.getRange(L, 2).setValue(sur).setFontColor('#777777');
+      var qui = '"*"&IF($B' + L + '="",$C' + L + ',$B' + L + ')&"*"';
+      var somme = function (soc) { return '=IF($C' + L + '="","",SUMIFS(' + plage(cCa) + ',' + plage(cCh) + ',' + qui + ',' + plage(cSo) + ',"*' + soc + '*"))'; };
+      ca.getRange(L, cG + 1).setFormula(somme('GLEYZES'));
+      ca.getRange(L, cL + 1).setFormula(somme('LPB'));
+      if (T) ca.getRange(L, cT + 1).setFormula('=IF($C' + L + '="","",' + G + L + '+' + Lp + L + ')');
+    });
+    var R = lt + 1, premier = lignes[0] + 1;
+    ca.getRange(R, 3).setValue('TOTAL CA ' + ca.getName().replace(/^CA\s+/i, ''));
+    ca.getRange(R, cG + 1).setFormula('=SUM(' + G + premier + ':' + G + (R - 1) + ')');
+    ca.getRange(R, cL + 1).setFormula('=SUM(' + Lp + premier + ':' + Lp + (R - 1) + ')');
+    if (T) ca.getRange(R, cT + 1).setFormula('=' + G + R + '+' + Lp + R);
+    // contrôle : CA total du planning et écart (chauffeur absent de la liste ou mal écrit)
+    var c1 = cle_(ca.getRange(R + 3, 3).getValue()), c2 = cle_(ca.getRange(R + 4, 3).getValue());
+    if ((!c1 || c1.indexOf('CA TOTAL') === 0) && (!c2 || c2.indexOf('ECART') === 0) && T) {
+      ca.getRange(R + 3, 3).setValue('CA total du planning');
+      ca.getRange(R + 3, cG + 1).setFormula('=SUM(' + plage(cCa) + ')');
+      ca.getRange(R + 4, 3).setValue('Écart (chauffeur non listé ?)');
+      ca.getRange(R + 4, cG + 1).setFormula('=' + G + (R + 3) + '-' + T + R);
+    }
+    faits.push(ca.getName());
+  });
+  return faits;
+}
+
+/** Menu : répare les onglets CA du (des) planning(s) Carburant. */
+function reparerCAPlanningManuel() {
+  var ss = classeur_(), ui = SpreadsheetApp.getUi(), msgs = [];
+  classeursPlanning_(ss, 'ID_PLANNING_CARBURANT').forEach(function (ext) {
+    var f = reparerOngletsCA_(ext); msgs.push(ext.getName() + ' : ' + (f.length ? f.length + ' onglets CA recalculés (' + f.join(', ') + ')' : 'aucun onglet CA reconnu'));
+  });
+  ui.alert(msgs.join('\n') || 'PARAMETRES > ID_PLANNING_CARBURANT est vide');
+}
+
+/**
+ * Crée les plannings (Inter et Carburant) de l'année suivante : copie du fichier de l'année en cours dans le même dossier,
+ * onglets renommés (JANVIER 2026 → JANVIER 2027 ; les formules suivent), saisies des onglets mensuels effacées (formules,
+ * mise en forme, TARIFS et CAMIONS conservés), titres des onglets CA / COMPARATIF mis à l'année. Lien noté dans PARAMETRES
+ * (ID_PLANNING_…_2027) : le tableau de bord lit les deux années.
+ */
+function creerPlanningsAnneeSuivante_(ss, anCible) {
+  var res = [];
+  SOURCES_PLANNING.forEach(function (src) {
+    var base = src[0], cle = base + '_' + anCible, p = lireParametres_(ss);
+    if (String(p[cle] || '').trim()) { res.push(src[1] + ' ' + anCible + ' : existe déjà (PARAMETRES > ' + cle + ')'); return; }
+    var source = classeursPlanning_(ss, base).slice(-1)[0];
+    if (!source) { res.push(src[1] + ' : PARAMETRES > ' + base + ' vide'); return; }
+    var anSrc = String(anCible - 1);
+    if (src[1] === 'Carburant') reparerOngletsCA_(source);
+    var fichier = DriveApp.getFileById(source.getId()), dossiers = fichier.getParents();
+    var nom = /20\d\d/.test(source.getName()) ? source.getName().replace(/20\d\d/, String(anCible)) : source.getName() + ' ' + anCible;
+    var copie = dossiers.hasNext() ? fichier.makeCopy(nom, dossiers.next()) : fichier.makeCopy(nom);
+    var ext = SpreadsheetApp.openById(copie.getId()), vides = 0;
+    ext.getSheets().forEach(function (sh) {
+      var n = sh.getName();
+      if (n.indexOf(anSrc) >= 0) sh.setName(n.split(anSrc).join(String(anCible)));   // les formules qui pointent vers l'onglet suivent
+    });
+    ext.getSheets().forEach(function (sh) {
+      var n = cle_(sh.getName());
+      if (/^CA |COMPARATIF|RECAP/.test(n)) {   // titres (« CHIFFRE D'AFFAIRES JANVIER 2026 ») : textes seulement, jamais les formules ni les nombres
+        if (sh.getLastRow() < 1) return;
+        var rg = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()), tv = rg.getValues(), tf = rg.getFormulas();
+        tv.forEach(function (l, i) { l.forEach(function (x, j) { if (!tf[i][j] && typeof x === 'string' && x.indexOf(anSrc) >= 0) sh.getRange(i + 1, j + 1).setValue(x.split(anSrc).join(String(anCible))); }); });
+        return;
+      }
+      if (!moisOnglet_(sh.getName()) || sh.getLastRow() < 2) return;
+      var lr = sh.getLastRow(), lc = sh.getLastColumn(), h = sh.getRange(1, 1, Math.min(6, lr), lc).getValues(), ent = -1;
+      for (var i = 0; i < h.length; i++) if (h[i].some(function (x) { return cle_(x).indexOf('CHAUFFEUR') === 0; })) { ent = i; break; }
+      if (ent < 0 || lr <= ent + 1) return;
+      // garde les formules, efface les valeurs saisies (dates, chauffeurs, clients, quantités…)
+      var r = sh.getRange(ent + 2, 1, lr - ent - 1, lc), f = r.getFormulas();
+      r.clearContent(); r.setFormulas(f); vides++;
+    });
+    majParametre_(cle, ext.getUrl(), 'Planning ' + src[1] + ' ' + anCible + ' (créé par le tableau de bord ; lu en plus de ' + base + ')');
+    res.push(src[1] + ' ' + anCible + ' créé : « ' + nom + ' » (' + vides + ' onglets mensuels vidés)\n' + ext.getUrl());
+  });
+  return res;
+}
+
+function creerPlanningsAnneeSuivanteManuel() {
+  var ss = classeur_(), ui = SpreadsheetApp.getUi(), an = new Date().getFullYear() + 1;
+  if (ui.alert('Créer les plannings ' + an + ' ?', 'Copie des plannings Inter et Carburant de ' + (an - 1) + ' dans le même dossier Drive, onglets renommés en ' + an +
+    ', saisies effacées (formules, tarifs et camions conservés). Les fichiers ' + (an - 1) + ' ne sont pas modifiés (sauf réparation des onglets CA).', ui.ButtonSet.OK_CANCEL) !== ui.Button.OK) return;
+  ui.alert(creerPlanningsAnneeSuivante_(ss, an).join('\n\n'));
+}
 
 /** Mois / année d'un onglet mensuel (« SEPTEMBRE 2026 », « AOUT ») ; null pour les onglets CA, TARIFS… */
 function moisOnglet_(nomOnglet) {
@@ -2561,7 +2709,7 @@ function preparerCamionsPlannings_(ss) {
   console.log('Immatriculations connues : ' + Object.keys(connues).length);
   SOURCES_PLANNING.forEach(function (src) {
     if (tropLong()) { interrompu = true; return; }
-    var ext = classeurParam_(ss, src[0]);
+    var ext = classeursPlanning_(ss, src[0]).slice(-1)[0];   // planning de l'année en cours (le plus récent)
     if (!ext) return;
     console.log('Planning ' + src[1] + ' ouvert');
     var onglets = ext.getSheets().map(function (sh) { var m = moisOnglet_(sh.getName()); return m ? { sh: sh, mois: m.mois, an: m.an } : null; })
@@ -2720,7 +2868,7 @@ function surModifPlanning(e) {
 function attribuerCamions_(ss, lignes) {
   var habituels = {};
   SOURCES_PLANNING.forEach(function (src) {
-    try { var ext = classeurParam_(ss, src[1] === 'Inter' ? 'ID_PLANNING_INTER' : 'ID_PLANNING_CARBURANT'); if (ext) habituels[src[1]] = habituelsPlanning_(ext); }
+    try { var ext = classeursPlanning_(ss, src[1] === 'Inter' ? 'ID_PLANNING_INTER' : 'ID_PLANNING_CARBURANT').slice(-1)[0]; if (ext) habituels[src[1]] = habituelsPlanning_(ext); }
     catch (e) { habituels[src[1]] = {}; }
   });
   var sh = ss.getSheetByName('CAMIONS_HABITUELS');
@@ -3095,12 +3243,13 @@ function lireParametres_(ss) {
   return (CACHE_PARAMS_ = p);
 }
 
-function majParametre_(nom, valeur) {
+function majParametre_(nom, valeur, description) {
   var sh = classeur_().getSheetByName('PARAMETRES');
   var v = sh.getRange(1, 1, sh.getLastRow(), 2).getValues();
   for (var i = 1; i < v.length; i++) {
     if (v[i][0] === nom) { sh.getRange(i + 1, 2).setValue(valeur); CACHE_PARAMS_ = null; return; }
   }
+  if (description !== undefined) { sh.appendRow([nom, valeur, description]); CACHE_PARAMS_ = null; }
 }
 
 function estActif_(l) {
