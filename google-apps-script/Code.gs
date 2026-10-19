@@ -2509,7 +2509,9 @@ var colLettre_ = function (n) { return colonneLettre_(n); };
  * (Dany pour Daniel…). Les formules sont réécrites : Google les relit, ce qui corrige aussi les #N/A / #REF!.
  */
 function reparerOngletsCA_(ext) {
-  var feuilles = ext.getSheets(), parNom = {}, faits = [];
+  var feuilles = ext.getSheets(), parNom = {}, faits = [], pv = separateurFormules_(ext);
+  // fichier réglé en français : Google peut exiger « ; » entre les arguments (les virgules n'apparaissent jamais dans nos textes)
+  var formule = function (rg, f) { rg.setFormula(pv === ';' ? f.replace(/,/g, ';') : f); return rg; };
   feuilles.forEach(function (sh) { parNom[cle_(sh.getName())] = sh; });
   feuilles.forEach(function (ca) {
     var nomCa = cle_(ca.getName()); if (!/^CA /.test(nomCa)) return;
@@ -2553,9 +2555,9 @@ function reparerOngletsCA_(ext) {
       if (!String(w[r][1] || '').trim() && sur && noms.indexOf(nom) < 0 && noms.indexOf(sur) >= 0) ca.getRange(L, 2).setValue(sur).setFontColor('#777777');
       var qui = '"*"&IF($B' + L + '="",$C' + L + ',$B' + L + ')&"*"';
       var somme = function (soc) { return '=IF($C' + L + '="","",SUMIFS(' + plage(cCa) + ',' + plage(cCh) + ',' + qui + ',' + plage(cSo) + ',"*' + soc + '*"))'; };
-      ca.getRange(L, cG + 1).setFormula(somme('GLEYZES'));
-      ca.getRange(L, cL + 1).setFormula(somme('LPB'));
-      if (T) ca.getRange(L, cT + 1).setFormula('=IF($C' + L + '="","",' + G + L + '+' + Lp + L + ')');
+      formule(ca.getRange(L, cG + 1), somme('GLEYZES'));
+      formule(ca.getRange(L, cL + 1), somme('LPB'));
+      if (T) formule(ca.getRange(L, cT + 1), '=IF($C' + L + '="","",' + G + L + '+' + Lp + L + ')');
     });
     var R = lt + 1, premier = lignes[0] + 1;
     ca.getRange(R, 3).setValue('TOTAL CA ' + ca.getName().replace(/^CA\s+/i, ''));
@@ -2570,9 +2572,25 @@ function reparerOngletsCA_(ext) {
       ca.getRange(R + 4, 3).setValue('Écart (chauffeur non listé ?)');
       ca.getRange(R + 4, cG + 1).setFormula('=' + G + (R + 3) + '-' + T + R);
     }
-    faits.push(ca.getName());
+    SpreadsheetApp.flush();
+    var test = String(ca.getRange(lignes[0] + 1, cG + 1).getDisplayValue());
+    faits.push(ca.getName() + (/^#/.test(test) ? ' (⚠ ' + test + ')' : ''));
   });
   return faits;
+}
+
+/** « , » ou « ; » : séparateur d'arguments accepté par ce fichier (essai dans un onglet temporaire). */
+function separateurFormules_(ext) {
+  var sh = ext.insertSheet('_test_formule_' + Date.now()), sep = ',';
+  try {
+    sh.getRange(1, 1).setFormula('=IF(1=1,1,0)'); SpreadsheetApp.flush();
+    if (String(sh.getRange(1, 1).getDisplayValue()) !== '1') {
+      sh.getRange(1, 1).setFormula('=IF(1=1;1;0)'); SpreadsheetApp.flush();
+      if (String(sh.getRange(1, 1).getDisplayValue()) === '1') sep = ';';
+    }
+  } catch (e) { /* on garde la virgule */ }
+  ext.deleteSheet(sh);
+  return sep;
 }
 
 /** Menu : répare les onglets CA du (des) planning(s) Carburant. */
