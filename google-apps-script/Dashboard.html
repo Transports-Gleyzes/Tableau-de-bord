@@ -190,6 +190,10 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .attention { border-left-width: 6px; }
 .badge { border-radius: 999px; }
 .sous-titre { font-size: 14px; margin: 16px 0 4px; }
+.consignes-peages { border: 1px solid var(--border); border-left: 4px solid var(--accent, #2f6fdb); border-radius: 10px; padding: 10px 12px; margin: 10px 0; background: var(--surface-2); }
+.consignes-peages textarea { width: 100%; margin: 6px 0; box-sizing: border-box; }
+#listeConsignes { margin: 8px 0 4px; padding-left: 0; list-style: none; }
+#listeConsignes li { padding: 4px 0; border-top: 1px dashed var(--border); }
 details.badge-peage { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; margin-top: 8px; background: var(--surface); }
 details.badge-peage.ecarte { background: var(--surface-2); }
 details.badge-peage > summary { cursor: pointer; line-height: 1.9; }
@@ -430,18 +434,19 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
       <p class="note">Déposez les relevés de badge de chaque quinzaine (fichiers CSV « FR… »). Chaque trajet reçoit le contrat de la tournée Inter du même camion le même jour
         (planning Inter, colonne CAMION) : contrats 7531… remboursés, 7539… non remboursés (montants vidés). Les camions sans tournée Intermarché sont écartés.
         Le planning des péages s'affiche ci-dessous ; « Télécharger » donne le fichier Excel « PEAGES &lt;MOIS&gt; » à envoyer à Intermarché avant le 15.</p>
-      <details id="reglesPeages" class="regles-peages"><summary><b>📝 Mes règles de rapprochement</b> <span class="note" id="resumeRegles"></span></summary>
-        <p class="note">Notez ici vos consignes : le site les applique à chaque dépôt de relevé (et recalcule les mois déjà déposés quand vous enregistrez).
-          <b>Chauffeur</b> : tel chauffeur avait ce camion sur la période (les péages reçoivent les contrats de ses tournées).
-          <b>Badge → camion</b> : le badge X roule dans le camion Y (ses péages suivent les tournées de Y). <b>Seulement</b> : ne garder que ces immatriculations (plusieurs possibles, séparées par des virgules) : les autres sont retirées du planning et du fichier Excel.
-          <b>Ignorer</b> : toujours écarter ce badge. <b>Contrat par défaut</b> : contrat à mettre quand le planning n'a pas de tournée ce jour-là. <b>Note</b> : simple rappel.
-          Dates facultatives (vide = toujours).</p>
-        <div class="barre" style="align-items:flex-start"><textarea id="consignePeages" rows="3" style="flex:1;min-width:260px" placeholder="Écrivez simplement, ex. : LOIC a pris le FS238WL à partir du 21/09 et il avait le GD045RT du 01 au 20/09. Ne prendre en compte que le GB050RT, FS238WL."></textarea>
-          <button id="lireConsigne">➜ Transformer en règles</button></div>
-        <p class="note" id="msgConsigne"></p>
-        <div class="tableau"><table class="serre"><thead><tr><th>Type</th><th>Badge / immat</th><th>Camion réel</th><th>Chauffeur</th><th>Contrat</th><th>Du</th><th>Au</th><th>Note</th><th></th></tr></thead><tbody id="tabRegles"></tbody></table></div>
-        <div class="barre" style="margin-top:6px"><button id="ajoutRegle">+ Ajouter une règle</button><button id="enregRegles" class="primaire">Enregistrer et appliquer</button><span class="msg" id="msgRegles"></span></div>
-      </details>
+      <div class="consignes-peages">
+        <label for="consignePeages"><b>💬 Mes commentaires / consignes</b> <span class="note">restent sur le site, ne vont pas dans le fichier Excel ; le site en tient compte pour le rapprochement des contrats</span></label>
+        <textarea id="consignePeages" rows="3" placeholder="Écrivez simplement, ex. : LOIC a pris le FS238WL à partir du 21/09 et il avait le GD045RT du 01 au 20/09. Ne prendre en compte que le GB050RT, FS238WL."></textarea>
+        <div class="barre"><button id="lireConsigne" class="primaire">Enregistrer et appliquer</button><span class="msg" id="msgConsigne"></span></div>
+        <ul id="listeConsignes"></ul>
+        <details id="reglesPeages"><summary class="note">Voir / corriger le détail des règles <span id="resumeRegles"></span></summary>
+          <p class="note"><b>Chauffeur</b> : tel chauffeur avait ce camion (les péages reçoivent les contrats de ses tournées). <b>Badge → camion</b> : le badge X roule dans le camion Y.
+            <b>Seulement</b> : ne garder que ces immatriculations (séparées par des virgules) : les autres sont retirées du planning et de l'Excel. <b>Ignorer</b> : toujours écarter ce badge.
+            <b>Contrat par défaut</b> : quand le planning n'a pas de tournée ce jour-là. <b>Note</b> : commentaire libre. Dates facultatives (vide = toujours).</p>
+          <div class="tableau"><table class="serre"><thead><tr><th>Type</th><th>Badge / immat</th><th>Camion réel</th><th>Chauffeur</th><th>Contrat</th><th>Du</th><th>Au</th><th>Note</th><th></th></tr></thead><tbody id="tabRegles"></tbody></table></div>
+          <div class="barre" style="margin-top:6px"><button id="ajoutRegle">+ Ajouter une règle</button><button id="enregRegles" class="primaire">Enregistrer et appliquer</button><span class="msg" id="msgRegles"></span></div>
+        </details>
+      </div>
       <div class="depot" id="zonePeages">🛣️ Glissez les relevés CSV ici, ou cliquez pour les choisir
         <input type="file" id="choixPeages" accept=".csv,text/csv" multiple hidden></div>
       <div id="listePeages"></div>
@@ -1823,31 +1828,53 @@ function lireConsignePeages(texte, M) {
   });
   return res;
 }
+/** Une règle en français, pour la liste des consignes. */
+function phraseRegle(r) {
+  var per = r.du && r.au ? ' du ' + dateFr(r.du) + ' au ' + dateFr(r.au) : r.du ? ' à partir du ' + dateFr(r.du) : r.au ? " jusqu'au " + dateFr(r.au) : '';
+  return r.type === 'CHAUFFEUR' ? '🚚 ' + txt(r.chauffeur) + ' a le ' + txt(r.badge) + per + ' → contrats de ses tournées'
+    : r.type === 'BADGE' ? '🔁 Badge ' + txt(r.badge) + ' dans le camion ' + txt(r.camion) + per
+    : r.type === 'SEULEMENT' ? '✅ Ne garder que : ' + txt(r.badge) + per
+    : r.type === 'IGNORER' ? '🚫 Ignorer : ' + txt(r.badge) + per
+    : r.type === 'CONTRAT' ? '📄 ' + txt(r.badge) + ' sans tournée → contrat ' + txt(r.contrat) + per
+    : '💬 ' + txt(r.note) + (r.badge ? ' <span class="note">(' + txt(r.badge) + ')</span>' : '');
+}
 function rendreReglesPeages() {
   var regles = D.PEAGES_REGLES || [], tb = document.getElementById('tabRegles');
-  document.getElementById('resumeRegles').textContent = regles.length ? '(' + regles.length + ' règle' + (regles.length > 1 ? 's' : '') + ' active' + (regles.length > 1 ? 's' : '') + ')' : '(aucune)';
+  document.getElementById('resumeRegles').textContent = '(' + regles.length + ')';
   tb.innerHTML = regles.map(ligneRegle).join('');
   var brancher = function () { tb.querySelectorAll('[data-r-suppr]').forEach(function (b) { b.onclick = function () { b.closest('tr').remove(); }; }); };
   brancher();
-  document.getElementById('ajoutRegle').onclick = function () { tb.insertAdjacentHTML('beforeend', ligneRegle()); brancher(); };
-  document.getElementById('lireConsigne').onclick = function () {
-    var ta = document.getElementById('consignePeages'), mc = document.getElementById('msgConsigne'), M = document.getElementById('moisPeages').value;
-    var r = lireConsignePeages(ta.value, M || new Date().toISOString().slice(0, 7));
-    if (!r.length) { mc.textContent = '⚠ Je n\'ai pas reconnu de consigne : ajoutez la règle à la main avec « + Ajouter une règle ».'; return; }
-    r.forEach(function (x) { tb.insertAdjacentHTML('beforeend', ligneRegle(x)); });
-    brancher(); ta.value = '';
-    mc.textContent = '✓ ' + r.length + ' règle(s) ajoutée(s) au tableau : vérifiez-les puis cliquez « Enregistrer et appliquer ».';
-  };
-  document.getElementById('enregRegles').onclick = function () {
-    var msg = document.getElementById('msgRegles'), plaque = function (x) { return x.toUpperCase().trim(); };
-    var liste = Array.prototype.map.call(tb.querySelectorAll('tr'), function (tr) {
+  var lireTableau = function () {
+    return Array.prototype.map.call(tb.querySelectorAll('tr'), function (tr) {
       var v = function (k) { return tr.querySelector('[data-r=' + k + ']').value.trim(); };
-      return { type: v('type'), badge: plaque(v('badge')), camion: plaque(v('camion')).replace(/[\s-]/g, ''), chauffeur: v('chauffeur').toUpperCase(), contrat: v('contrat'), du: v('du'), au: v('au'), note: v('note') };
+      return { type: v('type'), badge: v('badge').toUpperCase(), camion: v('camion').toUpperCase().replace(/[\s-]/g, ''), chauffeur: v('chauffeur').toUpperCase(), contrat: v('contrat'), du: v('du'), au: v('au'), note: v('note') };
     }).filter(function (r) { return r.badge || r.camion || r.contrat || r.note; });
-    msg.className = 'msg'; msg.textContent = 'Enregistrement et recalcul…';
-    appelServeur('enregistrerReglesPeages', liste).then(function (n) { msg.className = 'msg ok'; msg.textContent = '✓ ' + n + ' règle(s) appliquée(s)'; charger(); })
-      .catch(function (e) { msg.className = 'msg err'; msg.textContent = '⚠ ' + e.message; });
   };
+  var enregistrer = function (liste, msg, ok) {
+    msg.className = 'msg'; msg.textContent = 'Enregistrement et recalcul…';
+    return appelServeur('enregistrerReglesPeages', liste).then(function () { msg.className = 'msg ok'; msg.textContent = ok; charger(); })
+      .catch(function (e) { msg.className = 'msg err'; msg.textContent = '⚠ ' + e.message; throw e; });
+  };
+  // liste lisible des consignes, avec ✕ pour en retirer une
+  var ul = document.getElementById('listeConsignes');
+  ul.innerHTML = regles.map(function (r, i) { return '<li>' + phraseRegle(r) + ' <button class="suppr" data-c-suppr="' + i + '" title="Retirer">✕</button></li>'; }).join('');
+  ul.querySelectorAll('[data-c-suppr]').forEach(function (b) {
+    b.onclick = function () {
+      var reste = lireTableau().filter(function (x, i) { return i !== +b.dataset.cSuppr; });
+      enregistrer(reste, document.getElementById('msgConsigne'), '✓ Consigne retirée').catch(function () {});
+    };
+  });
+  document.getElementById('ajoutRegle').onclick = function () { tb.insertAdjacentHTML('beforeend', ligneRegle()); brancher(); };
+  // commentaire écrit : on garde le texte (note) et on ajoute les règles reconnues
+  document.getElementById('lireConsigne').onclick = function () {
+    var ta = document.getElementById('consignePeages'), mc = document.getElementById('msgConsigne'), texte = ta.value.trim(), M = document.getElementById('moisPeages').value;
+    if (!texte) { mc.className = 'msg err'; mc.textContent = '⚠ Écrivez d\'abord votre commentaire'; return; }
+    var r = lireConsignePeages(texte, M || new Date().toISOString().slice(0, 7)).filter(function (x) { return x.type !== 'NOTE'; });
+    var liste = lireTableau().concat([{ type: 'NOTE', note: texte }], r);
+    enregistrer(liste, mc, r.length ? '✓ Enregistré. Compris : ' + r.length + ' consigne(s) appliquée(s) (voir la liste ci-dessous)'
+      : '✓ Commentaire enregistré (pas de consigne automatique reconnue : ajoutez-la dans « détail des règles » si besoin)').then(function () { ta.value = ''; }).catch(function () {});
+  };
+  document.getElementById('enregRegles').onclick = function () { enregistrer(lireTableau(), document.getElementById('msgRegles'), '✓ Règles appliquées').catch(function () {}); };
 }
 function rendrePeages() {
   rendreReglesPeages();
