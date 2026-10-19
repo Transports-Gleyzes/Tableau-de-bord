@@ -1244,7 +1244,13 @@ function rendreActivite() {
   document.getElementById('tuilesAct').innerHTML =
     tuile('CA total ' + nomMois(mois), fmtEur.format(caListe(duMois))) +
     tuile('<span class="pastille-act" style="background:var(--s1)"></span>CA Inter', fmtEur.format(caListe(inter)), inter.length + ' tournée(s)') +
-    tuile('<span class="pastille-act" style="background:var(--s2)"></span>CA Carburant', fmtEur.format(caListe(carbu)), carbu.length + ' livraison(s)');
+    tuile('<span class="pastille-act" style="background:var(--s2)"></span>CA Carburant', fmtEur.format(caListe(carbu)), carbu.length + ' livraison(s)') +
+    // répartition par société qui facture (Gleyzes / LPB), détaillée Inter / Carburant
+    ['Gleyzes', 'LPB'].map(function (so) {
+      var de = function (l) { return l.filter(function (x) { return x.societe === so; }); }, tot = caListe(de(duMois)), part = caListe(duMois) ? Math.round(tot / caListe(duMois) * 100) : 0;
+      return tuile('CA ' + (so === 'LPB' ? 'LPB Transports' : 'Transports Gleyzes'), fmtEur.format(tot),
+        'Inter ' + fmtEur.format(caListe(de(inter))) + ' · Carburant ' + fmtEur.format(caListe(de(carbu))) + (societe() ? '' : ' · ' + part + ' % du total'));
+    }).join('');
 
   var km = inter.reduce(function (t, l) { return t + (num(l.km) || 0); }, 0);
   var manquants = inter.filter(function (l) { return l.contratManquant; }).length;
