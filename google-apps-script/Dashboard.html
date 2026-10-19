@@ -54,6 +54,8 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 section[hidden] { display: none; }
 .barre { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 12px; }
 .barre label { color: var(--text-2); font-size: 13px; }
+.tuiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+@media (max-width: 600px) { .tuiles-3 { grid-template-columns: 1fr !important; } }
 .tuiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .tuile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
 .tuile .lib { color: var(--text-2); font-size: 12px; }
@@ -342,6 +344,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
   <section id="activite" hidden>
     <div class="barre"><label for="moisAct">Mois</label><select id="moisAct"></select><span class="note" id="noteAct"></span></div>
     <div class="tuiles" id="tuilesAct"></div>
+    <div class="tuiles tuiles-3" id="tuilesSocAct"></div>
     <div class="grille">
       <div class="carte inter">
         <h2><span class="pastille-act" style="background:var(--s1)"></span>Planning Inter (ITM)</h2>
@@ -1244,13 +1247,15 @@ function rendreActivite() {
   document.getElementById('tuilesAct').innerHTML =
     tuile('CA total ' + nomMois(mois), fmtEur.format(caListe(duMois))) +
     tuile('<span class="pastille-act" style="background:var(--s1)"></span>CA Inter', fmtEur.format(caListe(inter)), inter.length + ' tournée(s)') +
-    tuile('<span class="pastille-act" style="background:var(--s2)"></span>CA Carburant', fmtEur.format(caListe(carbu)), carbu.length + ' livraison(s)') +
-    // répartition par société qui facture (Gleyzes / LPB), détaillée Inter / Carburant
-    ['Gleyzes', 'LPB'].map(function (so) {
-      var de = function (l) { return l.filter(function (x) { return x.societe === so; }); }, tot = caListe(de(duMois)), part = caListe(duMois) ? Math.round(tot / caListe(duMois) * 100) : 0;
-      return tuile('CA ' + (so === 'LPB' ? 'LPB Transports' : 'Transports Gleyzes'), fmtEur.format(tot),
-        'Inter ' + fmtEur.format(caListe(de(inter))) + ' · Carburant ' + fmtEur.format(caListe(de(carbu))) + (societe() ? '' : ' · ' + part + ' % du total'));
-    }).join('');
+    tuile('<span class="pastille-act" style="background:var(--s2)"></span>CA Carburant', fmtEur.format(caListe(carbu)), carbu.length + ' livraison(s)');
+  // CA par société qui facture : Inter, Carburant, total (une ligne Gleyzes, une ligne LPB)
+  document.getElementById('tuilesSocAct').innerHTML = ['Gleyzes', 'LPB'].filter(function (so) { return !societe() || societe() === so; }).map(function (so) {
+    var de = function (l) { return l.filter(function (x) { return x.societe === so; }); }, nom = so === 'LPB' ? 'LPB' : 'GLEYZES';
+    var i = de(inter), c = de(carbu);
+    return tuile('<span class="pastille-act" style="background:var(--s1)"></span>CA ' + nom + ' Inter', fmtEur.format(caListe(i)), i.length + ' tournée(s)') +
+      tuile('<span class="pastille-act" style="background:var(--s2)"></span>CA ' + nom + ' Carburant', fmtEur.format(caListe(c)), c.length + ' livraison(s)') +
+      tuile('CA ' + nom + ' total', '<b>' + fmtEur.format(caListe(i) + caListe(c)) + '</b>', caListe(duMois) ? Math.round((caListe(i) + caListe(c)) / caListe(duMois) * 100) + ' % du CA du mois' : '');
+  }).join('');
 
   var km = inter.reduce(function (t, l) { return t + (num(l.km) || 0); }, 0);
   var manquants = inter.filter(function (l) { return l.contratManquant; }).length;
