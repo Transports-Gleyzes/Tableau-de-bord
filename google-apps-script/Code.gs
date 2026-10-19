@@ -1315,7 +1315,7 @@ function enregistrerReglesPeages(liste) {
   if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(FEUILLES.PEAGES_REGLES.length, sh.getLastColumn())).clearContent();
   if (lignes.length) sh.getRange(2, 1, lignes.length, FEUILLES.PEAGES_REGLES.length).setValues(lignes);
   var mois = {}; tous.forEach(function (l) { if (l.Mois) mois[l.Mois] = 1; });
-  Object.keys(mois).sort().slice(-6).forEach(function (m) { recalculerPeages_(ss, m); });
+  var cache = {}; Object.keys(mois).sort().slice(-6).forEach(function (m) { recalculerPeages_(ss, m, cache); });
   // effet de chaque règle : trajets gardés / retirés par badge cité
   var effet = {}, inconnus = [];
   lignes.forEach(function (l) { if (l[0] !== 'NOTE') String(l[1]).split(', ').forEach(function (b) { if (b) { effet[b] = { badge: b, gardes: 0, retires: 0 }; if (!connus[b] && Object.keys(connus).length && inconnus.indexOf(b) < 0) inconnus.push(b); } }); });
@@ -1341,10 +1341,11 @@ function badgesPeages_(ss) {
  * À AFFECTER (badge Intermarché, jour sans tournée), ÉCARTÉ (badge sans aucune tournée Intermarché ce mois-là).
  * Les contrats saisis à la main (✎) sont conservés.
  */
-function recalculerPeages_(ss, mois) {
+function recalculerPeages_(ss, mois, cache) {
   var sh = ss.getSheetByName('PEAGES'); if (!sh || sh.getLastRow() < 2) return;
   var prefixe = String(lireParametres_(ss).PREFIXE_PEAGES_REMBOURSES || '7531').trim();
-  var idx = tourneesParCamion_(ss), fiches = badgesPeages_(ss), regles = reglesPeages_(ss);
+  // cache : plannings lus une seule fois quand plusieurs mois sont recalculés
+  var idx = cache ? (cache.idx = cache.idx || tourneesParCamion_(ss)) : tourneesParCamion_(ss), fiches = badgesPeages_(ss), regles = reglesPeages_(ss);
   var dans = function (r, jour) { return (!r.du || jour >= r.du) && (!r.au || jour <= r.au); };
   var seulement = regles.filter(function (r) { return r.type === 'SEULEMENT'; });
   var vise = function (r, badge, camion) { return r.badges.indexOf(badge) >= 0 || r.badges.indexOf(camion) >= 0; };

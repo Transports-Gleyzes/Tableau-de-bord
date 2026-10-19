@@ -206,7 +206,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports</div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/10-péages3</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -1915,8 +1915,24 @@ var COLS_PEAGES = ['Type de ligne/Line Type', 'Immatriculation/Plate Number', 'D
   'Lieu d\'entré/Name of Entry', 'Date de sortie/Exit date', 'Heure de sortie/Exit time', 'Gare/Lieu de sortie/Name of Exit', 'Autoroute de sortie/Exit motorway',
   'Societe circulee/Toll company', 'KM', 'Montant brut de peage HT/Excluding VAT and discount toll amount', 'Montant brut de peage TTC/Including VAT and without discount toll amount', 'CONTRAT '];
 /** Trajets d'un mois groupés par quinzaine puis par camion, avec les blocs « même jour, même contrat ». */
+/** Consignes « ignorer » / « ne garder que » appliquées aussi ici : le planning et l'Excel ne montrent jamais un badge retiré. */
+function retireParConsigne(M, immat, jour) {
+  var regles = D.PEAGES_REGLES || [], pl = function (x) { return String(x || '').toUpperCase().replace(/[\s-]/g, ''); };
+  var b = pl(immat), f = ficheBadge(M, b), cam = f && f.camionReel ? pl(f.camionReel) : '';
+  var liste = function (r) { return (r.badges || String(r.badge || '').split(/[,;\/]+/)).map(pl).filter(String); };
+  var dans = function (r) { return (!r.du || jour >= r.du) && (!r.au || jour <= r.au); };
+  // tolère un caractère en trop / en moins (GD0412ZC pour GD042ZC)
+  var proche = function (x, y) { if (x === y) return true; var lg = x.length > y.length ? x : y, ct = lg === x ? y : x; if (lg.length !== ct.length + 1) return false;
+    for (var i = 0; i < lg.length; i++) if (lg.slice(0, i) + lg.slice(i + 1) === ct) return true; return false; };
+  var vise = function (r) { return liste(r).some(function (x) { return proche(x, b) || (cam && proche(x, cam)); }); };
+  if (regles.some(function (r) { return r.type === 'IGNORER' && dans(r) && vise(r); })) return true;
+  var seul = regles.filter(function (r) { return r.type === 'SEULEMENT'; });
+  return seul.length > 0 && !seul.some(function (r) { return dans(r) && vise(r); });
+}
 function planPeages(M) {
-  var lignes = (D.PEAGES_DETAIL || {})[M] || [], res = [];
+  var retires = {};
+  var lignes = ((D.PEAGES_DETAIL || {})[M] || []).filter(function (l) { var x = retireParConsigne(M, l[1], String(l[6] || l[2])); if (x) retires[l[1]] = 1; return !x; }), res = [];
+  planPeages.retires = Object.keys(retires);
   [1, 2].forEach(function (q) {
     var lq = lignes.filter(function (l) { return l[0] === q; }); if (!lq.length) return;
     var ordre = []; lq.forEach(function (l) { if (ordre.indexOf(l[1]) < 0) ordre.push(l[1]); });
@@ -1945,6 +1961,7 @@ function rendreBadgesPeages(M) {
         '<textarea data-f="commentaire" rows="3" style="width:100%;margin-top:6px" placeholder="Commentaire (ex. le badge GD042ZC était dans le tracteur GE606BF du 3 au 14/08)">' + txt(f.commentaire || '') + '</textarea>' +
         '<div class="docs">' + docs.map(function (d) { return '<a href="' + txt(d.url) + '" target="_blank" rel="noopener">📎 ' + txt(d.nom) + '</a>'; }).join(' ') + '</div>' +
         '<div class="barre" style="margin-top:6px"><button class="primaire" data-a="enreg">Enregistrer</button>' +
+        '<button data-a="retirer">🚫 Ne pas prendre en compte ce badge</button>' +
         '<label class="bouton-fichier">📎 Joindre des documents<input type="file" data-a="docs" multiple hidden></label><span class="msg"></span></div></div></details>';
     }).join('');
   z.querySelectorAll('.fiche').forEach(function (fi) {
@@ -1954,6 +1971,13 @@ function rendreBadgesPeages(M) {
       msg.className = 'msg'; msg.textContent = 'Enregistrement…';
       appelServeur('enregistrerFicheBadge', { mois: M, badge: badgeF, camionReel: val('camionReel').toUpperCase().replace(/[\s-]/g, ''), du: val('du'), au: val('au'), commentaire: val('commentaire') })
         .then(function () { msg.className = 'msg ok'; msg.textContent = '✓ Enregistré'; charger(); }).catch(function (e) { msg.className = 'msg err'; msg.textContent = '⚠ ' + e.message; });
+    };
+    fi.querySelector('[data-a=retirer]').onclick = function () {
+      var liste = (D.PEAGES_REGLES || []).map(function (r) { return { type: r.type, badge: r.badge, camion: r.camion, chauffeur: r.chauffeur, contrat: r.contrat, du: r.du, au: r.au, note: r.note }; });
+      liste.push({ type: 'IGNORER', badge: badgeF });
+      msg.className = 'msg'; msg.textContent = 'Retrait de ' + badgeF + '…';
+      appelServeur('enregistrerReglesPeages', liste).then(function () { msg.className = 'msg ok'; msg.textContent = '✓ ' + badgeF + ' retiré du planning et de l\'Excel'; charger(); })
+        .catch(function (er) { msg.className = 'msg err'; msg.textContent = '⚠ ' + er.message; });
     };
     fi.querySelector('[data-a=docs]').onchange = function (e) {
       var fichiers = Array.prototype.slice.call(e.target.files), suite = Promise.resolve();
@@ -2040,7 +2064,7 @@ function telechargerPeages(M) {
       XLSX.utils.book_append_sheet(wb, ws, ('PEAGES ' + (p.q === 1 ? 'PREMIERE' : 'DEUXIEME') + ' QUINZAINE ' + nomM).slice(0, 31));
     });
     XLSX.writeFile(wb, 'PEAGES ' + nomM + ' ' + M.slice(0, 4) + '.xlsx');
-    msg.textContent = '';
+    msg.textContent = planPeages.retires.length ? '✓ Retirés du fichier (vos consignes) : ' + planPeages.retires.join(', ') : '';
   }).catch(function (e) { msg.textContent = '⚠ ' + e.message; });
 }
 // ---------- avoirs SCAPED : lecture du mail de demande ----------
