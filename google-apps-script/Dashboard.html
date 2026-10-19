@@ -1804,7 +1804,7 @@ function ligneRegle(r) {
 /** Transforme une consigne écrite (« LOIC a pris le FS238WL à partir du 21/09… ») en règles. M = 'AAAA-MM' pour l'année. */
 function lireConsignePeages(texte, M) {
   var res = [], dernier = '', an = +String(M).slice(0, 4) || new Date().getFullYear();
-  var reImmat = /\b[A-Z]{2}[ -]?\d{3}[ -]?[A-Z]{2}\b/g, sans = function (x) { return x.normalize('NFD').replace(/[̀-ͯ]/g, ''); };
+  var reImmat = /\b[A-Z]{2}[ -]?\d{3,4}[ -]?[A-Z]{2,3}\b/g, sans = function (x) { return x.normalize('NFD').replace(/[̀-ͯ]/g, ''); };
   var iso = function (j, m, a) { a = a ? (+a < 100 ? 2000 + +a : +a) : an; return a + '-' + String(m).padStart(2, '0') + '-' + String(j).padStart(2, '0'); };
   var MOTS = /^(IL|ELLE|LE|LA|LES|DU|AU|ET|PUIS|ALORS|OU|ON|NE|QUE|BADGE|CAMION|TRACTEUR|IMMAT|A|EST|ETAIT|DEPUIS|PARTIR|JUSQU|ENSUITE)$/;
   String(texte || '').toUpperCase().split(/[.\n;]+|\bET\b(?=\s+(?:IL|ELLE|[A-Z]+\s+(?:A|AVAIT|PREND|ROULE)\b))|\bOU ALORS\b|\bPUIS\b/).forEach(function (ph) {
@@ -1816,8 +1816,10 @@ function lireConsignePeages(texte, M) {
       if ((m = ph.match(/(?:A PARTIR DU|DEPUIS LE|DEPUIS|DES LE|DU)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/))) du = iso(m[1], m[2], m[3]);
       if ((m = ph.match(/(?:JUSQU'?\s*AU|JUSQU A|AU)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/))) au = iso(m[1], m[2], m[3]);
     }
-    if (/NE (?:PRENDRE|GARDER|COMPTER)|QUE (?:LE|LES|CES)?\s*[A-Z]{2}\d|SEULEMENT|UNIQUEMENT/.test(ph)) { res.push({ type: 'SEULEMENT', badge: immats.join(', '), du: du, au: au }); return; }
-    if (/IGNORER|ENLEVER|SUPPRIMER|RETIRER|PAS PRENDRE|ECARTER/.test(ph)) { res.push({ type: 'IGNORER', badge: immats.join(', '), du: du, au: au }); return; }
+    // négation d'abord : « ne pas / ne plus prendre en compte », « sans », « sauf », « enlever »…
+    var seul = /\bQUE\b|SEULEMENT|UNIQUEMENT/.test(ph);
+    if (/\b(?:PAS|PLUS|JAMAIS|SANS|SAUF|AUCUN|HORS)\b|IGNOR|ENLEV|SUPPRIM|RETIR|ECART|EXCLU|ENLEV|OUBLI/.test(ph) && !(seul && !/\b(?:PAS|SAUF|SANS)\b/.test(ph))) { res.push({ type: 'IGNORER', badge: immats.join(', '), du: du, au: au }); return; }
+    if (seul || /NE (?:PRENDRE|GARDER|COMPTER|METTRE)/.test(ph)) { res.push({ type: 'SEULEMENT', badge: immats.join(', '), du: du, au: au }); return; }
     if (/BADGE/.test(ph) && immats.length >= 2) { res.push({ type: 'BADGE', badge: immats[0], camion: immats[1], du: du, au: au }); return; }
     // chauffeur : mot(s) avant « a pris / avait / prend / roule »
     m = ph.match(/^(?:(.*?)\s+)?(?:A PRIS|AVAIT|PREND|A|ROULE (?:AVEC|SUR|DANS)|EST (?:SUR|DANS)|ETAIT (?:SUR|DANS))\s+(?:LE |LA |LES )?(?:CAMION |TRACTEUR |BADGE )?[A-Z]{2}[ -]?\d{3}/);
@@ -1852,7 +1854,13 @@ function rendreReglesPeages() {
   };
   var enregistrer = function (liste, msg, ok) {
     msg.className = 'msg'; msg.textContent = 'Enregistrement et recalcul…';
-    return appelServeur('enregistrerReglesPeages', liste).then(function () { msg.className = 'msg ok'; msg.textContent = ok; charger(); })
+    return appelServeur('enregistrerReglesPeages', liste).then(function (r) {
+      var det = r && r.effet ? r.effet.map(function (e) { return e.badge + ' : ' + (e.retires ? e.retires + ' trajet(s) retiré(s)' : '') + (e.retires && e.gardes ? ', ' : '') + (e.gardes ? e.gardes + ' gardé(s)' : ''); }) : [];
+      var pb = r && r.inconnus && r.inconnus.length ? ' ⚠ Introuvable dans les relevés : ' + r.inconnus.join(', ') + ' (vérifiez l\'immatriculation)' : '';
+      msg.className = pb ? 'msg err' : 'msg ok';
+      msg.textContent = ok + (r && r.corriges && r.corriges.length ? ' — corrigé : ' + r.corriges.join(', ') : '') + (det.length ? ' — ' + det.join(' ; ') : '') + pb;
+      charger();
+    })
       .catch(function (e) { msg.className = 'msg err'; msg.textContent = '⚠ ' + e.message; throw e; });
   };
   // liste lisible des consignes, avec ✕ pour en retirer une
@@ -1871,8 +1879,10 @@ function rendreReglesPeages() {
     if (!texte) { mc.className = 'msg err'; mc.textContent = '⚠ Écrivez d\'abord votre commentaire'; return; }
     var r = lireConsignePeages(texte, M || new Date().toISOString().slice(0, 7)).filter(function (x) { return x.type !== 'NOTE'; });
     var liste = lireTableau().concat([{ type: 'NOTE', note: texte }], r);
-    enregistrer(liste, mc, r.length ? '✓ Enregistré. Compris : ' + r.length + ' consigne(s) appliquée(s) (voir la liste ci-dessous)'
-      : '✓ Commentaire enregistré (pas de consigne automatique reconnue : ajoutez-la dans « détail des règles » si besoin)').then(function () { ta.value = ''; }).catch(function () {});
+    enregistrer(liste, mc, r.length ? '✓ Enregistré. Compris : ' + r.map(function (x) { return phraseRegle(x).replace(/<[^>]+>/g, ''); }).join(' / ')
+      : '⚠ Commentaire gardé, mais je n\'ai reconnu aucune consigne (rien n\'est appliqué) : écrivez par ex. « ne pas prendre en compte le GD042ZC », ou ajoutez la règle dans « détail des règles »').then(function () {
+      ta.value = ''; if (!r.length) mc.className = 'msg err';
+    }).catch(function () {});
   };
   document.getElementById('enregRegles').onclick = function () { enregistrer(lireTableau(), document.getElementById('msgRegles'), '✓ Règles appliquées').catch(function () {}); };
 }

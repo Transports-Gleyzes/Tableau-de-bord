@@ -1284,10 +1284,24 @@ function reglesPeages_(ss) {
 function enregistrerReglesPeages(liste) {
   if (!Array.isArray(liste)) throw new Error('Données invalides');
   var propre = function (x) { return String(x === undefined || x === null ? '' : x).replace(/^[=+\-@]/, "'$&").slice(0, 500); };
+  var ss = classeur_(), tous = peages_(ss), connus = {}, corriges = [];
+  tous.forEach(function (l) { var b = plaque_(l.Immatriculation); if (b) connus[b] = 1; });
+  // immatriculation mal tapée (GD0412ZC) : on prend le badge connu le plus proche (une lettre en trop, en moins ou différente)
+  var corriger = function (b) {
+    if (!b || connus[b] || !Object.keys(connus).length) return b;
+    var c = procheConnue_(b, connus) || Object.keys(connus).filter(function (k) {
+      var long = k.length > b.length ? k : b, court = long === k ? b : k;
+      if (long.length !== court.length + 1) return false;
+      for (var i = 0; i < long.length; i++) if (long.slice(0, i) + long.slice(i + 1) === court) return true;
+      return false;
+    })[0];
+    if (c) { corriges.push(b + ' → ' + c); return c; }
+    return b;
+  };
   var lignes = liste.map(function (r, i) {
     var t = cle_(r.type);
     if (TYPES_REGLES_PEAGES.indexOf(t) < 0) throw new Error('Règle ' + (i + 1) + ' : type inconnu');
-    var badges = String(r.badge || '').split(/[,;\/\n]+|\s+ET\s+|\s{2,}/i).map(plaque_).filter(String).join(', ');
+    var badges = String(r.badge || '').split(/[,;\/\n]+|\s+ET\s+|\s{2,}/i).map(plaque_).filter(String).map(corriger).join(', ');
     if (t !== 'NOTE' && !badges) throw new Error('Règle ' + (i + 1) + ' : immatriculation / badge manquant');
     if (t === 'CHAUFFEUR' && !String(r.chauffeur || '').trim()) throw new Error('Règle ' + (i + 1) + ' : chauffeur manquant');
     if (t === 'BADGE' && !plaque_(r.camion)) throw new Error('Règle ' + (i + 1) + ' : camion réel manquant');
@@ -1295,14 +1309,18 @@ function enregistrerReglesPeages(liste) {
     if (t === 'NOTE' && !String(r.note || '').trim()) throw new Error('Règle ' + (i + 1) + ' : note vide');
     return [t, badges, plaque_(r.camion), propre(String(r.chauffeur || '').trim().toUpperCase()), propre(r.contrat), dateDepuisTexte_(r.du) || '', dateDepuisTexte_(r.au) || '', propre(r.note), new Date()];
   });
-  var ss = classeur_(), sh = ss.getSheetByName('PEAGES_REGLES');
+  var sh = ss.getSheetByName('PEAGES_REGLES');
   if (!sh) { sh = ss.insertSheet('PEAGES_REGLES'); sh.setFrozenRows(1); }
   sh.getRange(1, 1, 1, FEUILLES.PEAGES_REGLES.length).setValues([FEUILLES.PEAGES_REGLES]).setFontWeight('bold');
   if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(FEUILLES.PEAGES_REGLES.length, sh.getLastColumn())).clearContent();
   if (lignes.length) sh.getRange(2, 1, lignes.length, FEUILLES.PEAGES_REGLES.length).setValues(lignes);
-  var mois = {}; peages_(ss).forEach(function (l) { if (l.Mois) mois[l.Mois] = 1; });
+  var mois = {}; tous.forEach(function (l) { if (l.Mois) mois[l.Mois] = 1; });
   Object.keys(mois).sort().slice(-6).forEach(function (m) { recalculerPeages_(ss, m); });
-  return lignes.length;
+  // effet de chaque règle : trajets gardés / retirés par badge cité
+  var effet = {}, inconnus = [];
+  lignes.forEach(function (l) { if (l[0] !== 'NOTE') String(l[1]).split(', ').forEach(function (b) { if (b) { effet[b] = { badge: b, gardes: 0, retires: 0 }; if (!connus[b] && Object.keys(connus).length && inconnus.indexOf(b) < 0) inconnus.push(b); } }); });
+  peages_(ss).forEach(function (l) { var e = effet[plaque_(l.Immatriculation)]; if (e) { if (l.Rembourse === 'ÉCARTÉ') e.retires++; else e.gardes++; } });
+  return { regles: lignes.length, corriges: corriges, inconnus: inconnus, effet: Object.keys(effet).map(function (k) { return effet[k]; }).filter(function (e) { return e.gardes + e.retires; }) };
 }
 
 /** Fiches badge (camion réel, période, commentaire, documents) : { 'AAAA-MM|BADGE': {...} } */
@@ -1358,8 +1376,9 @@ function recalculerPeages_(ss, mois) {
     [dE, dS].forEach(function (x) { if (!cands.length && x && idx[camion + '|' + x]) cands = idx[camion + '|' + x]; });
     var rc = !cands.length ? regles.filter(function (r) { return r.type === 'CONTRAT' && r.contrat && vise(r, badge, camion) && dans(r, jour); })[0] : null;
     var contrat = manuel ? String(v[i][cC] || '') : (rc ? rc.contrat : cands.join('/'));
-    lignes.push({ i: i, badge: badge, contrat: ignore && !manuel ? '' : contrat, ignore: ignore && !manuel });
-    if (contrat && !(ignore && !manuel)) parBadge[badge] = 1;
+    // « ne pas prendre en compte » l'emporte même sur un contrat corrigé à la main
+    lignes.push({ i: i, badge: badge, contrat: ignore && !manuel ? '' : contrat, ignore: !!ignore }); // contrat manuel conservé si la règle est retirée
+    if (contrat && !ignore) parBadge[badge] = 1;
   }
   lignes.forEach(function (l) {
     v[l.i][cC] = l.contrat;
