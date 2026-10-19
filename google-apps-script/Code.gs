@@ -43,7 +43,7 @@ var FEUILLES = {
   PREFACTURES: ['N_Prefac', 'Date', 'Mois', 'Contrat', 'Societe', 'Type', 'Designation', 'Quantite', 'Unite', 'Prix_Unitaire', 'Montant_HT',
                 'Date_Tournee', 'Tournee', 'KM', 'Livraisons', 'Total_HT', 'Depose_Le', 'Cours'],
   PEAGES: ['Mois', 'Quinzaine', 'Facture_Badge', 'Immatriculation', 'Date_Entree', 'Heure_Entree', 'Gare_Entree', 'Autoroute_Entree',
-           'Date_Sortie', 'Heure_Sortie', 'Gare_Sortie', 'Autoroute_Sortie', 'Societe_Autoroute', 'KM', 'Montant_HT', 'Montant_TTC', 'Contrat', 'Rembourse', 'Depose_Le', 'Manuel'],
+           'Date_Sortie', 'Heure_Sortie', 'Gare_Sortie', 'Autoroute_Sortie', 'Societe_Autoroute', 'KM', 'Montant_HT', 'Montant_TTC', 'Contrat', 'Rembourse', 'Depose_Le', 'Manuel', 'Societe_Releve'],
   PEAGES_REGLES: ['Type', 'Badge', 'Camion', 'Chauffeur', 'Contrat', 'Du', 'Au', 'Note', 'Modifie_Le'],
   PEAGES_BADGES: ['Mois', 'Badge', 'Camion_Reel', 'Du', 'Au', 'Commentaire', 'Documents', 'Modifie_Le'],
   BALANCE: ['Societe', 'Du', 'Au', 'Compte', 'Libelle', 'Debit', 'Credit', 'Poste', 'Camion', 'Importe_Le'],
@@ -294,6 +294,7 @@ function getDonnees() {
   try { d.PEAGES_DETAIL = detailPeages_(ss); } catch (e) { d.PEAGES_DETAIL = {}; }
   try { d.PEAGES_BADGES = badgesMois_(ss); } catch (e) { d.PEAGES_BADGES = {}; }
   try { d.PEAGES_REGLES = reglesPeages_(ss); } catch (e) { d.PEAGES_REGLES = []; }
+  try { d.PEAGES_RELEVES = relevesPeages_(ss); } catch (e) { d.PEAGES_RELEVES = []; }
   try { d.PEAGES_CONTROLE = controlePeagesTournees_(ss); } catch (e) { d.PEAGES_CONTROLE = {}; d.erreurs.push('Contrôle péages : ' + e.message); }
   try { d.PEAGES = synthesePeages_(ss); } catch (e) { d.PEAGES = []; d.erreurs.push('Péages : ' + e.message); }
   try { d.COMPTA = balances_(ss).map(syntheseBalance_); } catch (e) { d.COMPTA = []; d.erreurs.push('Balance comptable : ' + e.message); }
@@ -1227,6 +1228,8 @@ function tourneesParCamion_(ss) {
  */
 function deposerPeages(r) {
   if (!r || !Array.isArray(r.lignes) || !r.lignes.length) throw new Error('Aucun trajet lu dans le relevé');
+  var soc = societeReleve_(r.societe);
+  if (!soc) throw new Error('Indiquez si ce relevé est celui de GLEYZES ou de LPB');
   var ss = classeur_(), p = lireParametres_(ss), prefixe = String(p.PREFIXE_PEAGES_REMBOURSES || '7531').trim();
   // Mois et quinzaine du relevé : ceux de la majorité des trajets
   var compte = {};
@@ -1239,7 +1242,7 @@ function deposerPeages(r) {
   var lignes = r.lignes.map(function (l) {
     return [mois, quinz, propre(r.facture), plaque_(l.immat), dateDepuisTexte_(l.dateEntree) || '', propre(l.heureEntree), propre(l.gareEntree), propre(l.autorouteEntree),
       dateDepuisTexte_(l.dateSortie) || '', propre(l.heureSortie), propre(l.gareSortie), propre(l.autorouteSortie), propre(l.societe), nombre_(l.km, ''),
-      nombre_(l.ht, 0), nombre_(l.ttc, 0), '', '', maintenant, ''];
+      nombre_(l.ht, 0), nombre_(l.ttc, 0), '', '', maintenant, '', soc];
   });
   var verrou = LockService.getScriptLock();
   verrou.waitLock(15000);
@@ -1259,7 +1262,7 @@ function deposerPeages(r) {
   var miennes = peages_(ss).filter(function (l) { return String(l.Facture_Badge) === String(r.facture); });
   var somme = function (f) { return Math.round(miennes.filter(f).reduce(function (t, l) { return t + nombre_(l.Montant_HT, 0); }, 0) * 100) / 100; };
   var uniques = function (a) { return a.filter(function (v, i) { return a.indexOf(v) === i; }); };
-  return { mois: mois, quinzaine: quinz, trajets: miennes.filter(function (l) { return l.Rembourse !== 'ÉCARTÉ'; }).length,
+  return { mois: mois, quinzaine: quinz, societe: soc, trajets: miennes.filter(function (l) { return l.Rembourse !== 'ÉCARTÉ'; }).length,
     camions: uniques(miennes.filter(function (l) { return l.Rembourse !== 'ÉCARTÉ'; }).map(function (l) { return l.Immatriculation; })),
     ecartes: uniques(miennes.filter(function (l) { return l.Rembourse === 'ÉCARTÉ'; }).map(function (l) { return l.Immatriculation; })),
     rembourseHT: somme(function (l) { return l.Rembourse === 'OUI'; }), nonRembourseHT: somme(function (l) { return l.Rembourse === 'NON'; }),
@@ -1468,7 +1471,34 @@ function detailPeages_(ss) {
   return res;
 }
 
-/** Société (Gleyzes / LPB) d'un trajet de péage : celle de son contrat au planning Inter, sinon celle du badge (majorité de ses trajets ce mois-là). */
+function societeReleve_(x) { var k = cle_(x); return k.indexOf('LPB') >= 0 ? 'LPB' : k.indexOf('GLEYZES') >= 0 ? 'Gleyzes' : ''; }
+
+/** Depuis le site : société d'un relevé déjà déposé (relevés déposés avant le choix Gleyzes / LPB). */
+function societePeagesReleve(facture, societe) {
+  var soc = societeReleve_(societe); if (!soc) throw new Error('Société inconnue');
+  var ss = classeur_(), sh = ss.getSheetByName('PEAGES'); if (!sh || sh.getLastRow() < 2) throw new Error('Aucun péage enregistré');
+  sh.getRange(1, 1, 1, FEUILLES.PEAGES.length).setValues([FEUILLES.PEAGES]);
+  var v = sh.getRange(1, 1, sh.getLastRow(), FEUILLES.PEAGES.length).getValues(), cF = v[0].indexOf('Facture_Badge'), cS = v[0].indexOf('Societe_Releve'), n = 0;
+  for (var i = 1; i < v.length; i++) if (String(v[i][cF]) === String(facture)) { v[i][cS] = soc; n++; }
+  if (!n) throw new Error('Relevé ' + facture + ' introuvable');
+  sh.getRange(2, cS + 1, v.length - 1, 1).setValues(v.slice(1).map(function (l) { return [l[cS]]; }));
+  return n;
+}
+
+/** Relevés de badge déposés (4 derniers mois) : facture, mois, quinzaine, société, nombre de trajets. */
+function relevesPeages_(ss) {
+  var par = {}, mois = {};
+  peages_(ss).forEach(function (l) {
+    var k = String(l.Facture_Badge), x = par[k] = par[k] || { facture: k, mois: l.Mois, quinzaine: +l.Quinzaine, societe: societeReleve_(l.Societe_Releve), trajets: 0, ht: 0 };
+    x.trajets++; x.ht += nombre_(l.Montant_HT, 0); mois[l.Mois] = 1;
+  });
+  var garder = Object.keys(mois).sort().reverse().slice(0, 4);
+  return Object.keys(par).map(function (k) { par[k].ht = Math.round(par[k].ht * 100) / 100; return par[k]; })
+    .filter(function (x) { return garder.indexOf(x.mois) >= 0; }).sort(function (a, b) { return (b.mois + b.quinzaine).localeCompare(a.mois + a.quinzaine) || a.societe.localeCompare(b.societe); });
+}
+
+/** Société (Gleyzes / LPB) d'un trajet de péage : celle du relevé (choisie au dépôt) ; pour un ancien relevé sans société,
+ *  celle de son contrat au planning Inter, sinon celle du badge (majorité de ses trajets ce mois-là). */
 function societesPeages_(ss, lignes) {
   var parContrat = {}, parBadge = {}, maj = function (o) { return Object.keys(o).sort(function (a, b) { return o[b] - o[a]; })[0] || ''; };
   plannings_(ss).forEach(function (l) {
@@ -1481,7 +1511,7 @@ function societesPeages_(ss, lignes) {
     return maj(o);
   };
   lignes.forEach(function (l) { var s = deContrat(l); if (s) { var o = parBadge[l.Mois + '|' + l.Immatriculation] = parBadge[l.Mois + '|' + l.Immatriculation] || {}; o[s] = (o[s] || 0) + 1; } });
-  return function (l) { return deContrat(l) || maj(parBadge[l.Mois + '|' + l.Immatriculation] || {}); };
+  return function (l) { return societeReleve_(l.Societe_Releve) || deContrat(l) || maj(parBadge[l.Mois + '|' + l.Immatriculation] || {}); };
 }
 
 /**

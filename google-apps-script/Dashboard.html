@@ -453,10 +453,11 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
       <div class="depot" id="zonePeages">🛣️ Glissez les relevés CSV ici, ou cliquez pour les choisir
         <input type="file" id="choixPeages" accept=".csv,text/csv" multiple hidden></div>
       <div id="listePeages"></div>
+      <div id="relevesPeages"></div>
       <div class="tableau" style="margin-top:10px"><table id="tabPeages" class="serre"></table></div>
       <div class="barre" style="margin-top:12px"><label for="moisPeages">Planning des péages</label><select id="moisPeages"></select>
-        <select id="socPeages" title="Société"><option value="">Gleyzes + LPB</option><option>Gleyzes</option><option>LPB</option></select>
-        <button id="dlPeages" class="primaire">⬇ Télécharger le fichier Excel</button><label><input type="checkbox" id="comPeages"> mettre les commentaires dans l'Excel</label><span class="msg" id="msgPeages"></span></div>
+        <select id="socPeages" title="Afficher"><option value="">Afficher : Gleyzes + LPB</option><option value="Gleyzes">Afficher : Gleyzes</option><option value="LPB">Afficher : LPB</option></select>
+        <button id="dlPeagesG" class="primaire">⬇ Excel GLEYZES</button><button id="dlPeagesL" class="primaire">⬇ Excel LPB</button><label><input type="checkbox" id="comPeages"> mettre les commentaires dans l'Excel</label><span class="msg" id="msgPeages"></span></div>
       <div id="controlePeages"></div>
       <div id="badgesPeages"></div>
       <div id="planningPeages"></div>
@@ -1765,7 +1766,18 @@ function lireRelevePeages(texte, nomFichier) {
   if (!r.lignes.length) throw new Error('Aucun trajet facturé dans ce relevé');
   return r;
 }
+/** Dépôt des relevés : on demande d'abord s'ils sont de GLEYZES ou de LPB. */
 function traiterPeages(fichiers) {
+  fichiers = Array.prototype.slice.call(fichiers); if (!fichiers.length) return;
+  var q = document.createElement('div'); q.className = 'fichier question-societe';
+  q.innerHTML = '<span class="nom">' + fichiers.map(function (f) { return txt(f.name); }).join(', ') + '</span><span class="msg"><b>Ce relevé est celui de :</b> ' +
+    '<button class="primaire" data-s="Gleyzes">GLEYZES</button> <button class="primaire" data-s="LPB">LPB</button> <button data-s="">Annuler</button></span>';
+  document.getElementById('listePeages').prepend(q);
+  q.querySelectorAll('button').forEach(function (b) {
+    b.onclick = function () { q.remove(); if (b.dataset.s) deposerRelevesPeages(fichiers, b.dataset.s); };
+  });
+}
+function deposerRelevesPeages(fichiers, societeReleve) {
   var suite = Promise.resolve();
   Array.prototype.slice.call(fichiers).forEach(function (f, k) {
     suite = suite.then(function () {
@@ -1774,11 +1786,11 @@ function traiterPeages(fichiers) {
       document.getElementById('listePeages').prepend(d);
       return f.arrayBuffer().then(function (buf) {
         var t; try { t = new TextDecoder('windows-1252').decode(buf); } catch (e) { t = new TextDecoder().decode(buf); }
-        var r = lireRelevePeages(t, f.name);
+        var r = lireRelevePeages(t, f.name); r.societe = societeReleve;
         etatDepot(d, 'Rapprochement avec le planning Inter…');
         return appelServeur('deposerPeages', r);
       }).then(function (x) {
-        etatDepot(d, '✓ ' + (x.quinzaine === 1 ? '1re' : '2e') + ' quinzaine de ' + txt(nomMois(x.mois)) + ' : ' + x.trajets + ' trajets (' + txt(x.camions.join(', ')) + '), ' +
+        etatDepot(d, '✓ <b>' + txt(String(x.societe).toUpperCase()) + '</b> · ' + (x.quinzaine === 1 ? '1re' : '2e') + ' quinzaine de ' + txt(nomMois(x.mois)) + ' : ' + x.trajets + ' trajets (' + txt(x.camions.join(', ')) + '), ' +
           fmtEur2.format(x.rembourseHT) + ' HT remboursables' + (x.nonRembourseHT ? ', ' + fmtEur2.format(x.nonRembourseHT) + ' non remboursés' : '') +
           (x.ecartes.length ? ' · écartés (pas de tournée Intermarché) : ' + txt(x.ecartes.join(', ')) : '') +
           (x.aAffecter.length ? '<div class="note">⚠ Sans tournée Intermarché au planning ce jour-là (contrat à compléter en rouge dans le fichier) : ' + txt(x.aAffecter.join(', ')) + '</div>' : '') +
@@ -1899,6 +1911,26 @@ function rendreReglesPeages() {
   };
   document.getElementById('enregRegles').onclick = function () { enregistrer(lireTableau(), document.getElementById('msgRegles'), '✓ Règles appliquées').catch(function () {}); };
 }
+/** Relevés déposés, avec leur société (modifiable : anciens relevés déposés sans choix, ou erreur). */
+function rendreRelevesPeages() {
+  var z = document.getElementById('relevesPeages'), l = D.PEAGES_RELEVES || [];
+  if (!l.length) { z.innerHTML = ''; return; }
+  var sans = l.filter(function (r) { return !r.societe; }).length;
+  z.innerHTML = '<details' + (sans ? ' open' : '') + ' style="margin-top:8px"><summary><b>Relevés déposés</b> (' + l.length + ')' + (sans ? ' <span class="ou-prefac">⚠ ' + sans + ' sans société</span>' : '') + '</summary>' +
+    '<div class="tableau"><table class="serre"><thead><tr><th>Relevé</th><th>Mois</th><th>Quinzaine</th><th class="n">Trajets</th><th class="n">HT</th><th>Société</th></tr></thead><tbody>' +
+    l.map(function (r) {
+      return '<tr' + (!r.societe ? ' style="background:var(--neg-bg,#fde2e1)"' : '') + '><td>' + txt(r.facture) + '</td><td>' + txt(nomMois(r.mois)) + '</td><td>' + (r.quinzaine === 1 ? '1re' : '2e') +
+        '</td><td class="n">' + r.trajets + '</td><td class="n">' + fmtEur2.format(r.ht) + '</td><td><select data-rel="' + txt(r.facture) + '"><option value="">— à choisir —</option>' +
+        ['Gleyzes', 'LPB'].map(function (x) { return '<option value="' + x + '"' + (r.societe === x ? ' selected' : '') + '>' + x.toUpperCase() + '</option>'; }).join('') + '</select></td></tr>';
+    }).join('') + '</tbody></table></div><span class="msg" id="msgReleves"></span></details>';
+  z.querySelectorAll('[data-rel]').forEach(function (s) {
+    s.onchange = function () {
+      if (!s.value) return; var m = document.getElementById('msgReleves'); m.className = 'msg'; m.textContent = 'Enregistrement…';
+      appelServeur('societePeagesReleve', s.dataset.rel, s.value).then(function () { m.className = 'msg ok'; m.textContent = '✓ Enregistré'; charger(); })
+        .catch(function (e) { m.className = 'msg err'; m.textContent = '⚠ ' + e.message; });
+    };
+  });
+}
 function rendrePeages() {
   rendreReglesPeages();
   var liste = (D.PEAGES || []).slice(0, 6);
@@ -1921,8 +1953,11 @@ function rendrePeages() {
   if (moisDispo.indexOf(ancien) >= 0) sel.value = ancien;
   sel.onchange = rendrePlanningPeages;
   document.getElementById('socPeages').onchange = rendrePlanningPeages;
-  document.getElementById('dlPeages').disabled = !moisDispo.length;
-  document.getElementById('dlPeages').onclick = function () { telechargerPeages(sel.value); };
+  ['G', 'L'].forEach(function (x) {
+    var b = document.getElementById('dlPeages' + x); b.disabled = !moisDispo.length;
+    b.onclick = function () { telechargerPeages(sel.value, x === 'G' ? 'Gleyzes' : 'LPB'); };
+  });
+  rendreRelevesPeages();
   rendrePlanningPeages();
 }
 var COLS_PEAGES = ['Type de ligne/Line Type', 'Immatriculation/Plate Number', 'Date d\'entree/Entry date', 'Heure d\'entree/Entry time', 'Gare/Lieu d\'entree/Name of Entry',
@@ -1943,9 +1978,9 @@ function retireParConsigne(M, immat, jour) {
   var seul = regles.filter(function (r) { return r.type === 'SEULEMENT'; });
   return seul.length > 0 && !seul.some(function (r) { return dans(r) && vise(r); });
 }
-function planPeages(M) {
+function planPeages(M, socForcee) {
   var retires = {};
-  var soc = (document.getElementById('socPeages') || {}).value || '';
+  var soc = socForcee !== undefined ? socForcee : ((document.getElementById('socPeages') || {}).value || '');
   var lignes = ((D.PEAGES_DETAIL || {})[M] || []).filter(function (l) { var x = retireParConsigne(M, l[1], String(l[6] || l[2])); if (x) retires[l[1]] = 1; return !x && (!soc || l[16] === soc); }), res = [];
   planPeages.retires = Object.keys(retires);
   [1, 2].forEach(function (q) {
@@ -2073,11 +2108,13 @@ function chargerXlsx() {
   return xlsxPret;
 }
 /** Fichier Excel « PEAGES <MOIS> <ANNÉE>.xlsx » : un onglet par quinzaine, mêmes colonnes que le relevé, total par badge, contrat fusionné par tournée. */
-function telechargerPeages(M) {
+function telechargerPeages(M, soc) {
   var msg = document.getElementById('msgPeages'); msg.textContent = 'Préparation…';
   chargerXlsx().then(function () {
     var nomM = ['JANVIER', 'FEVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN', 'JUILLET', 'AOUT', 'SEPTEMBRE', 'OCTOBRE', 'NOVEMBRE', 'DECEMBRE'][+M.slice(5, 7) - 1], wb = XLSX.utils.book_new();
-    planPeages(M).forEach(function (p) {
+    var sans = (D.PEAGES_RELEVES || []).filter(function (r) { return r.mois === M && !r.societe; });
+    if (sans.length) throw new Error('Relevé(s) sans société : ' + sans.map(function (r) { return r.facture; }).join(', ') + ' — choisissez GLEYZES ou LPB dans « Relevés déposés »');
+    planPeages(M, soc).forEach(function (p) {
       var aoa = [COLS_PEAGES.concat(['COMMENTAIRE'])], merges = [], avecCom = false;
       var d = function (iso) { if (!iso) return ''; var x = String(iso).split('-'); return new Date(Date.UTC(+x[0], +x[1] - 1, +x[2])); };
       p.camions.forEach(function (c) {
@@ -2104,7 +2141,6 @@ function telechargerPeages(M) {
       ws['!cols'] = [36, 12, 11, 9, 22, 8, 11, 9, 22, 8, 10, 7, 12, 12, 12, 50].map(function (w) { return { wch: w }; });
       XLSX.utils.book_append_sheet(wb, ws, ('PEAGES ' + (p.q === 1 ? 'PREMIERE' : 'DEUXIEME') + ' QUINZAINE ' + nomM).slice(0, 31));
     });
-    var soc = document.getElementById('socPeages').value;
     if (!wb.SheetNames.length) throw new Error('Aucun péage ' + (soc ? soc + ' ' : '') + 'pour ce mois');
     XLSX.writeFile(wb, 'PEAGES ' + nomM + ' ' + M.slice(0, 4) + (soc ? ' ' + soc.toUpperCase() : '') + '.xlsx');
     msg.textContent = planPeages.retires.length ? '✓ Retirés du fichier (vos consignes) : ' + planPeages.retires.join(', ') : '';
