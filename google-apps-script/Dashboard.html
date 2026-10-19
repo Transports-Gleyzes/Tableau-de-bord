@@ -452,7 +452,9 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
       <div id="listePeages"></div>
       <div class="tableau" style="margin-top:10px"><table id="tabPeages" class="serre"></table></div>
       <div class="barre" style="margin-top:12px"><label for="moisPeages">Planning des péages</label><select id="moisPeages"></select>
+        <select id="socPeages" title="Société"><option value="">Gleyzes + LPB</option><option>Gleyzes</option><option>LPB</option></select>
         <button id="dlPeages" class="primaire">⬇ Télécharger le fichier Excel</button><label><input type="checkbox" id="comPeages"> mettre les commentaires dans l'Excel</label><span class="msg" id="msgPeages"></span></div>
+      <div id="controlePeages"></div>
       <div id="badgesPeages"></div>
       <div id="planningPeages"></div>
     </div>
@@ -1894,7 +1896,7 @@ function rendrePeages() {
     liste.map(function (m) {
       var q = Object.keys(m.quinzaines).sort().map(function (k) { return k === '1' ? '1re' : '2e'; }).join(' + ');
       return '<tr><td>' + txt(nomMois(m.mois)) + '</td><td>' + q + (Object.keys(m.quinzaines).length < 2 ? ' <span class="note">(incomplet)</span>' : '') + '</td><td>' + txt(m.camions.join(', ')) +
-        '</td><td class="n">' + eur(m.rembourse) + '</td><td class="note">' + Object.keys(m.contrats).sort().map(function (c) { return txt(c) + ' : ' + fmtEur2.format(m.contrats[c]); }).join('<br>') +
+        '</td><td class="n">' + eur(m.rembourse) + (function (c) { return c ? Object.keys(c.societes).sort().map(function (x) { return '<div class="note">' + txt(x) + ' ' + fmtEur2.format(c.societes[x].rembourse) + '</div>'; }).join('') : ''; })((D.PEAGES_CONTROLE || {})[m.mois]) + '</td><td class="note">' + Object.keys(m.contrats).sort().map(function (c) { return txt(c) + ' : ' + fmtEur2.format(m.contrats[c]); }).join('<br>') +
         (m.aAffecter.length ? '<br>⚠ ' + m.aAffecter.length + ' jour(s) sans tournée' : '') + '</td><td class="n">' + eur(m.nonRembourse) +
         '</td><td>' + (m.envoye ? '✓ envoyé le ' + dateFr(m.envoye) + ' <button class="suppr" data-penv="' + m.mois + '" data-v="0" title="Annuler">✕</button>'
           : '<button data-penv="' + m.mois + '" data-v="1">Marquer envoyé</button>') + '</td></tr>';
@@ -1907,6 +1909,7 @@ function rendrePeages() {
   sel.innerHTML = moisDispo.map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
   if (moisDispo.indexOf(ancien) >= 0) sel.value = ancien;
   sel.onchange = rendrePlanningPeages;
+  document.getElementById('socPeages').onchange = rendrePlanningPeages;
   document.getElementById('dlPeages').disabled = !moisDispo.length;
   document.getElementById('dlPeages').onclick = function () { telechargerPeages(sel.value); };
   rendrePlanningPeages();
@@ -1931,7 +1934,8 @@ function retireParConsigne(M, immat, jour) {
 }
 function planPeages(M) {
   var retires = {};
-  var lignes = ((D.PEAGES_DETAIL || {})[M] || []).filter(function (l) { var x = retireParConsigne(M, l[1], String(l[6] || l[2])); if (x) retires[l[1]] = 1; return !x; }), res = [];
+  var soc = (document.getElementById('socPeages') || {}).value || '';
+  var lignes = ((D.PEAGES_DETAIL || {})[M] || []).filter(function (l) { var x = retireParConsigne(M, l[1], String(l[6] || l[2])); if (x) retires[l[1]] = 1; return !x && (!soc || l[16] === soc); }), res = [];
   planPeages.retires = Object.keys(retires);
   [1, 2].forEach(function (q) {
     var lq = lignes.filter(function (l) { return l[0] === q; }); if (!lq.length) return;
@@ -1992,9 +1996,35 @@ function rendreBadgesPeages(M) {
     };
   });
 }
+/** Contrôle : chaque tournée Inter a-t-elle ses péages ? Par société et par contrat. */
+function rendreControlePeages(M) {
+  var z = document.getElementById('controlePeages'), c = (D.PEAGES_CONTROLE || {})[M], socF = document.getElementById('socPeages').value;
+  if (!c) { z.innerHTML = ''; return; }
+  var pref = '7531', contrats = c.contrats.filter(function (x) { return !socF || x.societe === socF; });
+  var tours = function (l) { return l.map(function (t) { return dateFr(t.date).slice(0, 5) + ' ' + txt(t.chauffeur) + (t.camion ? ' (' + txt(t.camion) + ')' : ' (camion vide au planning)'); }).join(', '); };
+  var oublis = contrats.filter(function (x) { return x.rembourse && x.sansPeage.length; });
+  var manque = [1, 2].filter(function (q) { return c.quinzaines.indexOf(q) < 0; });
+  var socs = Object.keys(c.societes).filter(function (s) { return !socF || s === socF; }).sort();
+  z.innerHTML = '<h3 class="sous-titre">Contrôle : chaque tournée a-t-elle ses péages ? (' + txt(nomMois(M)) + ')</h3>' +
+    (manque.length ? '<p class="note">⚠ ' + (manque[0] === 1 ? '1re' : '2e') + ' quinzaine pas encore déposée : les tournées ' + (manque[0] === 1 ? 'du 1 au 15' : 'du 16 à la fin du mois') + ' ne sont pas contrôlées.</p>' : '') +
+    '<div class="tuiles">' + socs.map(function (s) {
+      var x = c.societes[s], nc = Object.keys(x.contrats).filter(Boolean).length;
+      return tuile(s === '?' ? 'Société inconnue' : 'Péages ' + txt(s), eur(x.rembourse), 'remboursés HT · ' + nc + ' contrat(s) · ' + x.trajets + ' trajets' + (x.nonRembourse ? ' · non remb. ' + fmtEur2.format(x.nonRembourse) : ''));
+    }).join('') + tuile('Tournées à péages remboursés sans péage', String(oublis.reduce(function (t, x) { return t + x.sansPeage.length; }, 0)), oublis.length ? '⚠ à vérifier ci-dessous' : '✓ toutes ont leurs péages') + '</div>' +
+    '<div class="tableau"><table class="serre"><thead><tr><th>Contrat</th><th>Société</th><th>Péages</th><th class="n">Tournées</th><th class="n">Avec péage</th><th class="n">HT</th><th>Contrôle</th></tr></thead><tbody>' +
+    contrats.map(function (x) {
+      var ok = !x.sansPeage.length, rouge = x.rembourse && !ok;
+      return '<tr' + (rouge ? ' style="background:var(--neg-bg,#fde2e1)"' : '') + '><td><b>' + txt(x.contrat) + '</b></td><td>' + txt(x.societe || '?') + '</td><td>' + (x.rembourse ? 'remboursés' : '<span class="note">non remboursés</span>') +
+        '</td><td class="n">' + x.tournees + '</td><td class="n">' + x.avecPeage + '</td><td class="n">' + fmtEur2.format(x.ht) + '</td><td>' +
+        (ok ? '✓' : rouge ? '⚠ <b>' + x.sansPeage.length + ' tournée(s) sans péage</b> : ' + tours(x.sansPeage)
+          : '<details class="note"><summary>' + x.sansPeage.length + ' sans péage (normal si pas d\'autoroute)</summary>' + tours(x.sansPeage) + '</details>') + '</td></tr>';
+    }).join('') + '</tbody></table></div>' +
+    (oublis.length ? '<p class="note">Une tournée à péages remboursés sans péage : le camion est-il le bon au planning (colonne CAMION) ? Le badge était-il dans un autre camion (fiche du badge ou consigne) ? Le n° de contrat est-il juste ?</p>' : '');
+}
 function rendrePlanningPeages() {
   var M = document.getElementById('moisPeages').value, plan = planPeages(M), z = document.getElementById('planningPeages');
   rendreBadgesPeages(M);
+  rendreControlePeages(M);
   if (!plan.length) { z.innerHTML = ''; return; }
   z.innerHTML = plan.map(function (p) {
     return '<details' + (plan.length === 1 ? ' open' : '') + ' style="margin-top:8px"><summary><b>' + (p.q === 1 ? 'Première' : 'Deuxième') + ' quinzaine</b> · ' +
@@ -2063,7 +2093,9 @@ function telechargerPeages(M) {
       ws['!cols'] = [36, 12, 11, 9, 22, 8, 11, 9, 22, 8, 10, 7, 12, 12, 12, 50].map(function (w) { return { wch: w }; });
       XLSX.utils.book_append_sheet(wb, ws, ('PEAGES ' + (p.q === 1 ? 'PREMIERE' : 'DEUXIEME') + ' QUINZAINE ' + nomM).slice(0, 31));
     });
-    XLSX.writeFile(wb, 'PEAGES ' + nomM + ' ' + M.slice(0, 4) + '.xlsx');
+    var soc = document.getElementById('socPeages').value;
+    if (!wb.SheetNames.length) throw new Error('Aucun péage ' + (soc ? soc + ' ' : '') + 'pour ce mois');
+    XLSX.writeFile(wb, 'PEAGES ' + nomM + ' ' + M.slice(0, 4) + (soc ? ' ' + soc.toUpperCase() : '') + '.xlsx');
     msg.textContent = planPeages.retires.length ? '✓ Retirés du fichier (vos consignes) : ' + planPeages.retires.join(', ') : '';
   }).catch(function (e) { msg.textContent = '⚠ ' + e.message; });
 }
