@@ -1592,14 +1592,27 @@ function controlePeagesTournees_(ss) {
 function badgesMois_(ss) {
   var fiches = badgesPeages_(ss), res = {}, mois = {};
   peages_(ss).forEach(function (l) {
-    var k = l.Mois + '|' + l.Immatriculation, b = mois[k] = mois[k] || { mois: l.Mois, badge: l.Immatriculation, trajets: 0, ht: 0, ecarte: true };
+    var k = l.Mois + '|' + l.Immatriculation, b = mois[k] = mois[k] || { mois: l.Mois, badge: l.Immatriculation, trajets: 0, ht: 0, ecarte: true, societes: [] };
     b.trajets++; b.ht += nombre_(l.Montant_HT, 0); if (l.Rembourse !== 'ÉCARTÉ') b.ecarte = false;
+    var so = societeReleve_(l.Societe_Releve); if (so && b.societes.indexOf(so) < 0) b.societes.push(so);
   });
+  // pourquoi un badge est écarté : consigne, ou aucune tournée Inter de ce camion au planning ce mois-là
+  var idx = {}, regles = [];
+  try { idx = tourneesParCamion_(ss); regles = reglesPeages_(ss); } catch (e) { /* plannings illisibles : pas de motif */ }
+  var camionsMois = {}; Object.keys(idx).forEach(function (k) { if (k.indexOf('CH|') !== 0) camionsMois[k.split('|')[0] + '|' + k.split('|')[1].slice(0, 7)] = 1; });
+  var seul = regles.filter(function (r) { return r.type === 'SEULEMENT'; });
   Object.keys(fiches).forEach(function (k) { if (!mois[k]) mois[k] = { mois: fiches[k].mois, badge: fiches[k].badge, trajets: 0, ht: 0, ecarte: true }; });
   var garder = Object.keys(mois).map(function (k) { return mois[k].mois; }).filter(function (m, i, a) { return a.indexOf(m) === i; }).sort().reverse().slice(0, 4);
   Object.keys(mois).forEach(function (k) {
     var b = mois[k]; if (garder.indexOf(b.mois) < 0) return;
     b.ht = Math.round(b.ht * 100) / 100; b.fiche = fiches[k] || null;
+    if (b.ecarte && b.trajets) {
+      var cam = b.fiche && b.fiche.camionReel ? b.fiche.camionReel : b.badge;
+      b.motif = regles.some(function (r) { return r.type === 'IGNORER' && (r.badges.indexOf(b.badge) >= 0 || r.badges.indexOf(cam) >= 0); }) ? 'retiré par une consigne « ignorer »'
+        : seul.length && !seul.some(function (r) { return r.badges.indexOf(b.badge) >= 0 || r.badges.indexOf(cam) >= 0; }) ? 'retiré : absent de la consigne « ne garder que » (' + seul.map(function (r) { return r.badge; }).join(', ') + ')'
+        : !camionsMois[cam + '|' + b.mois] ? 'aucune tournée Inter avec le camion ' + cam + ' au planning ce mois-là (colonne CAMION vide ou autre camion)'
+        : 'pas de tournée Inter de ce camion les jours de ses péages';
+    }
     (res[b.mois] = res[b.mois] || []).push(b);
   });
   Object.keys(res).forEach(function (m) { res[m].sort(function (a, b) { return a.ecarte - b.ecarte || a.badge.localeCompare(b.badge); }); });

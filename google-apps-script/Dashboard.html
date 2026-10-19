@@ -2007,7 +2007,8 @@ function rendreBadgesPeages(M) {
     liste.map(function (b, i) {
       var f = b.fiche || {}, docs = f.documents || [];
       return '<details class="badge-peage' + (b.ecarte ? ' ecarte' : '') + '"' + (f.commentaire || f.camionReel ? ' open' : '') + '><summary><b>' + txt(b.badge) + '</b> · ' + b.trajets + ' trajets · ' + fmtEur2.format(b.ht) + ' HT · ' +
-        (b.ecarte ? '<span class="ou-prefac">écarté : aucune tournée Intermarché</span>' : '<span class="ou-planning">Intermarché</span>') +
+        (b.societes && b.societes.length ? ' · relevé ' + txt(b.societes.join(' + ').toUpperCase()) + ' · ' : '') +
+        (b.ecarte ? '<span class="ou-prefac">écarté : ' + txt(b.motif || 'aucune tournée Intermarché') + '</span>' : '<span class="ou-planning">Intermarché</span>') +
         (f.camionReel ? ' · dans ' + txt(f.camionReel) : '') + (f.commentaire ? ' · 💬' : '') + (docs.length ? ' · 📎 ' + docs.length : '') + '</summary>' +
         '<div class="fiche" data-b="' + txt(b.badge) + '"><div class="barre"><label>Badge dans le camion<input data-f="camionReel" value="' + txt(f.camionReel || '') + '" placeholder="ex. GE606BF" size="10"></label>' +
         '<label>du<input type="date" data-f="du" value="' + txt(f.du || '') + '"></label><label>au<input type="date" data-f="au" value="' + txt(f.au || '') + '"></label></div>' +
