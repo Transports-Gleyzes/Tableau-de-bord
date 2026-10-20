@@ -43,7 +43,7 @@ var FEUILLES = {
   PREFACTURES: ['N_Prefac', 'Date', 'Mois', 'Contrat', 'Societe', 'Type', 'Designation', 'Quantite', 'Unite', 'Prix_Unitaire', 'Montant_HT',
                 'Date_Tournee', 'Tournee', 'KM', 'Livraisons', 'Total_HT', 'Depose_Le', 'Cours'],
   PEAGES: ['Mois', 'Quinzaine', 'Facture_Badge', 'Immatriculation', 'Date_Entree', 'Heure_Entree', 'Gare_Entree', 'Autoroute_Entree',
-           'Date_Sortie', 'Heure_Sortie', 'Gare_Sortie', 'Autoroute_Sortie', 'Societe_Autoroute', 'KM', 'Montant_HT', 'Montant_TTC', 'Contrat', 'Rembourse', 'Depose_Le', 'Manuel', 'Societe_Releve'],
+           'Date_Sortie', 'Heure_Sortie', 'Gare_Sortie', 'Autoroute_Sortie', 'Societe_Autoroute', 'KM', 'Montant_HT', 'Montant_TTC', 'Contrat', 'Rembourse', 'Depose_Le', 'Manuel', 'Societe_Releve', 'Garder'],
   PEAGES_REGLES: ['Type', 'Badge', 'Camion', 'Chauffeur', 'Contrat', 'Du', 'Au', 'Note', 'Modifie_Le'],
   PEAGES_BADGES: ['Mois', 'Badge', 'Camion_Reel', 'Du', 'Au', 'Commentaire', 'Documents', 'Modifie_Le'],
   BALANCE: ['Societe', 'Du', 'Au', 'Compte', 'Libelle', 'Debit', 'Credit', 'Poste', 'Camion', 'Importe_Le'],
@@ -296,6 +296,7 @@ function getDonnees() {
   try { d.PEAGES_REGLES = reglesPeages_(ss); } catch (e) { d.PEAGES_REGLES = []; }
   try { d.PEAGES_RELEVES = relevesPeages_(ss); } catch (e) { d.PEAGES_RELEVES = []; }
   try { d.PEAGES_FICHIERS = fichiersPeages_(ss); } catch (e) { d.PEAGES_FICHIERS = []; }
+  try { d.PEAGES_GARDES = gardesPeages_(); } catch (e) { d.PEAGES_GARDES = {}; }
   try { d.PEAGES_CONTROLE = controlePeagesTournees_(ss); } catch (e) { d.PEAGES_CONTROLE = {}; d.erreurs.push('Contrôle péages : ' + e.message); }
   try { d.PEAGES = synthesePeages_(ss); } catch (e) { d.PEAGES = []; d.erreurs.push('Péages : ' + e.message); }
   try { d.COMPTA = balances_(ss).map(syntheseBalance_); } catch (e) { d.COMPTA = []; d.erreurs.push('Balance comptable : ' + e.message); }
@@ -1231,6 +1232,9 @@ function deposerPeages(r) {
   if (!r || !Array.isArray(r.lignes) || !r.lignes.length) throw new Error('Aucun trajet lu dans le relevé');
   var soc = societeReleve_(r.societe);
   if (!soc) throw new Error('Indiquez si ce relevé est celui de GLEYZES ou de LPB');
+  // badges cochés au dépôt (mémorisés par société pour les relevés suivants)
+  var gardes = Array.isArray(r.garder) ? r.garder.map(plaque_) : null;
+  if (gardes) PropertiesService.getScriptProperties().setProperty('PEAGES_GARDES_' + soc.toUpperCase(), JSON.stringify(gardes));
   var ss = classeur_(), p = lireParametres_(ss), prefixe = String(p.PREFIXE_PEAGES_REMBOURSES || '7531').trim();
   // Mois et quinzaine du relevé : ceux de la majorité des trajets
   var compte = {};
@@ -1243,7 +1247,7 @@ function deposerPeages(r) {
   var lignes = r.lignes.map(function (l) {
     return [mois, quinz, propre(r.facture), plaque_(l.immat), dateDepuisTexte_(l.dateEntree) || '', propre(l.heureEntree), propre(l.gareEntree), propre(l.autorouteEntree),
       dateDepuisTexte_(l.dateSortie) || '', propre(l.heureSortie), propre(l.gareSortie), propre(l.autorouteSortie), propre(l.societe), nombre_(l.km, ''),
-      nombre_(l.ht, 0), nombre_(l.ttc, 0), '', '', maintenant, '', soc];
+      nombre_(l.ht, 0), nombre_(l.ttc, 0), '', '', maintenant, '', soc, gardes ? (gardes.indexOf(plaque_(l.immat)) >= 0 ? 'OUI' : 'NON') : ''];
   });
   var verrou = LockService.getScriptLock();
   verrou.waitLock(15000);
@@ -1367,7 +1371,7 @@ function recalculerPeages_(ss, mois, cache) {
     return res;
   };
   var v = sh.getRange(1, 1, sh.getLastRow(), Math.max(FEUILLES.PEAGES.length, sh.getLastColumn())).getValues(), e = v[0].map(String);
-  var col = function (h) { return e.indexOf(h); }, cM = col('Mois'), cI = col('Immatriculation'), cDE = col('Date_Entree'), cDS = col('Date_Sortie'), cC = col('Contrat'), cR = col('Rembourse'), cMa = col('Manuel');
+  var col = function (h) { return e.indexOf(h); }, cM = col('Mois'), cI = col('Immatriculation'), cDE = col('Date_Entree'), cDS = col('Date_Sortie'), cC = col('Contrat'), cR = col('Rembourse'), cMa = col('Manuel'), cG = col('Garder');
   var iso = function (x) { return x instanceof Date ? Utilities.formatDate(x, FUSEAU, 'yyyy-MM-dd') : String(x || ''); };
   var lignes = [], parBadge = {};
   for (var i = 1; i < v.length; i++) {
@@ -1377,7 +1381,9 @@ function recalculerPeages_(ss, mois, cache) {
     var rb = regles.filter(function (r) { return r.type === 'BADGE' && r.badges.indexOf(badge) >= 0 && r.camion && dans(r, jour); })[0];
     var camion = f && f.camionReel && (!f.du || jour >= f.du) && (!f.au || jour <= f.au) ? f.camionReel : (rb ? rb.camion : badge);
     var manuel = cMa >= 0 && String(v[i][cMa]) === 'OUI';
-    var ignore = regles.some(function (r) { return r.type === 'IGNORER' && vise(r, badge, camion) && dans(r, jour); }) ||
+    // choix fait au dépôt (cases à cocher) : OUI = dans le fichier quoi qu'il arrive, NON = retiré ; vide = ancien relevé (règles et écart automatique)
+    var garde = cG >= 0 ? String(v[i][cG]) : '';
+    var ignore = garde === 'NON' ? true : garde === 'OUI' ? false : regles.some(function (r) { return r.type === 'IGNORER' && vise(r, badge, camion) && dans(r, jour); }) ||
       (seulement.length && !seulement.some(function (r) { return vise(r, badge, camion) && dans(r, jour); }));
     // « LOIC a pris le FS238WL à partir du 21/09 » : les tournées de ce chauffeur ce jour-là
     var cands = [], rch = regles.filter(function (r) { return r.type === 'CHAUFFEUR' && r.chauffeur && vise(r, badge, camion) && dans(r, jour); });
@@ -1386,12 +1392,12 @@ function recalculerPeages_(ss, mois, cache) {
     var rc = !cands.length ? regles.filter(function (r) { return r.type === 'CONTRAT' && r.contrat && vise(r, badge, camion) && dans(r, jour); })[0] : null;
     var contrat = manuel ? String(v[i][cC] || '') : (rc ? rc.contrat : cands.join('/'));
     // « ne pas prendre en compte » l'emporte même sur un contrat corrigé à la main
-    lignes.push({ i: i, badge: badge, contrat: ignore && !manuel ? '' : contrat, ignore: !!ignore }); // contrat manuel conservé si la règle est retirée
+    lignes.push({ i: i, badge: badge, contrat: ignore && !manuel ? '' : contrat, ignore: !!ignore, garde: garde === 'OUI' }); // contrat manuel conservé si la règle est retirée
     if (contrat && !ignore) parBadge[badge] = 1;
   }
   lignes.forEach(function (l) {
     v[l.i][cC] = l.contrat;
-    v[l.i][cR] = l.ignore ? 'ÉCARTÉ' : l.contrat ? (l.contrat.split('/').some(function (x) { return x.indexOf(prefixe) === 0; }) ? 'OUI' : 'NON') : (parBadge[l.badge] ? 'À AFFECTER' : 'ÉCARTÉ');
+    v[l.i][cR] = l.ignore ? 'ÉCARTÉ' : l.contrat ? (l.contrat.split('/').some(function (x) { return x.indexOf(prefixe) === 0; }) ? 'OUI' : 'NON') : (l.garde || parBadge[l.badge] ? 'À AFFECTER' : 'ÉCARTÉ');
   });
   if (lignes.length) sh.getRange(2, cC + 1, v.length - 1, 2).setValues(v.slice(1).map(function (r) { return [r[cC], r[cR]]; }));
 }
@@ -1484,6 +1490,34 @@ function societePeagesReleve(facture, societe) {
   if (!n) throw new Error('Relevé ' + facture + ' introuvable');
   sh.getRange(2, cS + 1, v.length - 1, 1).setValues(v.slice(1).map(function (l) { return [l[cS]]; }));
   return n;
+}
+
+/** Depuis le site : met un badge dans le fichier du mois (garder = true) ou l'en retire ; mémorisé pour les relevés suivants de la société. */
+function garderBadgePeages(mois, badge, garder) {
+  var b = plaque_(badge), ss = classeur_(), sh = ss.getSheetByName('PEAGES'); if (!sh || sh.getLastRow() < 2) throw new Error('Aucun péage enregistré');
+  sh.getRange(1, 1, 1, FEUILLES.PEAGES.length).setValues([FEUILLES.PEAGES]);
+  var v = sh.getRange(1, 1, sh.getLastRow(), FEUILLES.PEAGES.length).getValues(), e = v[0];
+  var cM = e.indexOf('Mois'), cI = e.indexOf('Immatriculation'), cG = e.indexOf('Garder'), cS = e.indexOf('Societe_Releve'), socs = {}, n = 0;
+  for (var i = 1; i < v.length; i++) {
+    if ((moisTexte_(v[i][cM]) || String(v[i][cM])) !== mois || plaque_(v[i][cI]) !== b) continue;
+    v[i][cG] = garder ? 'OUI' : 'NON'; n++; if (v[i][cS]) socs[societeReleve_(v[i][cS])] = 1;
+  }
+  if (!n) throw new Error('Badge ' + b + ' introuvable en ' + mois);
+  sh.getRange(2, cG + 1, v.length - 1, 1).setValues(v.slice(1).map(function (l) { return [l[cG]]; }));
+  var pr = PropertiesService.getScriptProperties();
+  Object.keys(socs).forEach(function (so) {
+    var k = 'PEAGES_GARDES_' + so.toUpperCase(), l = []; try { l = JSON.parse(pr.getProperty(k) || '[]'); } catch (er) { l = []; }
+    l = l.filter(function (x) { return x !== b; }); if (garder) l.push(b); pr.setProperty(k, JSON.stringify(l));
+  });
+  recalculerPeages_(ss, mois);
+  return n;
+}
+
+/** Badges cochés la dernière fois, par société : { GLEYZES: [...], LPB: [...] } (null si jamais choisi). */
+function gardesPeages_() {
+  var pr = PropertiesService.getScriptProperties(), res = {};
+  ['GLEYZES', 'LPB'].forEach(function (s) { try { res[s] = JSON.parse(pr.getProperty('PEAGES_GARDES_' + s) || 'null'); } catch (e) { res[s] = null; } });
+  return res;
 }
 
 /** Relevés de badge déposés (4 derniers mois) : facture, mois, quinzaine, société, nombre de trajets. */
@@ -1595,6 +1629,7 @@ function badgesMois_(ss) {
     var k = l.Mois + '|' + l.Immatriculation, b = mois[k] = mois[k] || { mois: l.Mois, badge: l.Immatriculation, trajets: 0, ht: 0, ecarte: true, societes: [] };
     b.trajets++; b.ht += nombre_(l.Montant_HT, 0); if (l.Rembourse !== 'ÉCARTÉ') b.ecarte = false;
     var so = societeReleve_(l.Societe_Releve); if (so && b.societes.indexOf(so) < 0) b.societes.push(so);
+    if (String(l.Garder) === 'OUI') b.garde = true; else if (String(l.Garder) === 'NON' && b.garde === undefined) b.garde = false;
   });
   // pourquoi un badge est écarté : consigne, ou aucune tournée Inter de ce camion au planning ce mois-là
   var idx = {}, regles = [];
@@ -1608,7 +1643,7 @@ function badgesMois_(ss) {
     b.ht = Math.round(b.ht * 100) / 100; b.fiche = fiches[k] || null;
     if (b.ecarte && b.trajets) {
       var cam = b.fiche && b.fiche.camionReel ? b.fiche.camionReel : b.badge;
-      b.motif = regles.some(function (r) { return r.type === 'IGNORER' && (r.badges.indexOf(b.badge) >= 0 || r.badges.indexOf(cam) >= 0); }) ? 'retiré par une consigne « ignorer »'
+      b.motif = b.garde === false ? 'décoché (pas dans le fichier)' : regles.some(function (r) { return r.type === 'IGNORER' && (r.badges.indexOf(b.badge) >= 0 || r.badges.indexOf(cam) >= 0); }) ? 'retiré par une consigne « ignorer »'
         : seul.length && !seul.some(function (r) { return r.badges.indexOf(b.badge) >= 0 || r.badges.indexOf(cam) >= 0; }) ? 'retiré : absent de la consigne « ne garder que » (' + seul.map(function (r) { return r.badge; }).join(', ') + ')'
         : !camionsMois[cam + '|' + b.mois] ? 'aucune tournée Inter avec le camion ' + cam + ' au planning ce mois-là (colonne CAMION vide ou autre camion)'
         : 'pas de tournée Inter de ce camion les jours de ses péages';

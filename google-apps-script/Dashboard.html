@@ -192,6 +192,8 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .attention { border-left-width: 6px; }
 .badge { border-radius: 999px; }
 .sous-titre { font-size: 14px; margin: 16px 0 4px; }
+.choix-badges { margin-top: 6px; }
+.liste-badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 14px; margin: 6px 0 8px; }
 .consignes-peages { border: 1px solid var(--border); border-left: 4px solid var(--accent, #2f6fdb); border-radius: 10px; padding: 10px 12px; margin: 10px 0; background: var(--surface-2); }
 .consignes-peages textarea { width: 100%; margin: 6px 0; box-sizing: border-box; }
 #listeConsignes { margin: 8px 0 4px; padding-left: 0; list-style: none; }
@@ -1777,6 +1779,30 @@ function traiterPeages(fichiers) {
     b.onclick = function () { q.remove(); if (b.dataset.s) deposerRelevesPeages(fichiers, b.dataset.s); };
   });
 }
+/** Liste des badges du relevé avec cases à cocher (cochés : ceux gardés la dernière fois pour cette société). Résout avec la liste cochée. */
+function choisirBadgesPeages(d, nom, r) {
+  var par = {}, ordre = [];
+  r.lignes.forEach(function (l) { var b = String(l.immat || '').toUpperCase().replace(/[\s-]/g, ''); if (!par[b]) { par[b] = { n: 0, ht: 0 }; ordre.push(b); } par[b].n++; par[b].ht += num(l.ht) || 0; });
+  var memo = (D.PEAGES_GARDES || {})[String(r.societe).toUpperCase()];
+  ordre.sort();
+  return new Promise(function (ok, ko) {
+    d.innerHTML = '<span class="nom">' + txt(nom) + ' · <b>' + txt(String(r.societe).toUpperCase()) + '</b></span><div class="choix-badges"><b>Badges à mettre dans le fichier Intermarché :</b>' +
+      '<div class="liste-badges">' + ordre.map(function (b) {
+        var coche = !memo || memo.indexOf(b) >= 0;
+        return '<label><input type="checkbox" value="' + txt(b) + '"' + (coche ? ' checked' : '') + '> <b>' + txt(b) + '</b> <span class="note">' + par[b].n + ' trajets · ' + fmtEur2.format(par[b].ht) + ' HT</span></label>';
+      }).join('') + '</div><div class="barre"><button class="primaire" data-a="ok">Valider et générer le fichier</button><button data-a="tous">Tout cocher</button><button data-a="aucun">Tout décocher</button><button data-a="annuler">Annuler</button></div>' +
+      (memo ? '<p class="note">Cases cochées comme la dernière fois pour ' + txt(String(r.societe).toUpperCase()) + '.</p>' : '') + '</div>';
+    var cases = function () { return Array.prototype.slice.call(d.querySelectorAll('input[type=checkbox]')); };
+    d.querySelector('[data-a=tous]').onclick = function () { cases().forEach(function (c) { c.checked = true; }); };
+    d.querySelector('[data-a=aucun]').onclick = function () { cases().forEach(function (c) { c.checked = false; }); };
+    d.querySelector('[data-a=annuler]').onclick = function () { d.remove(); ko(new Error('annulé')); };
+    d.querySelector('[data-a=ok]').onclick = function () {
+      var g = cases().filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
+      if (!g.length) { alert('Cochez au moins un badge'); return; }
+      d.innerHTML = '<span class="nom">' + txt(nom) + '</span><span class="msg">Enregistrement…</span>'; ok(g);
+    };
+  });
+}
 function deposerRelevesPeages(fichiers, societeReleve) {
   var suite = Promise.resolve();
   Array.prototype.slice.call(fichiers).forEach(function (f, k) {
@@ -1787,15 +1813,18 @@ function deposerRelevesPeages(fichiers, societeReleve) {
       return f.arrayBuffer().then(function (buf) {
         var t; try { t = new TextDecoder('windows-1252').decode(buf); } catch (e) { t = new TextDecoder().decode(buf); }
         var r = lireRelevePeages(t, f.name); r.societe = societeReleve;
-        etatDepot(d, 'Rapprochement avec le planning Inter…');
-        return appelServeur('deposerPeages', r);
+        return choisirBadgesPeages(d, f.name, r).then(function (garder) {
+          r.garder = garder;
+          etatDepot(d, 'Rapprochement avec le planning Inter…');
+          return appelServeur('deposerPeages', r);
+        });
       }).then(function (x) {
         etatDepot(d, '✓ <b>' + txt(String(x.societe).toUpperCase()) + '</b> · ' + (x.quinzaine === 1 ? '1re' : '2e') + ' quinzaine de ' + txt(nomMois(x.mois)) + ' : ' + x.trajets + ' trajets (' + txt(x.camions.join(', ')) + '), ' +
           fmtEur2.format(x.rembourseHT) + ' HT remboursables' + (x.nonRembourseHT ? ', ' + fmtEur2.format(x.nonRembourseHT) + ' non remboursés' : '') +
-          (x.ecartes.length ? ' · écartés (pas de tournée Intermarché) : ' + txt(x.ecartes.join(', ')) : '') +
-          (x.aAffecter.length ? '<div class="note">⚠ Sans tournée Intermarché au planning ce jour-là (contrat à compléter en rouge dans le fichier) : ' + txt(x.aAffecter.join(', ')) + '</div>' : '') +
+          (x.ecartes.length ? ' · non cochés (pas dans le fichier) : ' + txt(x.ecartes.join(', ')) : '') +
+          (x.aAffecter.length ? '<div class="note">⚠ Contrat introuvable au planning (case vide, en rouge dans le planning ci-dessous : cliquez ✎ pour le saisir) : ' + txt(x.aAffecter.join(', ')) + '</div>' : '') +
           ' — voir le planning des péages ci-dessous', 'ok');
-      }).catch(function (e) { etatDepot(d, '⚠ ' + txt(e.message), 'err'); });
+      }).catch(function (e) { if (e.message !== 'annulé') etatDepot(d, '⚠ ' + txt(e.message), 'err'); });
     });
   });
   suite.then(function () { charger(); });
@@ -2015,7 +2044,7 @@ function rendreBadgesPeages(M) {
         '<textarea data-f="commentaire" rows="3" style="width:100%;margin-top:6px" placeholder="Commentaire (ex. le badge GD042ZC était dans le tracteur GE606BF du 3 au 14/08)">' + txt(f.commentaire || '') + '</textarea>' +
         '<div class="docs">' + docs.map(function (d) { return '<a href="' + txt(d.url) + '" target="_blank" rel="noopener">📎 ' + txt(d.nom) + '</a>'; }).join(' ') + '</div>' +
         '<div class="barre" style="margin-top:6px"><button class="primaire" data-a="enreg">Enregistrer</button>' +
-        '<button data-a="retirer">🚫 Ne pas prendre en compte ce badge</button>' +
+        (b.ecarte ? '<button data-a="garder">➕ Mettre ce badge dans le fichier</button>' : '<button data-a="retirer">🚫 Retirer ce badge du fichier</button>') +
         '<label class="bouton-fichier">📎 Joindre des documents<input type="file" data-a="docs" multiple hidden></label><span class="msg"></span></div></div></details>';
     }).join('');
   z.querySelectorAll('.fiche').forEach(function (fi) {
@@ -2026,11 +2055,11 @@ function rendreBadgesPeages(M) {
       appelServeur('enregistrerFicheBadge', { mois: M, badge: badgeF, camionReel: val('camionReel').toUpperCase().replace(/[\s-]/g, ''), du: val('du'), au: val('au'), commentaire: val('commentaire') })
         .then(function () { msg.className = 'msg ok'; msg.textContent = '✓ Enregistré'; charger(); }).catch(function (e) { msg.className = 'msg err'; msg.textContent = '⚠ ' + e.message; });
     };
-    fi.querySelector('[data-a=retirer]').onclick = function () {
-      var liste = (D.PEAGES_REGLES || []).map(function (r) { return { type: r.type, badge: r.badge, camion: r.camion, chauffeur: r.chauffeur, contrat: r.contrat, du: r.du, au: r.au, note: r.note }; });
-      liste.push({ type: 'IGNORER', badge: badgeF });
-      msg.className = 'msg'; msg.textContent = 'Retrait de ' + badgeF + '…';
-      appelServeur('enregistrerReglesPeages', liste).then(function () { msg.className = 'msg ok'; msg.textContent = '✓ ' + badgeF + ' retiré du planning et de l\'Excel'; charger(); })
+    var bouton = fi.querySelector('[data-a=retirer]') || fi.querySelector('[data-a=garder]');
+    bouton.onclick = function () {
+      var g = bouton.dataset.a === 'garder';
+      msg.className = 'msg'; msg.textContent = (g ? 'Ajout de ' : 'Retrait de ') + badgeF + '…';
+      appelServeur('garderBadgePeages', M, badgeF, g).then(function () { msg.className = 'msg ok'; msg.textContent = '✓ ' + badgeF + (g ? ' mis dans le fichier' : ' retiré du fichier'); charger(); })
         .catch(function (er) { msg.className = 'msg err'; msg.textContent = '⚠ ' + er.message; });
     };
     fi.querySelector('[data-a=docs]').onchange = function (e) {
