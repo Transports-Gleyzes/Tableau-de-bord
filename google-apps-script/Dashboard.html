@@ -1650,6 +1650,7 @@ function appelServeur(fonction) {
   return new Promise(function (ok, ko) {
     if (!(window.google && google.script && google.script.run)) { ko(new Error('Mode démonstration : rien n\'est enregistré.')); return; }
     var r = google.script.run.withSuccessHandler(ok).withFailureHandler(ko);
+    if (typeof r[fonction] !== 'function') { ko(new Error('Le code du serveur n\'est pas à jour (fonction « ' + fonction + ' » absente) : recollez tout Code.gs dans Apps Script, enregistrez, puis Déployer > Gérer les déploiements > ✏️ > Nouvelle version.')); return; }
     r[fonction].apply(r, args);
   });
 }
@@ -1760,7 +1761,7 @@ function lireRelevePeages(texte, nomFichier) {
   var col = function (re) { for (var i = 0; i < h.length; i++) if (re.test(h[i])) return i; return -1; };
   var c = { type: col(/^TYPE DE LIGNE/), immat: col(/^IMMATRICULATION/), dE: col(/^DATE D.ENTREE/), hE: col(/^HEURE D.ENTREE/), gE: col(/^GARE\/LIEU D.ENTREE/),
     aE: col(/^LIEU D.ENTRE\//), dS: col(/^DATE DE SORTIE/), hS: col(/^HEURE DE SORTIE/), gS: col(/^GARE\/LIEU DE SORTIE/), aS: col(/^AUTOROUTE DE SORTIE/),
-    soc: col(/^SOCIETE CIRCULEE/), km: col(/^KM$/), ht: col(/^MONTANT BRUT DE PEAGE HT/), ttc: col(/^MONTANT BRUT DE PEAGE TTC/), fact: col(/^NUMERO DE FACTURE ETENDU/) };
+    soc: col(/^SOCIETE CIRCULEE/), km: col(/^KM$/), ht: col(/^MONTANT BRUT DE PEAGE HT/), ttc: col(/^MONTANT BRUT DE PEAGE TTC/), fact: col(/^NUMERO DE FACTURE ETENDU/), releve: col(/^IDENTIFIANT DU RELEVE/) };
   if (c.immat < 0 || c.ht < 0 || c.dS < 0) throw new Error('Ce n\'est pas un relevé de badge (colonnes Immatriculation / Date de sortie / Montant brut introuvables)');
   var iso = function (x) { var m = String(x || '').match(/(\d{2})\/(\d{2})\/(\d{4})/); return m ? m[3] + '-' + m[2] + '-' + m[1] : ''; };
   var v = function (l, k) { return k >= 0 ? String(l[k] || '').trim() : ''; };
@@ -1768,11 +1769,13 @@ function lireRelevePeages(texte, nomFichier) {
   lignes.slice(1).forEach(function (l) {
     if (c.type >= 0 && !/^TRAJET BRUT/.test(sansAccents(v(l, c.type)))) return;   // trajets déjà facturés, remises, totaux : ignorés
     if (!r.facture && c.fact >= 0) r.facture = v(l, c.fact);
+    if (!r.facture && c.releve >= 0 && /^FR\d{6,}$/i.test(v(l, c.releve))) r.facture = v(l, c.releve).toUpperCase();
     r.lignes.push({ immat: v(l, c.immat), dateEntree: iso(v(l, c.dE)), heureEntree: v(l, c.hE), gareEntree: v(l, c.gE), autorouteEntree: v(l, c.aE),
       dateSortie: iso(v(l, c.dS)), heureSortie: v(l, c.hS), gareSortie: v(l, c.gS), autorouteSortie: v(l, c.aS), societe: v(l, c.soc),
       km: nombreFr(v(l, c.km)), ht: nombreFr(v(l, c.ht)) || 0, ttc: nombreFr(v(l, c.ttc)) || 0 });
   });
-  if (!r.facture) r.facture = String(nomFichier || 'releve').replace(/\.[^.]+$/, '').replace(/_\d+$/, '');
+  // sinon le nom du fichier, sans « (1) » ajouté par le navigateur quand on le télécharge deux fois
+  if (!r.facture) { var nf = String(nomFichier || 'releve'), mf = nf.match(/FR\d{6,}/i); r.facture = mf ? mf[0].toUpperCase() : nf.replace(/\.[^.]+$/, '').replace(/\s*\(\d+\)$/, '').replace(/_\d+$/, ''); }
   if (!r.lignes.length) throw new Error('Aucun trajet facturé dans ce relevé');
   return r;
 }
