@@ -1513,6 +1513,31 @@ function garderBadgePeages(mois, badge, garder) {
   return n;
 }
 
+/** Depuis le site : supprime un relevé déposé (toutes ses lignes), puis recalcule le mois. */
+function supprimerRelevePeages(facture) {
+  var ss = classeur_(), sh = ss.getSheetByName('PEAGES'); if (!sh || sh.getLastRow() < 2) throw new Error('Aucun péage enregistré');
+  var verrou = LockService.getScriptLock(); verrou.waitLock(15000);
+  var mois = '';
+  try {
+    var tout = lireTable_(sh), garder = tout.filter(function (x) { if (String(x.Facture_Badge) === String(facture)) { mois = moisTexte_(x.Mois) || String(x.Mois); return false; } return true; });
+    if (garder.length === tout.length) throw new Error('Relevé ' + facture + ' introuvable');
+    var lignes = garder.map(function (x) { return FEUILLES.PEAGES.map(function (h) { return x[h] === undefined ? '' : x[h]; }); });
+    sh.getRange(1, 1, 1, FEUILLES.PEAGES.length).setValues([FEUILLES.PEAGES]);
+    sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(FEUILLES.PEAGES.length, sh.getLastColumn())).clearContent();
+    if (lignes.length) sh.getRange(2, 1, lignes.length, FEUILLES.PEAGES.length).setValues(lignes);
+  } finally { verrou.releaseLock(); }
+  if (mois) recalculerPeages_(ss, mois);
+  return tout.length - garder.length;
+}
+
+/** Depuis le site : trajets d'un relevé déposé (pour le consulter). */
+function detailRelevePeages(facture) {
+  return peages_(classeur_()).filter(function (l) { return String(l.Facture_Badge) === String(facture); }).map(function (l) {
+    return { badge: l.Immatriculation, dateE: l.Date_Entree, heureE: l.Heure_Entree, entree: l.Gare_Entree, dateS: l.Date_Sortie, heureS: l.Heure_Sortie, sortie: l.Gare_Sortie,
+      km: l.KM, ht: nombre_(l.Montant_HT, 0), ttc: nombre_(l.Montant_TTC, 0), contrat: String(l.Contrat || ''), statut: l.Rembourse, garder: l.Garder };
+  });
+}
+
 /** Badges cochés la dernière fois, par société : { GLEYZES: [...], LPB: [...] } (null si jamais choisi). */
 function gardesPeages_() {
   var pr = PropertiesService.getScriptProperties(), res = {};

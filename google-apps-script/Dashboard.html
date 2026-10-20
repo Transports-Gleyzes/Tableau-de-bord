@@ -192,6 +192,13 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .attention { border-left-width: 6px; }
 .badge { border-radius: 999px; }
 .sous-titre { font-size: 14px; margin: 16px 0 4px; }
+dialog#fenetre { border: none; border-radius: 14px; padding: 0; width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); box-shadow: 0 20px 60px rgba(0,0,0,.35); background: var(--surface); color: var(--text); }
+dialog#fenetre::backdrop { background: rgba(15, 30, 60, .55); }
+.fenetre-tete { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+.fenetre-tete h2 { margin: 0; font-size: 17px; }
+#fenetreCorps { padding: 16px 18px 18px; overflow: auto; }
+.choix-societe { display: flex; gap: 14px; flex-wrap: wrap; margin: 10px 0 4px; }
+.choix-societe button { flex: 1 1 200px; font-size: 20px; font-weight: 700; padding: 22px 10px; border-radius: 12px; }
 .choix-badges { margin-top: 6px; }
 .liste-badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 14px; margin: 6px 0 8px; }
 .consignes-peages { border: 1px solid var(--border); border-left: 4px solid var(--accent, #2f6fdb); border-radius: 10px; padding: 10px 12px; margin: 10px 0; background: var(--surface-2); }
@@ -647,6 +654,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
     </div>
   </section>
 </main>
+<dialog id="fenetre"><div class="fenetre-tete"><h2 id="fenetreTitre"></h2><button class="suppr" id="fenetreFermer" title="Fermer">✕</button></div><div id="fenetreCorps"></div></dialog>
 
 <script>
 var D = null;               // données reçues du Google Sheet
@@ -1769,14 +1777,32 @@ function lireRelevePeages(texte, nomFichier) {
   return r;
 }
 /** Dépôt des relevés : on demande d'abord s'ils sont de GLEYZES ou de LPB. */
+// ---------- fenêtre (dialogue) ----------
+var surFermetureFenetre = null;
+function ouvrirFenetre(titre, html, quandFerme) {
+  var f = document.getElementById('fenetre');
+  document.getElementById('fenetreTitre').textContent = titre;
+  document.getElementById('fenetreCorps').innerHTML = html;
+  surFermetureFenetre = quandFerme || null;
+  if (!f.open) { if (f.showModal) f.showModal(); else f.setAttribute('open', ''); }
+  return document.getElementById('fenetreCorps');
+}
+function fermerFenetre(sansRappel) {
+  var f = document.getElementById('fenetre'), cb = surFermetureFenetre; surFermetureFenetre = null;
+  if (f.open) { if (f.close) f.close(); else f.removeAttribute('open'); }
+  if (cb && !sansRappel) cb();
+}
+document.getElementById('fenetreFermer').onclick = function () { fermerFenetre(); };
+document.getElementById('fenetre').addEventListener('cancel', function (e) { e.preventDefault(); fermerFenetre(); });
+
+/** Dépôt des relevés : une fenêtre s'ouvre pour choisir GLEYZES ou LPB, puis les badges à garder. */
 function traiterPeages(fichiers) {
   fichiers = Array.prototype.slice.call(fichiers); if (!fichiers.length) return;
-  var q = document.createElement('div'); q.className = 'fichier question-societe';
-  q.innerHTML = '<span class="nom">' + fichiers.map(function (f) { return txt(f.name); }).join(', ') + '</span><span class="msg"><b>Ce relevé est celui de :</b> ' +
-    '<button class="primaire" data-s="Gleyzes">GLEYZES</button> <button class="primaire" data-s="LPB">LPB</button> <button data-s="">Annuler</button></span>';
-  document.getElementById('listePeages').prepend(q);
-  q.querySelectorAll('button').forEach(function (b) {
-    b.onclick = function () { q.remove(); if (b.dataset.s) deposerRelevesPeages(fichiers, b.dataset.s); };
+  var corps = ouvrirFenetre('Relevé de péages : quelle société ?',
+    '<p>' + fichiers.map(function (f) { return '📄 <b>' + txt(f.name) + '</b>'; }).join('<br>') + '</p><p>Ce relevé est celui de :</p>' +
+    '<div class="choix-societe"><button class="primaire" data-s="Gleyzes">GLEYZES</button><button class="primaire" data-s="LPB" style="background:#0f766e;border-color:#0f766e">LPB</button></div>');
+  corps.querySelectorAll('[data-s]').forEach(function (b) {
+    b.onclick = function () { deposerRelevesPeages(fichiers, b.dataset.s); };
   });
 }
 /** Liste des badges du relevé avec cases à cocher (cochés : ceux gardés la dernière fois pour cette société). Résout avec la liste cochée. */
@@ -1786,19 +1812,22 @@ function choisirBadgesPeages(d, nom, r) {
   var memo = (D.PEAGES_GARDES || {})[String(r.societe).toUpperCase()];
   ordre.sort();
   return new Promise(function (ok, ko) {
-    d.innerHTML = '<span class="nom">' + txt(nom) + ' · <b>' + txt(String(r.societe).toUpperCase()) + '</b></span><div class="choix-badges"><b>Badges à mettre dans le fichier Intermarché :</b>' +
+    var annuler = function () { d.remove(); ko(new Error('annulé')); };
+    var w = ouvrirFenetre(String(r.societe).toUpperCase() + ' · ' + nom, '', annuler);
+    w.innerHTML = '<div class="choix-badges"><b>Badges à mettre dans le fichier Intermarché :</b>' +
       '<div class="liste-badges">' + ordre.map(function (b) {
         var coche = !memo || memo.indexOf(b) >= 0;
         return '<label><input type="checkbox" value="' + txt(b) + '"' + (coche ? ' checked' : '') + '> <b>' + txt(b) + '</b> <span class="note">' + par[b].n + ' trajets · ' + fmtEur2.format(par[b].ht) + ' HT</span></label>';
       }).join('') + '</div><div class="barre"><button class="primaire" data-a="ok">Valider et générer le fichier</button><button data-a="tous">Tout cocher</button><button data-a="aucun">Tout décocher</button><button data-a="annuler">Annuler</button></div>' +
       (memo ? '<p class="note">Cases cochées comme la dernière fois pour ' + txt(String(r.societe).toUpperCase()) + '.</p>' : '') + '</div>';
-    var cases = function () { return Array.prototype.slice.call(d.querySelectorAll('input[type=checkbox]')); };
-    d.querySelector('[data-a=tous]').onclick = function () { cases().forEach(function (c) { c.checked = true; }); };
-    d.querySelector('[data-a=aucun]').onclick = function () { cases().forEach(function (c) { c.checked = false; }); };
-    d.querySelector('[data-a=annuler]').onclick = function () { d.remove(); ko(new Error('annulé')); };
-    d.querySelector('[data-a=ok]').onclick = function () {
+    var cases = function () { return Array.prototype.slice.call(w.querySelectorAll('input[type=checkbox]')); };
+    w.querySelector('[data-a=tous]').onclick = function () { cases().forEach(function (c) { c.checked = true; }); };
+    w.querySelector('[data-a=aucun]').onclick = function () { cases().forEach(function (c) { c.checked = false; }); };
+    w.querySelector('[data-a=annuler]').onclick = function () { fermerFenetre(); };
+    w.querySelector('[data-a=ok]').onclick = function () {
       var g = cases().filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
       if (!g.length) { alert('Cochez au moins un badge'); return; }
+      fermerFenetre(true);
       d.innerHTML = '<span class="nom">' + txt(nom) + '</span><span class="msg">Enregistrement…</span>'; ok(g);
     };
   });
@@ -1945,13 +1974,37 @@ function rendreRelevesPeages() {
   var z = document.getElementById('relevesPeages'), l = D.PEAGES_RELEVES || [];
   if (!l.length) { z.innerHTML = ''; return; }
   var sans = l.filter(function (r) { return !r.societe; }).length;
-  z.innerHTML = '<details' + (sans ? ' open' : '') + ' style="margin-top:8px"><summary><b>Relevés déposés</b> (' + l.length + ')' + (sans ? ' <span class="ou-prefac">⚠ ' + sans + ' sans société</span>' : '') + '</summary>' +
-    '<div class="tableau"><table class="serre"><thead><tr><th>Relevé</th><th>Mois</th><th>Quinzaine</th><th class="n">Trajets</th><th class="n">HT</th><th>Société</th></tr></thead><tbody>' +
+  z.innerHTML = '<details open style="margin-top:8px"><summary><b>Relevés déposés</b> (' + l.length + ')' + (sans ? ' <span class="ou-prefac">⚠ ' + sans + ' sans société</span>' : '') + '</summary>' +
+    '<div class="tableau"><table class="serre"><thead><tr><th>Relevé</th><th>Mois</th><th>Quinzaine</th><th class="n">Trajets</th><th class="n">HT</th><th>Société</th><th></th></tr></thead><tbody>' +
     l.map(function (r) {
       return '<tr' + (!r.societe ? ' style="background:var(--neg-bg,#fde2e1)"' : '') + '><td>' + txt(r.facture) + '</td><td>' + txt(nomMois(r.mois)) + '</td><td>' + (r.quinzaine === 1 ? '1re' : '2e') +
         '</td><td class="n">' + r.trajets + '</td><td class="n">' + fmtEur2.format(r.ht) + '</td><td><select data-rel="' + txt(r.facture) + '"><option value="">— à choisir —</option>' +
-        ['Gleyzes', 'LPB'].map(function (x) { return '<option value="' + x + '"' + (r.societe === x ? ' selected' : '') + '>' + x.toUpperCase() + '</option>'; }).join('') + '</select></td></tr>';
+        ['Gleyzes', 'LPB'].map(function (x) { return '<option value="' + x + '"' + (r.societe === x ? ' selected' : '') + '>' + x.toUpperCase() + '</option>'; }).join('') + '</select></td>' +
+        '<td style="white-space:nowrap"><button data-voir="' + txt(r.facture) + '">👁 Consulter</button> <button class="suppr" data-effacer="' + txt(r.facture) + '" title="Supprimer ce relevé">🗑</button></td></tr>';
     }).join('') + '</tbody></table></div><span class="msg" id="msgReleves"></span></details>';
+  z.querySelectorAll('[data-voir]').forEach(function (b) {
+    b.onclick = function () {
+      var fac = b.dataset.voir, w = ouvrirFenetre('Relevé ' + fac, '<p class="note">Chargement…</p>');
+      appelServeur('detailRelevePeages', fac).then(function (l) {
+        var tot = l.reduce(function (t, x) { return t + x.ht; }, 0);
+        w.innerHTML = '<p>' + l.length + ' trajets · ' + fmtEur2.format(tot) + ' HT</p><div class="tableau"><table class="serre"><thead><tr><th>Badge</th><th>Date</th><th>Entrée</th><th>Sortie</th><th class="n">HT</th><th>Contrat</th><th>Fichier</th></tr></thead><tbody>' +
+          l.map(function (x) {
+            var dans = x.statut !== 'ÉCARTÉ';
+            return '<tr' + (dans ? '' : ' style="color:var(--text-2)"') + '><td>' + txt(x.badge) + '</td><td>' + dateFr(x.dateS || x.dateE) + ' ' + txt(String(x.heureS || '').slice(0, 5)) + '</td><td>' + txt(x.entree) + '</td><td>' + txt(x.sortie) +
+              '</td><td class="n">' + fmtEur2.format(x.ht) + '</td><td' + (dans && !x.contrat ? ' style="background:var(--neg-bg,#fde2e1)"' : '') + '>' + txt(x.contrat) + '</td><td>' + (dans ? (x.statut === 'NON' ? 'oui (non remb.)' : 'oui') : 'non') + '</td></tr>';
+          }).join('') + '</tbody></table></div>';
+      }).catch(function (e) { w.innerHTML = '<p class="msg err">⚠ ' + txt(e.message) + '</p>'; });
+    };
+  });
+  z.querySelectorAll('[data-effacer]').forEach(function (b) {
+    b.onclick = function () {
+      var fac = b.dataset.effacer;
+      if (!confirm('Supprimer le relevé ' + fac + ' ? Ses trajets seront retirés du planning et du fichier Excel. Vous pourrez le redéposer.')) return;
+      var m = document.getElementById('msgReleves'); m.className = 'msg'; m.textContent = 'Suppression…';
+      appelServeur('supprimerRelevePeages', fac).then(function (n) { m.className = 'msg ok'; m.textContent = '✓ Relevé supprimé (' + n + ' trajets)'; charger(); })
+        .catch(function (e) { m.className = 'msg err'; m.textContent = '⚠ ' + e.message; });
+    };
+  });
   z.querySelectorAll('[data-rel]').forEach(function (s) {
     s.onchange = function () {
       if (!s.value) return; var m = document.getElementById('msgReleves'); m.className = 'msg'; m.textContent = 'Enregistrement…';
