@@ -217,7 +217,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/10-péages3</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v21/10-péages6</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -2231,9 +2231,14 @@ function telechargerPeages(M, soc) {
       XLSX.utils.book_append_sheet(wb, ws, ('PEAGES ' + (p.q === 1 ? 'PREMIERE' : 'DEUXIEME') + ' QUINZAINE ' + nomM).slice(0, 31));
     });
     if (!wb.SheetNames.length) throw new Error('Aucun péage ' + (soc ? soc + ' ' : '') + 'pour ce mois');
-    XLSX.writeFile(wb, 'PEAGES ' + nomM + ' ' + M.slice(0, 4) + (soc ? ' ' + soc.toUpperCase() : '') + '.xlsx');
-    msg.textContent = planPeages.retires.length ? '✓ Retirés du fichier (vos consignes) : ' + planPeages.retires.join(', ') : '';
-  }).catch(function (e) { msg.textContent = '⚠ ' + e.message; });
+    var nomF = 'PEAGES ' + nomM + ' ' + M.slice(0, 4) + (soc ? ' ' + soc.toUpperCase() : '') + '.xlsx';
+    XLSX.writeFile(wb, nomF);
+    msg.className = 'msg ok'; msg.textContent = '✓ ' + nomF + ' téléchargé (dossier Téléchargements)' + (planPeages.retires.length ? ' · retirés (vos consignes) : ' + planPeages.retires.join(', ') : '');
+  }).catch(function (e) {
+    msg.className = 'msg err'; msg.textContent = '⚠ ' + e.message;
+    ouvrirFenetre('Fichier ' + (soc || '') + ' non créé', '<p class="msg err">⚠ ' + txt(e.message) + '</p>' +
+      (/Aucun péage/.test(e.message) ? '<p>Aucun trajet de ce mois n\'est dans le fichier : tous les badges de ses relevés sont non cochés ou écartés. Supprimez le relevé (🗑 dans « Relevés déposés ») et redéposez-le en cochant les badges à garder.</p>' : ''));
+  });
 }
 // ---------- avoirs SCAPED : lecture du mail de demande ----------
 /** Repère dans le texte d'un mail les avoirs demandés : cellules « N° facture | AVOIR | montant HT | date | commentaire ». */
