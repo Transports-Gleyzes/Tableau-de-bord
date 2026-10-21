@@ -217,7 +217,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v21/10-péages6</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v21/10-péages7</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -2069,7 +2069,8 @@ function retireParConsigne(M, immat, jour) {
 function planPeages(M, socForcee) {
   var retires = {};
   var soc = socForcee !== undefined ? socForcee : ((document.getElementById('socPeages') || {}).value || '');
-  var lignes = ((D.PEAGES_DETAIL || {})[M] || []).filter(function (l) { var x = retireParConsigne(M, l[1], String(l[6] || l[2])); if (x) retires[l[1]] = 1; return !x && (!soc || l[16] === soc); }), res = [];
+  // badge coché ou décoché au dépôt (l[17]) : c'est ce choix qui compte, jamais les consignes
+  var lignes = ((D.PEAGES_DETAIL || {})[M] || []).filter(function (l) { var x = l[17] !== 'OUI' && l[17] !== 'NON' && retireParConsigne(M, l[1], String(l[6] || l[2])); if (x) retires[l[1]] = 1; return !x && (!soc || l[16] === soc); }), res = [];
   planPeages.retires = Object.keys(retires);
   [1, 2].forEach(function (q) {
     var lq = lignes.filter(function (l) { return l[0] === q; }); if (!lq.length) return;

@@ -1473,7 +1473,7 @@ function detailPeages_(ss) {
   lignes.forEach(function (l) {
     if (garder.indexOf(l.Mois) < 0 || l.Rembourse === 'ÉCARTÉ') return;
     (res[l.Mois] = res[l.Mois] || []).push([+l.Quinzaine, l.Immatriculation, l.Date_Entree, l.Heure_Entree, l.Gare_Entree, l.Autoroute_Entree, l.Date_Sortie, l.Heure_Sortie,
-      l.Gare_Sortie, l.Autoroute_Sortie, l.Societe_Autoroute, nombre_(l.KM, ''), nombre_(l.Montant_HT, 0), nombre_(l.Montant_TTC, 0), String(l.Contrat || ''), l.Rembourse, soc(l)]);
+      l.Gare_Sortie, l.Autoroute_Sortie, l.Societe_Autoroute, nombre_(l.KM, ''), nombre_(l.Montant_HT, 0), nombre_(l.Montant_TTC, 0), String(l.Contrat || ''), l.Rembourse, soc(l), String(l.Garder || '')]);
   });
   return res;
 }
