@@ -217,7 +217,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v21/10-péages7</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v21/10-péages8</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -2197,44 +2197,117 @@ function chargerXlsx() {
   });
   return xlsxPret;
 }
-/** Fichier Excel « PEAGES <MOIS> <ANNÉE>.xlsx » : un onglet par quinzaine, mêmes colonnes que le relevé, total par badge, contrat fusionné par tournée. */
+var exceljsPret = null;
+function chargerExcelJS() {
+  if (window.ExcelJS) return Promise.resolve();
+  if (!exceljsPret) exceljsPret = new Promise(function (ok, ko) {
+    var sc = document.createElement('script'); sc.src = EXCELJS_URL;
+    sc.onload = ok; sc.onerror = function () { exceljsPret = null; ko(new Error('Impossible de charger le module Excel')); }; document.head.appendChild(sc);
+  });
+  return exceljsPret;
+}
+var EXCELJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+/**
+ * Fichier Excel « PEAGES <MOIS> <ANNÉE> <SOCIÉTÉ>.xlsx » : un onglet par quinzaine (colonnes du relevé du fournisseur, contrat fusionné
+ * par tournée, total par badge), mis en couleurs (titres, séparation entre camions, lignes « Total badge »), plus un onglet
+ * « PÉAGES & CONTRATS » : total des péages par contrat sur les deux quinzaines.
+ */
 function telechargerPeages(M, soc) {
-  var msg = document.getElementById('msgPeages'); msg.textContent = 'Préparation…';
-  chargerXlsx().then(function () {
-    var nomM = ['JANVIER', 'FEVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN', 'JUILLET', 'AOUT', 'SEPTEMBRE', 'OCTOBRE', 'NOVEMBRE', 'DECEMBRE'][+M.slice(5, 7) - 1], wb = XLSX.utils.book_new();
+  var msg = document.getElementById('msgPeages'); msg.className = 'msg'; msg.textContent = 'Préparation…';
+  chargerExcelJS().then(function () {
+    var nomM = ['JANVIER', 'FEVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN', 'JUILLET', 'AOUT', 'SEPTEMBRE', 'OCTOBRE', 'NOVEMBRE', 'DECEMBRE'][+M.slice(5, 7) - 1];
     var sans = (D.PEAGES_RELEVES || []).filter(function (r) { return r.mois === M && !r.societe; });
     if (sans.length) throw new Error('Relevé(s) sans société : ' + sans.map(function (r) { return r.facture; }).join(', ') + ' — choisissez GLEYZES ou LPB dans « Relevés déposés »');
-    planPeages(M, soc).forEach(function (p) {
-      var aoa = [COLS_PEAGES.concat(['COMMENTAIRE'])], merges = [], avecCom = false;
-      var d = function (iso) { if (!iso) return ''; var x = String(iso).split('-'); return new Date(Date.UTC(+x[0], +x[1] - 1, +x[2])); };
-      p.camions.forEach(function (c) {
-        var debut = aoa.length + 1;
+    var plan = planPeages(M, soc);
+    if (!plan.length) throw new Error('Aucun péage ' + (soc ? soc + ' ' : '') + 'pour ce mois');
+    var wb = new ExcelJS.Workbook(), avecComs = document.getElementById('comPeages').checked;
+    var NAVY = 'FF1F3864', BLEU = 'FFEAF1FB', BLANC = 'FFFFFFFF', JAUNE = 'FFFFE08A', ROUGE = 'FFFDE2E1', GRIS = 'FF8A8A8A', LIGNE = 'FFC9D3E3';
+    var fond = function (c) { return { type: 'pattern', pattern: 'solid', fgColor: { argb: c } }; };
+    var fin = { style: 'thin', color: { argb: LIGNE } }, epais = { style: 'medium', color: { argb: NAVY } };
+    var EUR = '#,##0.00 "€"';
+    var d = function (iso) { if (!iso) return null; var x = String(iso).split('-'); return new Date(Date.UTC(+x[0], +x[1] - 1, +x[2])); };
+    var parContrat = {}, ordreC = [];
+    plan.forEach(function (p) {
+      var ws = wb.addWorksheet(('PEAGES ' + (p.q === 1 ? 'PREMIERE' : 'DEUXIEME') + ' QUINZAINE ' + nomM).slice(0, 31), { views: [{ state: 'frozen', ySplit: 1 }] });
+      var entetes = COLS_PEAGES.concat(avecComs ? ['COMMENTAIRE'] : []), nc = entetes.length;
+      ws.columns = [36, 12, 11, 9, 22, 8, 11, 9, 22, 8, 10, 7, 14, 14, 12, 50].slice(0, nc).map(function (w) { return { width: w }; });
+      var h = ws.addRow(entetes); h.height = 48;
+      h.eachCell(function (c) { c.font = { bold: true, color: { argb: BLANC }, size: 10 }; c.fill = fond(NAVY); c.alignment = { wrapText: true, vertical: 'middle', horizontal: 'center' }; c.border = { top: fin, left: fin, bottom: fin, right: fin }; });
+      var totaux = [];
+      p.camions.forEach(function (c, ic) {
+        var teinte = ic % 2 ? BLEU : BLANC, debut = ws.rowCount + 1;
         c.blocs.forEach(function (b) {
-          var r0 = aoa.length;
+          var r0 = ws.rowCount + 1, rembourse = b.lignes[0][15] !== 'NON';
+          var kc = b.contrat || 'À COMPLÉTER';
+          if (!parContrat[kc]) { parContrat[kc] = { contrat: kc, q1: 0, q2: 0, ttc: 0, rembourse: rembourse && !!b.contrat }; ordreC.push(kc); }
           b.lignes.forEach(function (l, k) {
             var non = l[15] === 'NON';
-            aoa.push(['Trajet brut facturé/without discounts currently invoiced', c.immat, d(l[2]), l[3], l[4] || 'Entrée/sortie ouverte', l[5], d(l[6]), l[7], l[8], l[9], l[10], l[11],
-              non ? '' : l[12], non ? '' : l[13], k ? '' : (/^\d+$/.test(b.contrat) ? +b.contrat : b.contrat)]);
+            var r = ws.addRow(['Trajet brut facturé/without discounts currently invoiced', c.immat, d(l[2]), l[3], l[4] || 'Entrée/sortie ouverte', l[5], d(l[6]), l[7], l[8], l[9], l[10], l[11],
+              non ? null : l[12], non ? null : l[13], k ? null : (/^\d+$/.test(b.contrat) ? +b.contrat : b.contrat || null)]);
+            if (!non) { parContrat[kc]['q' + p.q] += l[12] || 0; parContrat[kc].ttc += l[13] || 0; }
+            r.eachCell({ includeEmpty: true }, function (cell, n) {
+              if (n > 15) return;
+              cell.fill = fond(teinte); cell.border = { left: fin, right: fin, bottom: fin, top: r.number === debut ? epais : fin };
+              cell.font = { size: 10, color: non ? { argb: GRIS } : undefined, italic: non };
+            });
+            r.getCell(3).numFmt = 'dd/mm/yyyy'; r.getCell(7).numFmt = 'dd/mm/yyyy'; r.getCell(13).numFmt = EUR; r.getCell(14).numFmt = EUR;
+            r.getCell(2).font = { size: 10, bold: true };
           });
-          if (b.lignes.length > 1) merges.push({ s: { r: r0, c: 14 }, e: { r: r0 + b.lignes.length - 1, c: 14 } });
+          var cc = ws.getCell(r0, 15);
+          if (b.lignes.length > 1) ws.mergeCells(r0, 15, r0 + b.lignes.length - 1, 15);
+          cc.alignment = { vertical: 'middle', horizontal: 'center' }; cc.font = { bold: true, size: 11, color: { argb: NAVY } };
+          if (!b.contrat) cc.fill = fond(ROUGE);
         });
-        var fin = aoa.length;
-        var fb = ficheBadge(M, c.immat), com = fb ? ((fb.camionReel ? 'Badge dans ' + fb.camionReel + (fb.du || fb.au ? ' (' + dateFr(fb.du) + ' - ' + dateFr(fb.au) + ')' : '') + '. ' : '') + (fb.commentaire || '')).trim() : '';
-        aoa.push(['Total badge', c.immat, '', '', '', '', '', '', '', '', '', '', { f: 'SUM(M' + debut + ':M' + fin + ')', v: Math.round(c.ht * 100) / 100 },
-          { f: 'SUM(N' + debut + ':N' + fin + ')', v: Math.round(c.ttc * 100) / 100 }, '', com]);
-        if (!document.getElementById('comPeages').checked) com = '';
-        if (com) avecCom = true;
+        var fb = ficheBadge(M, c.immat), com = fb && avecComs ? ((fb.camionReel ? 'Badge dans ' + fb.camionReel + (fb.du || fb.au ? ' (' + dateFr(fb.du) + ' - ' + dateFr(fb.au) + ')' : '') + '. ' : '') + (fb.commentaire || '')).trim() : '';
+        var finL = ws.rowCount;
+        var t = ws.addRow(['Total badge', c.immat, null, null, null, null, null, null, null, null, null, null,
+          { formula: 'SUM(M' + debut + ':M' + finL + ')', result: Math.round(c.ht * 100) / 100 }, { formula: 'SUM(N' + debut + ':N' + finL + ')', result: Math.round(c.ttc * 100) / 100 }, null].concat(avecComs ? [com] : []));
+        totaux.push(t.number);
+        t.eachCell({ includeEmpty: true }, function (cell, n) { if (n > nc) return; cell.fill = fond(JAUNE); cell.font = { bold: true, size: 11 }; cell.border = { top: epais, bottom: epais, left: fin, right: fin }; });
+        t.getCell(13).numFmt = EUR; t.getCell(14).numFmt = EUR; t.height = 20;
+        ws.addRow([]);
       });
-      if (!avecCom) aoa = aoa.map(function (r) { return r.slice(0, 15); });
-      var ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true, dateNF: 'dd/mm/yyyy' });
-      ws['!merges'] = merges;
-      ws['!cols'] = [36, 12, 11, 9, 22, 8, 11, 9, 22, 8, 10, 7, 12, 12, 12, 50].map(function (w) { return { wch: w }; });
-      XLSX.utils.book_append_sheet(wb, ws, ('PEAGES ' + (p.q === 1 ? 'PREMIERE' : 'DEUXIEME') + ' QUINZAINE ' + nomM).slice(0, 31));
+      // total de la quinzaine (somme des lignes « Total badge »)
+      var tq = ws.addRow(['TOTAL ' + (p.q === 1 ? '1re' : '2e') + ' QUINZAINE ' + nomM, null, null, null, null, null, null, null, null, null, null, null,
+        { formula: totaux.map(function (n) { return 'M' + n; }).join('+'), result: Math.round(p.camions.reduce(function (x, c) { return x + c.ht; }, 0) * 100) / 100 },
+        { formula: totaux.map(function (n) { return 'N' + n; }).join('+'), result: Math.round(p.camions.reduce(function (x, c) { return x + c.ttc; }, 0) * 100) / 100 }, null]);
+      tq.eachCell({ includeEmpty: true }, function (cell, n) { if (n > 15) return; cell.fill = fond(NAVY); cell.font = { bold: true, color: { argb: BLANC }, size: 11 }; });
+      tq.getCell(13).numFmt = EUR; tq.getCell(14).numFmt = EUR; tq.height = 22;
     });
-    if (!wb.SheetNames.length) throw new Error('Aucun péage ' + (soc ? soc + ' ' : '') + 'pour ce mois');
+    // 3e onglet : total des péages par contrat (1re + 2e quinzaine)
+    var wc = wb.addWorksheet('PÉAGES & CONTRATS');
+    wc.columns = [{ width: 18 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 16 }];
+    wc.mergeCells('A1:F1');
+    var titre = wc.getCell('A1'); titre.value = 'PÉAGES & CONTRATS — ' + nomM + ' ' + M.slice(0, 4) + (soc ? ' — ' + soc.toUpperCase() : '');
+    titre.font = { bold: true, size: 14, color: { argb: BLANC } }; titre.fill = fond(NAVY); titre.alignment = { horizontal: 'center', vertical: 'middle' }; wc.getRow(1).height = 28;
+    wc.addRow([]);
+    var he = wc.addRow(['CONTRAT', '1re QUINZAINE HT', '2e QUINZAINE HT', 'TOTAL HT', 'TOTAL TTC', 'REMBOURSÉ']); he.height = 22;
+    he.eachCell(function (c) { c.font = { bold: true, color: { argb: BLANC } }; c.fill = fond('FF2F5597'); c.alignment = { horizontal: 'center', vertical: 'middle' }; c.border = { top: fin, left: fin, bottom: fin, right: fin }; });
+    var premier = wc.rowCount + 1;
+    ordreC.sort(function (a, b) { return (parContrat[b].rembourse - parContrat[a].rembourse) || a.localeCompare(b); }).forEach(function (k, i) {
+      var x = parContrat[k], n = wc.rowCount + 1;
+      var r2 = function (v) { return Math.round(v * 100) / 100; };
+      var r = wc.addRow([/^\d+$/.test(k) ? +k : k, x.rembourse ? r2(x.q1) : null, x.rembourse ? r2(x.q2) : null, { formula: 'B' + n + '+C' + n, result: x.rembourse ? r2(x.q1 + x.q2) : 0 }, x.rembourse ? r2(x.ttc) : null,
+        x.rembourse ? 'OUI' : (k === 'À COMPLÉTER' ? 'contrat à compléter' : 'NON')]);
+      r.eachCell({ includeEmpty: true }, function (c, col) {
+        c.border = { top: fin, left: fin, bottom: fin, right: fin }; c.fill = fond(k === 'À COMPLÉTER' ? ROUGE : i % 2 ? BLEU : BLANC);
+        if (col >= 2 && col <= 5) c.numFmt = EUR; if (col === 1 || col === 6) c.alignment = { horizontal: 'center' };
+        if (!x.rembourse) c.font = { color: { argb: GRIS }, italic: true };
+      });
+      r.getCell(1).font = { bold: true };
+    });
+    var der = wc.rowCount;
+    var tt = wc.addRow(['TOTAL', { formula: 'SUM(B' + premier + ':B' + der + ')' }, { formula: 'SUM(C' + premier + ':C' + der + ')' }, { formula: 'SUM(D' + premier + ':D' + der + ')' }, { formula: 'SUM(E' + premier + ':E' + der + ')' }, '']);
+    tt.eachCell({ includeEmpty: true }, function (c, col) { c.fill = fond(JAUNE); c.font = { bold: true, size: 12 }; c.border = { top: epais, bottom: epais, left: fin, right: fin }; if (col >= 2 && col <= 5) c.numFmt = EUR; });
+    tt.getCell(1).alignment = { horizontal: 'center' };
+    wc.addRow([]);
+    wc.addRow(['Contrats 7531… : péages remboursés. Contrats 7539… : non remboursés (montants non comptés).']).getCell(1).font = { italic: true, size: 9, color: { argb: GRIS } };
     var nomF = 'PEAGES ' + nomM + ' ' + M.slice(0, 4) + (soc ? ' ' + soc.toUpperCase() : '') + '.xlsx';
-    XLSX.writeFile(wb, nomF);
-    msg.className = 'msg ok'; msg.textContent = '✓ ' + nomF + ' téléchargé (dossier Téléchargements)' + (planPeages.retires.length ? ' · retirés (vos consignes) : ' + planPeages.retires.join(', ') : '');
+    return wb.xlsx.writeBuffer().then(function (buf) {
+      var a = document.createElement('a'), url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      a.href = url; a.download = nomF; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 2000);
+      msg.className = 'msg ok'; msg.textContent = '✓ ' + nomF + ' téléchargé (dossier Téléchargements)' + (planPeages.retires.length ? ' · retirés (vos consignes) : ' + planPeages.retires.join(', ') : '');
+    });
   }).catch(function (e) {
     msg.className = 'msg err'; msg.textContent = '⚠ ' + e.message;
     ouvrirFenetre('Fichier ' + (soc || '') + ' non créé', '<p class="msg err">⚠ ' + txt(e.message) + '</p>' +
