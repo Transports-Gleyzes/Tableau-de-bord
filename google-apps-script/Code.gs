@@ -120,6 +120,8 @@ function onOpen() {
     .addSeparator()
     .addItem('Planning Carburant : recalculer les onglets CA', 'reparerCAPlanningManuel')
     .addItem('Créer les plannings de l\'année prochaine', 'creerPlanningsAnneeSuivanteManuel')
+    .addItem('Planning Inter : mois suivants identiques au modèle (copie d\'essai)', 'alignerPlanningInterEssai')
+    .addItem('Planning Inter : mois suivants identiques au modèle (vrai fichier)', 'alignerPlanningInterReel')
     .addToUi();
 }
 
@@ -2775,6 +2777,139 @@ function creerPlanningsAnneeSuivante_(ss, anCible) {
     res.push(src[1] + ' ' + anCible + ' créé : « ' + nom + ' » (' + vides + ' onglets mensuels vidés)\n' + ext.getUrl());
   });
   return res;
+}
+
+// ---------------------------------------------------------------------------
+// Planning Inter : rendre les mois suivants identiques au mois modèle (colonnes, formules, mise en forme)
+// ---------------------------------------------------------------------------
+var MOIS_NOMS_PLEINS_ = ['JANVIER', 'FEVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN', 'JUILLET', 'AOUT', 'SEPTEMBRE', 'OCTOBRE', 'NOVEMBRE', 'DECEMBRE'];
+function cleColonne_(h) { return cle_(h).replace(/[^A-Z0-9]/g, ''); }
+
+/**
+ * Plan de recopie (sans appel Google, testable) : pour chaque colonne du modèle, la colonne de l'ancien onglet qui contient
+ * la même donnée (même titre), et les colonnes de l'ancien onglet absentes du modèle (gardées à la suite, rien n'est perdu).
+ */
+function planAlignement_(enteteModele, enteteAncien) {
+  var idx = {}; enteteAncien.forEach(function (h, i) { var k = cleColonne_(h); if (k && idx[k] === undefined) idx[k] = i; });
+  var pris = {}, colonnes = enteteModele.map(function (h) { var k = cleColonne_(h), i = k ? idx[k] : undefined; if (i !== undefined) pris[i] = 1; return i === undefined ? -1 : i; });
+  var extras = [];
+  enteteAncien.forEach(function (h, i) { if (!pris[i] && String(h || '').trim() && !/^COLUMN \d+$/.test(cle_(h))) extras.push(i); });
+  return { colonnes: colonnes, extras: extras };
+}
+
+/** Remplace dans une formule du modèle les plages du mois précédent du modèle par celles du mois précédent de la cible. */
+function plagesMoisPrecedent_(formule, nomPrecModele, nomPrecCible, lettreLivraison, lettreKm, derniere) {
+  var res = [], re = new RegExp("'" + nomPrecModele.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "'!\\$[A-Z]+\\$\\d+:\\$[A-Z]+\\$\\d+", 'g'), m, n = 0;
+  while ((m = re.exec(formule))) {
+    var lettre = n === 0 ? lettreLivraison : lettreKm; n++;
+    res.push([m[0], "'" + nomPrecCible + "'!$" + lettre + '$2:$' + lettre + '$' + derniere]);
+  }
+  return res;
+}
+
+function nomMoisOnglet_(ext, mois, an) {
+  var s = ext.getSheets().filter(function (sh) { var m = moisOnglet_(sh.getName()); return m && m.mois === mois && (!m.an || m.an === an); })[0];
+  return s ? s.getName() : MOIS_NOMS_PLEINS_[mois - 1] + ' ' + an;
+}
+
+/** Aligne sur l'onglet modèle (ex. OCTOBRE 2026) tous les onglets mensuels qui le suivent dans l'année, et leurs onglets CA. */
+function alignerMoisSurModele_(ext, nomModele) {
+  var modele = ext.getSheetByName(nomModele); if (!modele) throw new Error('Onglet « ' + nomModele + ' » introuvable');
+  var mm = moisOnglet_(nomModele), an = mm.an || new Date().getFullYear();
+  var lc = modele.getLastColumn(), hM = modele.getRange(1, 1, 1, lc).getValues()[0];
+  while (lc > 1 && !String(hM[lc - 1]).trim()) lc--;
+  hM = hM.slice(0, lc);
+  var colOf = function (re) { for (var i = 0; i < hM.length; i++) if (re.test(cle_(hM[i]))) return i; return -1; };
+  var cLiv = colOf(/^LIVRAISON/), cKm = colOf(/^KM$/);
+  // formules du modèle : ligne 2 pour les colonnes calculées ; KM : première ligne qui a une formule
+  var nbM = Math.max(2, modele.getLastRow()), fM = modele.getRange(2, 1, Math.min(nbM, 400), lc).getFormulas();
+  var colsFormule = [], ligneKm = -1;
+  for (var c = 0; c < lc; c++) {
+    if (c === cKm) { for (var r = 0; r < fM.length; r++) if (fM[r][c]) { ligneKm = r + 2; break; } continue; }
+    if (fM[0][c]) colsFormule.push(c);
+  }
+  var finFormules = 2; for (r = fM.length - 1; r >= 0; r--) if (fM[r].some(String)) { finFormules = r + 2; break; }
+  var precModele = nomMoisOnglet_(ext, mm.mois === 1 ? 12 : mm.mois - 1, mm.mois === 1 ? an - 1 : an);
+  var formuleKm = ligneKm > 0 ? fM[ligneKm - 2][cKm] : '';
+  var caModele = ext.getSheetByName('CA ' + nomModele), faits = [];
+  ext.getSheets().forEach(function (T) {
+    var mt = moisOnglet_(T.getName());
+    if (!mt || (mt.an && mt.an !== an) || mt.mois <= mm.mois || T.getSheetId() === modele.getSheetId()) return;
+    var lr = Math.max(1, T.getLastRow()), lcT = Math.max(1, T.getLastColumn());
+    var anc = T.getRange(1, 1, lr, lcT).getValues(), ancF = T.getRange(1, 1, lr, lcT).getFormulas(), hA = anc[0], plan = planAlignement_(hM, hA);
+    var derniere = 1; for (r = anc.length - 1; r >= 1; r--) if (String(anc[r][0]).trim() || String(anc[r][2]).trim()) { derniere = r + 1; break; }
+    var nData = derniere - 1, nF = Math.max(finFormules - 1, nData), largeur = lc + plan.extras.length;
+    if (T.getMaxColumns() < largeur) T.insertColumnsAfter(T.getMaxColumns(), largeur - T.getMaxColumns());
+    if (T.getMaxRows() < nF + 1) T.insertRowsAfter(T.getMaxRows(), nF + 1 - T.getMaxRows());
+    // 1. tout effacer puis reprendre la mise en forme du modèle (couleurs, retours à la ligne, largeurs, listes, mises en forme conditionnelles)
+    T.getRange(1, 1, T.getMaxRows(), T.getMaxColumns()).clear(); T.setConditionalFormatRules([]);
+    var zone = modele.getRange(1, 1, Math.min(modele.getMaxRows(), T.getMaxRows()), lc);
+    zone.copyTo(T.getRange(1, 1), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+    zone.copyTo(T.getRange(1, 1), SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+    zone.copyTo(T.getRange(1, 1), SpreadsheetApp.CopyPasteType.PASTE_CONDITIONAL_FORMATTING, false);
+    zone.copyTo(T.getRange(1, 1), SpreadsheetApp.CopyPasteType.PASTE_COLUMN_WIDTHS, false);
+    T.setRowHeight(1, modele.getRowHeight(1));
+    T.setFrozenRows(modele.getFrozenRows()); T.setFrozenColumns(modele.getFrozenColumns());
+    // 2. titres
+    T.getRange(1, 1, 1, lc).setValues([hM]);
+    if (plan.extras.length) T.getRange(1, lc + 1, 1, plan.extras.length).setValues([plan.extras.map(function (i) { return hA[i]; })]);
+    // 3. formules du modèle recopiées sur toutes les lignes (Google ajuste les numéros de ligne)
+    colsFormule.forEach(function (c) { modele.getRange(2, c + 1).copyTo(T.getRange(2, c + 1, nF, 1)); });
+    if (ligneKm > 0) modele.getRange(ligneKm, cKm + 1).copyTo(T.getRange(2, cKm + 1, nF, 1));
+    // 4. données saisies, colonne par colonne (valeurs, jamais d'anciennes formules décalées)
+    if (nData > 0) {
+      plan.colonnes.forEach(function (i, c) {
+        if (i < 0 || colsFormule.indexOf(c) >= 0) return;
+        if (c === cKm && ligneKm > 0) {   // KM : le chiffre tapé est gardé, sinon la formule du modèle
+          for (var r = 1; r <= nData; r++) { var v = anc[r][i]; if (!ancF[r][i] && v !== '' && v !== null && !isNaN(Number(v))) T.getRange(r + 1, c + 1).setValue(Number(v)); }
+          return;
+        }
+        T.getRange(2, c + 1, nData, 1).setValues(anc.slice(1, derniere).map(function (l) { return [l[i]]; }));
+      });
+      plan.extras.forEach(function (i, k) { T.getRange(2, lc + k + 1, nData, 1).setValues(anc.slice(1, derniere).map(function (l) { return [l[i]]; })); });
+    }
+    // 5. les formules qui vont chercher le mois précédent (KM d'une même livraison) pointent vers le mois précédent de cet onglet
+    var precCible = nomMoisOnglet_(ext, mt.mois - 1, an);
+    if (formuleKm && cLiv >= 0) plagesMoisPrecedent_(formuleKm, precModele, precCible, colonneLettre_(cLiv + 1), colonneLettre_(cKm + 1), 250).forEach(function (p) {
+      T.createTextFinder(p[0]).matchFormulaText(true).replaceAllWith(p[1]);
+    });
+    // 6. onglet « CA <MOIS> » : copie de l'onglet CA du modèle, mois remplacé
+    var ca = ext.getSheetByName('CA ' + T.getName());
+    if (caModele && ca) {
+      ca.getRange(1, 1, ca.getMaxRows(), ca.getMaxColumns()).clear(); ca.setConditionalFormatRules([]);
+      var zc = caModele.getRange(1, 1, Math.min(caModele.getMaxRows(), ca.getMaxRows()), Math.min(caModele.getMaxColumns(), ca.getMaxColumns()));
+      zc.copyTo(ca.getRange(1, 1)); zc.copyTo(ca.getRange(1, 1), SpreadsheetApp.CopyPasteType.PASTE_COLUMN_WIDTHS, false);
+      ca.createTextFinder("'" + nomModele + "'!").matchFormulaText(true).replaceAllWith("'" + T.getName() + "'!");
+      var v = ca.getDataRange().getValues(), f = ca.getDataRange().getFormulas();
+      v.forEach(function (l, r) { l.forEach(function (x, c) { if (!f[r][c] && typeof x === 'string' && x.indexOf(nomModele) >= 0) ca.getRange(r + 1, c + 1).setValue(x.split(nomModele).join(T.getName())); }); });
+    }
+    faits.push(T.getName() + ' (' + nData + ' lignes reprises' + (plan.extras.length ? ', colonnes en plus gardées à droite : ' + plan.extras.map(function (i) { return hA[i]; }).join(', ') : '') + ')');
+  });
+  return faits;
+}
+
+function alignerPlanningInter_(essai) {
+  var ss = classeur_(), ui = SpreadsheetApp.getUi(), source = classeursPlanning_(ss, 'ID_PLANNING_INTER').slice(-1)[0];
+  if (!source) { ui.alert('PARAMETRES > ID_PLANNING_INTER est vide'); return; }
+  var defaut = (source.getSheets().map(function (s) { return s.getName(); }).filter(function (n) { return /^OCTOBRE/i.test(cle_(n)); })[0]) || '';
+  var rep = ui.prompt('Mois modèle', 'Onglet à prendre comme modèle (laisser vide pour « ' + defaut + ' »). Les mois qui le suivent deviendront identiques ' +
+    '(colonnes, formules, mise en forme), sans perdre les saisies.' + (essai ? '\n\nTravail sur une COPIE D\'ESSAI : votre planning n\'est pas modifié.' : '\n\n⚠ Votre VRAI planning sera modifié.'), ui.ButtonSet.OK_CANCEL);
+  if (rep.getSelectedButton() !== ui.Button.OK) return;
+  var nomModele = rep.getResponseText().trim() || defaut, ext = source;
+  if (essai) {
+    var f = DriveApp.getFileById(source.getId()), d = f.getParents(), nom = source.getName() + ' – ESSAI ' + Utilities.formatDate(new Date(), FUSEAU, 'dd-MM HH:mm');
+    var copie = d.hasNext() ? f.makeCopy(nom, d.next()) : f.makeCopy(nom);
+    ext = SpreadsheetApp.openById(copie.getId());
+  }
+  var faits = alignerMoisSurModele_(ext, nomModele);
+  ui.alert((essai ? 'Copie d\'essai prête : ' + ext.getName() + '\n' + ext.getUrl() + '\n\n' : 'Planning modifié.\n\n') +
+    (faits.length ? 'Onglets mis comme « ' + nomModele + ' » :\n' + faits.join('\n') : 'Aucun mois après « ' + nomModele + ' » dans ce fichier.'));
+}
+function alignerPlanningInterEssai() { alignerPlanningInter_(true); }
+function alignerPlanningInterReel() {
+  var ui = SpreadsheetApp.getUi();
+  if (ui.alert('Modifier le vrai planning Inter ?', 'À faire seulement après avoir vérifié la copie d\'essai.', ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
+  alignerPlanningInter_(false);
 }
 
 function creerPlanningsAnneeSuivanteManuel() {
