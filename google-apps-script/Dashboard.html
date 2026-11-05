@@ -205,6 +205,9 @@ dialog#fenetre::backdrop { background: rgba(15, 30, 60, .55); }
 .consignes-peages textarea { width: 100%; margin: 6px 0; box-sizing: border-box; }
 #listeConsignes { margin: 8px 0 4px; padding-left: 0; list-style: none; }
 #listeConsignes li { padding: 4px 0; border-top: 1px dashed var(--border); }
+details.groupe-prefac { border: 1px solid var(--border); border-left: 4px solid var(--accent, #2f6fdb); border-radius: 10px; margin-top: 10px; background: var(--surface); }
+details.groupe-prefac > summary { padding: 10px 12px; cursor: pointer; line-height: 1.9; font-size: 15px; }
+.groupe-corps { padding: 0 12px 12px; }
 details.badge-peage { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; margin-top: 8px; background: var(--surface); }
 details.badge-peage.ecarte { background: var(--surface-2); }
 details.badge-peage > summary { cursor: pointer; line-height: 1.9; }
@@ -217,7 +220,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v21/10-péages8</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v05/11-préfacs1</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -1683,7 +1686,8 @@ function traiterFichier(fichier, id) {
       etatDepot(el, 'Préfacture Intermarché ' + txt(pf.numero) + ' : enregistrement…');
       return appelServeur('deposerPrefac', pf).then(function (x) {
         etatDepot(el, '✓ Préfac ' + txt(x.numero) + ' · contrat ' + txt(x.contrat) + ' (' + txt(x.societe) + ') · ' + txt(nomMois(x.mois)) + ' · ' + x.tournees + ' tournées · ' +
-          (x.totalHT !== null ? fmtEur2.format(x.totalHT) + ' HT' : ''), 'ok');
+          (x.totalHT !== null ? fmtEur2.format(x.totalHT) + ' HT' : '') + ' <span class="resultat-prefac note">— contrôle en cours…</span>', 'ok');
+        prefacsDeposees.push({ el: el, mois: x.mois, societe: x.societe, contrat: String(x.contrat) });
         return null;
       });
     }
@@ -2499,11 +2503,13 @@ function analyserPrefac(lignes) {
   if (!pf.numero || !pf.contrat) throw new Error('Préfacture illisible (numéro ou contrat introuvable)');
   return pf;
 }
-function rendrePrefacs(M) {
-  var liste = ((D.PREFACS || {})[M] || []).filter(function (x) { return garderSociete(x.societe); });
-  var avec = liste.filter(function (x) { return !x.sansPrefac; }), sans = liste.filter(function (x) { return x.sansPrefac; });
-  var z = document.getElementById('prefacsListe');
-  if (!liste.length) { z.innerHTML = '<div class="vide">Aucune préfac déposée pour ' + txt(nomMois(M)) + '.</div>'; return; }
+var prefacsDeposees = [];   // préfacs déposées à l'instant : leur résultat est écrit sur la ligne du dépôt
+/** Préfacs par mois et par société (blocs repliés avec leur résumé), contrats en détail à l'intérieur. */
+function rendrePrefacs() {
+  var z = document.getElementById('prefacsListe'), P = D.PREFACS || {};
+  var moisL = Object.keys(P).sort().reverse().slice(0, 4);
+  if (!moisL.length) { z.innerHTML = '<div class="vide">Aucune préfac déposée.</div>'; prefacsDeposees = []; return; }
+  var ouvrir = {}; prefacsDeposees.forEach(function (d) { ouvrir[d.mois + '|' + d.societe] = 1; });
   var chip = function (ou) {
     return ou.split(' · ').map(function (o) {
       var m = o.match(/^(Planning|Préfac)\s*:\s*(.*)$/);
@@ -2519,23 +2525,59 @@ function rendrePrefacs(M) {
       '</td><td class="pb ' + t.niveau + '">' + (t.niveau === 'ok' ? '✓' : (t.niveau === 'urgent' ? '⚠ ' : '') + txt(t.probleme)) + '</td><td>' + (t.ou ? chip(t.ou) : '') + '</td></tr>';
   };
   var entete = '<thead><tr><th>Date</th><th>Tournée</th><th>Chauffeur</th><th>Livraisons</th><th class="n">Km préfac</th><th class="n">Km planning</th><th>Problème</th><th>À corriger</th></tr></thead>';
-  z.innerHTML = avec.map(function (x, i) {
+  var etat = function (x) {
     var pb = x.tours.filter(function (t) { return t.niveau !== 'ok'; }), urg = x.notes.filter(function (n) { return n.niveau === 'urgent'; });
-    var resume = !pb.length && !urg.length ? '<span class="badge ok">✓ Tout correspond</span>' :
-      [x.corrigerPlanning ? '<span class="ou-planning">' + x.corrigerPlanning + ' à corriger sur le planning</span>' : '',
-       x.reclamer ? '<span class="ou-prefac">' + x.reclamer + ' à réclamer à Intermarché</span>' : '',
-       urg.length ? '<span class="ou-prefac">péages à vérifier</span>' : ''].filter(String).join(' ');
-    return '<details class="prefac"' + (pb.length || urg.length ? ' open' : '') + '><summary><b>Contrat ' + txt(x.contrat) + '</b> · ' + txt(x.societe) + ' · préfac ' + txt(x.prefacs) +
-      ' · ' + x.nbPrefac + ' tournées · ' + fmtEur2.format(x.total) + ' HT' + (x.indexation ? ' (dont indexation ' + fmtEur2.format(x.indexation.montant) + ')' : '') + ' ' + resume + '</summary>' +
-      (x.notes.length ? '<div class="notes-prefac">' + x.notes.map(function (n) { return '<div>' + (n.niveau === 'ok' ? '✓' : n.niveau === 'info' ? 'ℹ️' : badge(n.niveau, '')) + ' ' + txt(n.texte) + '</div>'; }).join('') + '</div>' : '') +
-      (pb.length ? '<div class="tableau"><table class="serre">' + entete + '<tbody>' + pb.map(ligneTour).join('') + '</tbody></table></div>' : '') +
-      '<button class="petit" data-tout="' + i + '">Voir les ' + x.tours.length + ' tournées</button><div class="tableau" id="toutes-' + i + '" hidden><table class="serre">' + entete + '<tbody>' +
-      x.tours.map(ligneTour).join('') + '</tbody></table></div></details>';
-  }).join('') + (sans.length ? '<p class="note" style="margin-top:10px">Pas encore de préfac pour : ' + sans.map(function (x) {
-    return '<b>' + txt(x.contrat) + '</b> (' + txt(x.societe) + ', ' + x.nbPlanning + ' tournées au planning)'; }).join(', ') + '.</p>' : '');
+    return { pb: pb, urg: urg, ok: !pb.length && !urg.length, texte: !pb.length && !urg.length ? '✓ Tout correspond' :
+      [x.corrigerPlanning ? x.corrigerPlanning + ' à corriger sur le planning' : '', x.reclamer ? x.reclamer + ' à réclamer à Intermarché' : '', urg.length ? 'péages à vérifier' : ''].filter(String).join(', ') };
+  };
+  var html = '', n = 0;
+  moisL.forEach(function (m, im) {
+    ['Gleyzes', 'LPB'].forEach(function (soc) {
+      if (!garderSociete(soc)) return;
+      var tout = (P[m] || []).filter(function (x) { return x.societe === soc; });
+      var avec = tout.filter(function (x) { return !x.sansPrefac; }), sans = tout.filter(function (x) { return x.sansPrefac; });
+      if (!tout.length) return;
+      var aVoir = avec.filter(function (x) { return !etat(x).ok; }).length, total = avec.reduce(function (t, x) { return t + (x.total || 0); }, 0);
+      var resume = !avec.length ? '<span class="note">aucune préfac déposée</span>' : aVoir ? '<span class="ou-prefac">⚠ ' + aVoir + ' contrat(s) à vérifier</span>' : '<span class="badge ok">✓ Tout correspond</span>';
+      var cle = m + '|' + soc, ouvert = ouvrir[cle] || (!prefacsDeposees.length && im === 0 && aVoir);
+      html += '<details class="groupe-prefac" id="gp-' + m + '-' + soc + '"' + (ouvert ? ' open' : '') + '><summary><b>' + txt(nomMois(m)) + ' · ' + soc.toUpperCase() + '</b> · ' +
+        avec.length + ' préfac(s) · ' + avec.reduce(function (t, x) { return t + x.nbPrefac; }, 0) + ' tournées · ' + fmtEur2.format(total) + ' HT ' + resume +
+        (sans.length ? ' <span class="note">· sans préfac : ' + sans.map(function (x) { return txt(x.contrat); }).join(', ') + '</span>' : '') + '</summary><div class="groupe-corps">' +
+        avec.map(function (x) {
+          var e = etat(x), i = n++;
+          return '<details class="prefac" id="pf-' + m + '-' + soc + '-' + txt(x.contrat) + '"' + (e.ok ? '' : ' open') + '><summary><b>Contrat ' + txt(x.contrat) + '</b> · préfac ' + txt(x.prefacs) +
+            ' · ' + x.nbPrefac + ' tournées · ' + fmtEur2.format(x.total) + ' HT' + (x.indexation ? ' (dont indexation ' + fmtEur2.format(x.indexation.montant) + ')' : '') + ' ' +
+            (e.ok ? '<span class="badge ok">✓ Tout correspond</span>' : [x.corrigerPlanning ? '<span class="ou-planning">' + x.corrigerPlanning + ' à corriger sur le planning</span>' : '',
+              x.reclamer ? '<span class="ou-prefac">' + x.reclamer + ' à réclamer à Intermarché</span>' : '', e.urg.length ? '<span class="ou-prefac">péages à vérifier</span>' : ''].filter(String).join(' ')) + '</summary>' +
+            (x.notes.length ? '<div class="notes-prefac">' + x.notes.map(function (nt) { return '<div>' + (nt.niveau === 'ok' ? '✓' : nt.niveau === 'info' ? 'ℹ️' : badge(nt.niveau, '')) + ' ' + txt(nt.texte) + '</div>'; }).join('') + '</div>' : '') +
+            (e.pb.length ? '<div class="tableau"><table class="serre">' + entete + '<tbody>' + e.pb.map(ligneTour).join('') + '</tbody></table></div>' : '') +
+            '<button class="petit" data-tout="' + i + '">Voir les ' + x.tours.length + ' tournées</button><div class="tableau" id="toutes-' + i + '" hidden><table class="serre">' + entete + '<tbody>' +
+            x.tours.map(ligneTour).join('') + '</tbody></table></div></details>';
+        }).join('') + (sans.length ? '<p class="note">Pas encore de préfac pour : ' + sans.map(function (x) { return '<b>' + txt(x.contrat) + '</b> (' + x.nbPlanning + ' tournées au planning)'; }).join(', ') + '.</p>' : '') +
+        '</div></details>';
+    });
+  });
+  z.innerHTML = html || '<div class="vide">Aucune préfac pour cette société.</div>';
   z.querySelectorAll('[data-tout]').forEach(function (b) {
     b.onclick = function () { var t = document.getElementById('toutes-' + b.dataset.tout); t.hidden = !t.hidden; b.textContent = t.hidden ? b.textContent.replace('Masquer', 'Voir') : b.textContent.replace('Voir', 'Masquer'); };
   });
+  // résultat de chaque préfac qu'on vient de déposer, écrit sur sa ligne de dépôt avec un bouton « Voir »
+  prefacsDeposees.forEach(function (d) {
+    var x = ((P[d.mois] || []).filter(function (y) { return y.societe === d.societe && String(y.contrat) === d.contrat && !y.sansPrefac; }))[0], span = d.el.querySelector('.resultat-prefac');
+    if (!span) return;
+    if (!x) { span.textContent = ''; return; }
+    var e = etat(x);
+    span.className = 'resultat-prefac ' + (e.ok ? 'ok' : 'neg');
+    span.innerHTML = ' → <b>' + (e.ok ? '✓ Tout correspond' : '⚠ ' + txt(e.texte)) + '</b> <button class="petit" data-aller="pf-' + d.mois + '-' + d.societe + '-' + txt(d.contrat) + '">Voir le détail</button>';
+  });
+  document.querySelectorAll('[data-aller]').forEach(function (b) {
+    b.onclick = function () {
+      var c = document.getElementById(b.dataset.aller); if (!c) return;
+      var g = c.closest('.groupe-prefac'); if (g) g.open = true; c.open = true; c.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+  });
+  if (prefacsDeposees.length) { var g0 = document.getElementById('gp-' + prefacsDeposees[0].mois + '-' + prefacsDeposees[0].societe); if (g0) g0.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  prefacsDeposees = [];
 }
 /**
  * Indexation par mois : factures déposées (lignes INDEXATION) ; pour Intermarché, la préfac fait foi quand elle est déposée
@@ -2570,7 +2612,7 @@ function rendreFacturation() {
   sel.innerHTML = liste.map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
   if (liste.indexOf(ancien) >= 0) sel.value = ancien;
   var M = sel.value, ctrl = (D.CONTROLE || {})[M] || { carburant: [], inter: [], indexation: [] };
-  rendrePrefacs(M);
+  rendrePrefacs();
   var fM = fact.filter(function (l) { return String(l.Mois).slice(0, 7) === M; });
   var an = (M || aujourdhui()).slice(0, 4);
   var htM = fM.filter(function (l) { return l.Nature !== 'INDEXATION'; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0);
