@@ -76,6 +76,8 @@ var PARAMETRES_DEFAUT = [
   ['ID_CLASSEUR_ECHEANCES', '', 'Lien du Google Sheet « Échéances flotte » : échéances, congés et pense-bête y sont lus directement'],
   ['ID_PLANNING_INTER', '', 'Lien du Google Sheet « Planning Inter (ITM) » : CA et tournées lus directement'],
   ['ID_PLANNING_CARBURANT', '', 'Lien du Google Sheet « Planning Carburant » : CA et livraisons lus directement'],
+  ['ID_PLANNING_INTER_2027', '', 'Lien du Google Sheet « Planning Inter (ITM) 2027 » (lu en plus de ID_PLANNING_INTER)'],
+  ['ID_PLANNING_CARBURANT_2027', '', 'Lien du Google Sheet « Planning Carburant 2027 » (lu en plus de ID_PLANNING_CARBURANT)'],
   ['ID_LITRAGES', '', 'Lien du Google Sheet « Litrages véhicules » : consommation par semaine lue directement'],
   ['ID_LITRAGES_2027', '', 'Lien du Google Sheet « Litrages véhicules 2027 » (lu en plus de ID_LITRAGES)'],
   ['SEUIL_HAUSSE_CONSO_PCT', 15, 'Alerte si la consommation récente dépasse de ce % la moyenne habituelle du camion'],
