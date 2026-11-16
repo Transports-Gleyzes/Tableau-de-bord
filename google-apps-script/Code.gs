@@ -77,6 +77,7 @@ var PARAMETRES_DEFAUT = [
   ['ID_PLANNING_INTER', '', 'Lien du Google Sheet « Planning Inter (ITM) » : CA et tournées lus directement'],
   ['ID_PLANNING_CARBURANT', '', 'Lien du Google Sheet « Planning Carburant » : CA et livraisons lus directement'],
   ['ID_LITRAGES', '', 'Lien du Google Sheet « Litrages véhicules » : consommation par semaine lue directement'],
+  ['ID_LITRAGES_2027', '', 'Lien du Google Sheet « Litrages véhicules 2027 » (lu en plus de ID_LITRAGES)'],
   ['SEUIL_HAUSSE_CONSO_PCT', 15, 'Alerte si la consommation récente dépasse de ce % la moyenne habituelle du camion'],
   ['JOUR_CONTROLE_FACTURES', 7, 'À partir de ce jour du mois, une livraison du mois précédent sans facture déposée est signalée'],
   ['JOURS_MOIS_PRECEDENT', 10, 'Pendant ces premiers jours du mois, les alertes des plannings portent aussi sur le mois précédent (ensuite : mois en cours seulement)'],
@@ -3257,8 +3258,10 @@ function alertesPlannings_(lignes, jour0, depuis) {
  */
 function litrages_(ss) {
   if (CACHE_LITRAGES_) return CACHE_LITRAGES_;
-  var ext = classeurParam_(ss, 'ID_LITRAGES'), res = [];
-  if (!ext) return (CACHE_LITRAGES_ = res);
+  // un fichier par année : ID_LITRAGES (2026), puis ID_LITRAGES_2027, _2028… (lus ensemble)
+  var fichiers = classeursPlanning_(ss, 'ID_LITRAGES'), res = [];
+  if (!fichiers.length) return (CACHE_LITRAGES_ = res);
+  fichiers.forEach(function (ext) {
   ext.getSheets().forEach(function (sh) {
     var immat = plaque_(sh.getName());
     if (!/^[A-Z]{2}\d{3}[A-Z]{2}$/.test(immat) || sh.getLastRow() < 3) return;
@@ -3290,6 +3293,7 @@ function litrages_(ss) {
         }
       }
     }
+  });
   });
   res.sort(function (a, b) { return a.immat < b.immat ? -1 : a.immat > b.immat ? 1 : a.fin - b.fin; });
   return (CACHE_LITRAGES_ = res);
