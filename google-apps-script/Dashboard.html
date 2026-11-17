@@ -56,10 +56,20 @@ section[hidden] { display: none; }
 .barre label { color: var(--text-2); font-size: 13px; }
 .tuiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
 .tuiles-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+/* une couleur par société, partout : Gleyzes bleu, LPB vert */
+:root { --soc-gleyzes: #2b6cb0; --soc-lpb: #2f855a; }
+.tuiles .tuile.soc-gleyzes::before { background: var(--soc-gleyzes); }
+.tuiles .tuile.soc-lpb::before { background: var(--soc-lpb); }
+.tuile.soc-gleyzes .lib { color: var(--soc-gleyzes); }
+.tuile.soc-lpb .lib { color: var(--soc-lpb); }
+.grande-case td.soc { border-left: 5px solid; font-weight: 700; letter-spacing: .03em; }
+.grande-case td.soc-gleyzes { border-left-color: var(--soc-gleyzes); color: var(--soc-gleyzes); }
+.grande-case td.soc-lpb { border-left-color: var(--soc-lpb); color: var(--soc-lpb); }
+.grande-case h3 span.tot { float: right; font-weight: 600; font-size: 14px; opacity: .9; }
 .grandes-cases { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
 @media (max-width: 760px) { .grandes-cases, .tuiles-2 { grid-template-columns: 1fr !important; } }
 .grande-case { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: 0 2px 8px rgba(15, 30, 60, .06); }
-.grande-case h3 { margin: 0; padding: 12px 18px; font-size: 17px; letter-spacing: .04em; color: #fff; }
+.grande-case h3 { margin: 0; padding: 12px 18px; font-size: 17px; letter-spacing: .04em; color: #fff; background: #3b5876; }
 .grande-case table { width: 100%; border-collapse: collapse; }
 .grande-case td { padding: 11px 18px; border-top: 1px solid var(--border); font-size: 15px; }
 .grande-case td.n { text-align: right; font-variant-numeric: tabular-nums; font-size: 18px; font-weight: 600; }
@@ -94,9 +104,6 @@ td.n, th.n { text-align: right; }
 .alerte:last-child { border-bottom: 0; }
 .alerte .dom { color: var(--text-3); font-size: 12px; min-width: 70px; }
 .vide { color: var(--text-3); padding: 12px 0; }
-form.saisie { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
-form.saisie label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }
-form.saisie .actions { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; }
 .msg { font-size: 13px; }
 .msg.ok { color: var(--good-text); } .msg.err { color: var(--critical-text); }
 .tuiles.kpi { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
@@ -231,7 +238,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v05/11-préfacs1</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v17/11-refonte1</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -246,11 +253,12 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
   <button role="tab" data-onglet="salaries"><span class="ico-onglet" aria-hidden="true">👥</span>Salariés</button>
   <button role="tab" data-onglet="activite"><span class="ico-onglet" aria-hidden="true">📦</span>Activité</button>
   <button role="tab" data-onglet="conso"><span class="ico-onglet" aria-hidden="true">⛽</span>Consommation</button>
-  <button role="tab" data-onglet="factures"><span class="ico-onglet" aria-hidden="true">📄</span>Factures</button>
   <button role="tab" data-onglet="facturation"><span class="ico-onglet" aria-hidden="true">✅</span>Contrôle factures</button>
+  <button role="tab" data-onglet="prefacs"><span class="ico-onglet" aria-hidden="true">📑</span>Préfac ITM</button>
+  <button role="tab" data-onglet="peages"><span class="ico-onglet" aria-hidden="true">🛣️</span>Péages ITM</button>
+  <button role="tab" data-onglet="scaped"><span class="ico-onglet" aria-hidden="true">🛢️</span>SCAPED</button>
   <button role="tab" data-onglet="compta"><span class="ico-onglet" aria-hidden="true">📊</span>Comptabilité</button>
   <button role="tab" data-onglet="alertes"><span class="ico-onglet" aria-hidden="true">🔔</span>Alertes <span class="pastille" id="nbAlertes" hidden></span></button>
-  <button role="tab" data-onglet="saisie"><span class="ico-onglet" aria-hidden="true">✏️</span>Saisie rapide</button>
 </nav>
 <main>
   <div id="chargement">Chargement des données…</div>
@@ -371,42 +379,63 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
       <p class="note" id="noteConsoS"></p>
       <div class="tableau"><table id="tabConsoS"></table></div>
     </div>
-    <div class="grille">
-      <div class="carte">
-        <h2>Évolution semaine par semaine</h2>
-        <div class="barre"><label for="choixCamion">Camion</label><select id="choixCamion"></select></div>
-        <div class="legende" id="legConso"></div>
-        <div class="graph"><canvas id="gConso" aria-label="Consommation par semaine"></canvas></div>
-      </div>
-      <div class="carte">
-        <h2>Semaines ignorées</h2>
-        <p class="note">Lignes incohérentes du fichier Litrages (faute de frappe probable) : elles ne déclenchent aucune alerte</p>
-        <div class="tableau"><table id="tabDouteux"></table></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- FACTURES -->
-  <section id="factures" hidden>
-    <div class="tuiles" id="tuilesFact"></div>
-    <div class="carte">
-      <h2>Factures en attente de paiement</h2>
-      <p class="note">« Relancé » note la relance d'aujourd'hui ; « Payée » sort la facture de la liste. Nouvelle facture : onglet Saisie rapide.</p>
-      <div class="tableau"><table id="tabFact"></table></div>
-      <p class="msg" id="msgFact"></p>
-    </div>
   </section>
 
   <!-- CONTRÔLE DES FACTURES CLIENTS (PDF INFORCE) -->
   <section id="facturation" hidden>
     <div class="carte">
-      <h2>Déposer des factures (PDF INFORCE) ou des préfactures Intermarché</h2>
+      <h2>Déposer des factures (PDF INFORCE)</h2>
       <p class="note">Glissez ici un ou plusieurs PDF de factures clients. Le site les lit, les range dans Google Drive
         (dossier « Tableau de bord - Factures clients ») et les compare aux plannings. Une facture redéposée remplace l'ancienne.</p>
       <div class="depot" id="zoneDepot">📄 Glissez les PDF ici, ou cliquez pour les choisir
         <input type="file" id="choixPdf" accept="application/pdf" multiple hidden></div>
       <div id="listeDepot"></div>
     </div>
+    <div class="barre"><label for="moisFact">Mois facturé</label><select id="moisFact"></select><span class="note" id="noteFact"></span></div>
+    <div class="tuiles" id="tuilesFact2"></div>
+    <div class="carte carbu">
+      <h2><span class="pastille-act" style="background:var(--s2)"></span>Contrôle Carburant</h2>
+      <p class="note">Chaque client du planning comparé à sa facture : m³, prix au m³, livraisons (LVN). Client reconnu par le lieu de livraison et les m³.</p>
+      <div class="tableau"><table id="tabCtrlCarbu" class="serre"></table></div>
+    </div>
+    <div class="carte inter">
+      <h2><span class="pastille-act" style="background:var(--s1)"></span>Contrôle Inter (ITM)</h2>
+      <p class="note">Nombre de tournées par terme fixe (286 €, 330 €, 540 €…) au planning et sur les factures ; montants pour information (la préfacture ITM fait foi).</p>
+      <div class="tableau"><table id="tabCtrlInter"></table></div>
+    </div>
+    <div class="grille">
+      <div class="carte">
+        <h2>Fiche indexation</h2>
+        <p class="note" id="noteIndex"></p>
+        <div class="legende" id="legIndex"></div>
+        <div class="graph"><canvas id="gIndex" aria-label="Indexation par mois"></canvas></div>
+      </div>
+      <div class="carte">
+        <h2>Indexation du mois par client</h2>
+        <div class="tableau"><table id="tabIndex"></table></div>
+      </div>
+    </div>
+    <div class="carte">
+      <h2>Factures déposées pour ce mois</h2>
+      <div class="tableau"><table id="tabFactDep"></table></div>
+    </div>
+  </section>
+
+  <!-- PRÉFAC ITM -->
+  <section id="prefacs" hidden>
+    <div class="carte inter">
+      <h2><span class="pastille-act" style="background:var(--s1)"></span>Préfactures Intermarché</h2>
+      <div class="depot" id="zonePrefacs">📄 Glissez ici les préfactures Intermarché (PDF « proforma »), ou cliquez pour les choisir
+        <input type="file" id="choixPrefacs" accept="application/pdf" multiple hidden></div>
+      <div id="listePrefacs"></div>
+      <p class="note">Pour chaque contrat, les tournées de la préfac sont comparées une à une au planning Inter. Seules les tournées à corriger sont affichées,
+        avec l'endroit où agir : <span class="ou-planning">Planning</span> (votre planning est à corriger) ou <span class="ou-prefac">Préfac</span> (à réclamer à Intermarché).</p>
+      <div id="prefacsListe"></div>
+    </div>
+  </section>
+
+  <!-- PÉAGES ITM -->
+  <section id="peages" hidden>
     <div class="carte">
       <h2>Péages Intermarché</h2>
       <p class="note">Déposez les relevés de badge de chaque quinzaine (fichiers CSV « FR… »). Chaque trajet reçoit le contrat de la tournée Inter du même camion le même jour
@@ -437,6 +466,10 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
       <div id="badgesPeages"></div>
       <div id="planningPeages"></div>
     </div>
+  </section>
+
+  <!-- FACTURE SCAPED -->
+  <section id="scaped" hidden>
     <div class="carte">
       <h2>Facture SCAPED (hors INFORCE)</h2>
       <p class="note">Prépare l'onglet du mois dans le classeur des factures SCAPED, à partir du planning Carburant : une ligne par livraison (m³, LVN),
@@ -454,43 +487,6 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
         <div class="barre" style="margin-top:6px"><button id="lireAvoir" class="primaire">Repérer les avoirs</button></div>
         <div id="avoirsTrouves"></div>
       </details>
-    </div>
-    <div class="barre"><label for="moisFact">Mois facturé</label><select id="moisFact"></select><span class="note" id="noteFact"></span></div>
-    <div class="tuiles" id="tuilesFact2"></div>
-    <div class="carte inter">
-      <h2><span class="pastille-act" style="background:var(--s1)"></span>Préfactures Intermarché</h2>
-      <div class="depot" id="zonePrefacs">📄 Glissez ici les préfactures Intermarché (PDF « proforma »), ou cliquez pour les choisir
-        <input type="file" id="choixPrefacs" accept="application/pdf" multiple hidden></div>
-      <div id="listePrefacs"></div>
-      <p class="note">Pour chaque contrat, les tournées de la préfac sont comparées une à une au planning Inter. Seules les tournées à corriger sont affichées,
-        avec l'endroit où agir : <span class="ou-planning">Planning</span> (votre planning est à corriger) ou <span class="ou-prefac">Préfac</span> (à réclamer à Intermarché).</p>
-      <div id="prefacsListe"></div>
-    </div>
-    <div class="carte carbu">
-      <h2><span class="pastille-act" style="background:var(--s2)"></span>Contrôle Carburant</h2>
-      <p class="note">Chaque client du planning comparé à sa facture : m³, prix au m³, livraisons (LVN). Client reconnu par le lieu de livraison et les m³.</p>
-      <div class="tableau"><table id="tabCtrlCarbu" class="serre"></table></div>
-    </div>
-    <div class="carte inter">
-      <h2><span class="pastille-act" style="background:var(--s1)"></span>Contrôle Inter (ITM)</h2>
-      <p class="note">Nombre de tournées par terme fixe (286 €, 330 €, 540 €…) au planning et sur les factures ; montants pour information (la préfacture ITM fait foi).</p>
-      <div class="tableau"><table id="tabCtrlInter"></table></div>
-    </div>
-    <div class="grille">
-      <div class="carte">
-        <h2>Fiche indexation</h2>
-        <p class="note" id="noteIndex"></p>
-        <div class="legende" id="legIndex"></div>
-        <div class="graph"><canvas id="gIndex" aria-label="Indexation par mois"></canvas></div>
-      </div>
-      <div class="carte">
-        <h2>Indexation du mois par client</h2>
-        <div class="tableau"><table id="tabIndex"></table></div>
-      </div>
-    </div>
-    <div class="carte">
-      <h2>Factures déposées pour ce mois</h2>
-      <div class="tableau"><table id="tabFactDep"></table></div>
     </div>
   </section>
 
@@ -552,73 +548,6 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
     <div class="carte"><div id="listeAlertes"></div></div>
   </section>
 
-  <!-- SAISIE -->
-  <section id="saisie" hidden>
-    <div class="carte">
-      <h2>Livraison / tournée</h2>
-      <p class="note">Alimente en temps réel le CA et le nombre de livraisons du mois</p>
-      <form class="saisie" data-type="LIVRAISONS">
-        <label>Date<input type="date" name="Date" required></label>
-        <label>Camion<select name="Camion_ID" required class="listeCamions"></select></label>
-        <label>Chauffeur<select name="Chauffeur" class="listeSalaries"></select></label>
-        <label>Client<input name="Client"></label>
-        <label>Nb de livraisons<input type="number" name="Nb_Livraisons" min="0" step="1" required></label>
-        <label>Dont en retard<input type="number" name="Nb_Retards" min="0" step="1"></label>
-        <label>CA HT (€)<input type="number" name="CA_HT" min="0" step="0.01"></label>
-        <label>Remarque<input name="Remarque"></label>
-        <div class="actions"><button class="primaire">Enregistrer</button><span class="msg"></span></div>
-      </form>
-    </div>
-    <div class="carte">
-      <h2>Plein de carburant</h2>
-      <p class="note">Renseignez le compteur : il sert à calculer la consommation aux 100 km</p>
-      <form class="saisie" data-type="CARBURANT">
-        <label>Date<input type="date" name="Date" required></label>
-        <label>Camion<select name="Camion_ID" required class="listeCamions"></select></label>
-        <label>Litres<input type="number" name="Litres" min="0" step="0.01" required></label>
-        <label>Montant TTC (€)<input type="number" name="Montant_TTC" min="0" step="0.01"></label>
-        <label>Compteur (km)<input type="number" name="KM_Compteur" min="0" step="1"></label>
-        <label>Lieu<input name="Lieu"></label>
-        <div class="actions"><button class="primaire">Enregistrer</button><span class="msg"></span></div>
-      </form>
-    </div>
-    <div class="carte">
-      <h2>Heures chauffeur</h2>
-      <form class="saisie" data-type="HEURES">
-        <label>Date<input type="date" name="Date" required></label>
-        <label>Salarié<select name="Salarié" required class="listeSalaries"></select></label>
-        <label>Heures travaillées<input type="number" name="Heures" min="0" max="24" step="0.25" required></label>
-        <label>Remarque<input name="Remarque"></label>
-        <div class="actions"><button class="primaire">Enregistrer</button><span class="msg"></span></div>
-      </form>
-    </div>
-    <div class="carte">
-      <h2>Facture client</h2>
-      <form class="saisie" data-type="FACTURES">
-        <label>N° de facture<input name="N_Facture" required></label>
-        <label>Client<input name="Client" required list="listeClients"></label>
-        <label>Date de facture<input type="date" name="Date_Facture" required></label>
-        <label>Échéance<input type="date" name="Echeance" required></label>
-        <label>Montant TTC (€)<input type="number" name="Montant_TTC" min="0" step="0.01" required></label>
-        <label>Remarque<input name="Remarque"></label>
-        <div class="actions"><button class="primaire">Enregistrer</button><span class="msg"></span></div>
-      </form>
-      <datalist id="listeClients"></datalist>
-    </div>
-    <div class="carte">
-      <h2>Absence</h2>
-      <form class="saisie" data-type="ABSENCES">
-        <label>Salarié<select name="Salarié" required class="listeSalaries"></select></label>
-        <label>Type<select name="Type" required>
-          <option>Congés payés</option><option>Maladie</option><option>Accident du travail</option>
-          <option>Formation</option><option>Absence injustifiée</option><option>Autre</option></select></label>
-        <label>Début<input type="date" name="Début" required></label>
-        <label>Fin<input type="date" name="Fin"></label>
-        <label>Remarque<input name="Remarque"></label>
-        <div class="actions"><button class="primaire">Enregistrer</button><span class="msg"></span></div>
-      </form>
-    </div>
-  </section>
 </main>
 <dialog id="fenetre"><div class="fenetre-tete"><h2 id="fenetreTitre"></h2><button class="suppr" id="fenetreFermer" title="Fermer">✕</button></div><div id="fenetreCorps"></div></dialog>
 
@@ -679,7 +608,6 @@ function recevoir(d) {
   document.getElementById('maj').textContent = 'Mis à jour le ' + d.genereLe + (d.derniereImport ? ' · finances importées le ' + d.derniereImport : '') +
     (d.erreurEcheances ? ' · ⚠ ' + d.erreurEcheances : '');
   remplirSelectMois();
-  remplirListes();
   afficherOnglet(ongletActif());
   var graves = d.alertes.filter(function (a) { return a.niveau !== 'a_prevoir'; }).length;
   var p = document.getElementById('nbAlertes');
@@ -699,21 +627,6 @@ function remplirSelectMois() {
   selA.innerHTML = listeA.map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
   if (listeA.indexOf(ancienA) >= 0) selA.value = ancienA;
 }
-function remplirListes() {
-  var camions = D.FLOTTE.map(function (c) { return c.Camion_ID; }).filter(Boolean);
-  var salaries = D.SALARIES.map(function (s) { return ((s['Prénom'] || '') + ' ' + (s.Nom || '')).trim(); }).filter(Boolean);
-  document.querySelectorAll('.listeCamions').forEach(function (s) {
-    s.innerHTML = '<option value="">—</option>' + camions.map(function (c) { return '<option>' + txt(c) + '</option>'; }).join('');
-  });
-  document.querySelectorAll('.listeSalaries').forEach(function (s) {
-    s.innerHTML = '<option value="">—</option>' + salaries.map(function (c) { return '<option>' + txt(c) + '</option>'; }).join('');
-  });
-  document.querySelectorAll('form.saisie input[type=date]').forEach(function (i) { if (!i.value && i.required && i.name !== 'Echeance') i.value = aujourdhui(); });
-  var clients = {};
-  D.FACTURES.concat(D.LIVRAISONS).forEach(function (l) { if (l.Client) clients[l.Client] = 1; });
-  document.getElementById('listeClients').innerHTML = Object.keys(clients).sort().map(function (c) { return '<option value="' + txt(c) + '">'; }).join('');
-}
-
 // ---------- calculs finances ----------
 function totauxFinances(lignes) {
   var t = { ca: null, charges: null, km: null, postes: {} };
@@ -797,13 +710,13 @@ function barre(label, data, couleur) { return Object.assign({ label: label, data
 // ---------- onglets ----------
 function ongletActif() { var b = document.querySelector('nav button[aria-selected="true"]'); return b ? b.dataset.onglet : 'accueil'; }
 function afficherOnglet(nom) {
-  if (!document.getElementById(nom)) nom = 'accueil';   // onglet supprimé (Finances) ou inconnu
+  if (!document.getElementById(nom) || !document.querySelector('nav button[data-onglet="' + nom + '"]')) nom = 'accueil';   // onglet supprimé ou inconnu
   document.querySelectorAll('nav button').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.onglet === nom); });
   document.querySelectorAll('main section').forEach(function (s) { s.hidden = s.id !== nom; });
   try { localStorage.setItem('ongletTDB', nom); } catch (e) {}
   if (!D) return;
   ({ accueil: rendreAccueil, flotte: rendreFlotte, salaries: rendreSalaries,
-     activite: rendreActivite, conso: rendreConso, factures: rendreFactures, charges: rendreCharges, facturation: rendreFacturation, compta: rendreCompta, alertes: rendreAlertes, saisie: function () {} })[nom]();
+     activite: rendreActivite, conso: rendreConso, charges: rendreCharges, facturation: rendreFacturation, prefacs: rendrePrefacs, peages: rendrePeages, scaped: rendreScaped, compta: rendreCompta, alertes: rendreAlertes })[nom]();
 }
 
 function alertesFiltrees() {
@@ -976,36 +889,6 @@ function rendreAttention(al) {
     }).join('') : '<div class="vide">Aucun document qui expire, aucune relance en retard, aucune marge en baisse.</div>');
 }
 
-function rendreFactures() {
-  var fa = facturesEnAttente().slice().sort(function (a, b) { return String(a.Echeance) < String(b.Echeance) ? -1 : 1; });
-  var auj = aujourdhui(), jr = D.parametres.JOURS_RELANCE;
-  var echues = fa.filter(function (f) { return f.Echeance && f.Echeance < auj; });
-  var aRelancer = echues.filter(function (f) { return !f.Derniere_Relance || (new Date(auj) - new Date(f.Derniere_Relance)) / 86400000 >= jr; });
-  var clients = {}; aRelancer.forEach(function (f) { clients[f.Client] = 1; });
-  document.getElementById('tuilesFact').innerHTML = tuile('Factures en attente', fa.length, fmtEur.format(somme(fa, 'Montant_TTC'))) +
-    tuile('Dont échues', '<span class="' + (echues.length ? 'neg' : '') + '">' + echues.length + '</span>', fmtEur.format(somme(echues, 'Montant_TTC'))) +
-    tuile('Clients à relancer', Object.keys(clients).length, 'aucune relance depuis ' + jr + ' j');
-  var t = document.getElementById('tabFact');
-  t.innerHTML = '<thead><tr><th>N°</th><th>Client</th><th>Facturée le</th><th>Échéance</th><th class="n">Montant TTC</th><th>État</th><th>Dernière relance</th><th></th></tr></thead><tbody>' +
-    (fa.length ? fa.map(function (f) {
-      var j = f.Echeance ? Math.round((new Date(f.Echeance) - new Date(auj)) / 86400000) : null;
-      var etat = j === null ? '' : j < 0 ? badge(j < -45 ? 'depasse' : 'urgent', 'échue depuis ' + (-j) + ' j') : badge(j <= 7 ? 'a_prevoir' : 'ok', 'dans ' + j + ' j');
-      return '<tr><td>' + txt(f.N_Facture) + '</td><td>' + txt(f.Client) + '</td><td>' + dateFr(f.Date_Facture) + '</td><td>' + dateFr(f.Echeance) +
-        '</td><td class="n">' + eur(num(f.Montant_TTC)) + '</td><td>' + etat + '</td><td>' + (f.Derniere_Relance ? dateFr(f.Derniere_Relance) : '<span class="nd">jamais</span>') +
-        '</td><td><button class="petit" data-fact="' + txt(f.N_Facture) + '" data-action="relancee">Relancé</button> <button class="petit" data-fact="' + txt(f.N_Facture) + '" data-action="payee">Payée</button></td></tr>';
-    }).join('') : '<tr><td colspan="8" class="vide">Aucune facture en attente</td></tr>') + '</tbody>';
-  t.querySelectorAll('button[data-fact]').forEach(function (b) {
-    b.onclick = function () {
-      var msg = document.getElementById('msgFact');
-      if (!(window.google && google.script && google.script.run)) { msg.className = 'msg err'; msg.textContent = 'Mode démonstration : rien n\'est enregistré.'; return; }
-      b.disabled = true;
-      google.script.run.withSuccessHandler(function () { msg.className = 'msg ok'; msg.textContent = '✓ Facture ' + b.dataset.fact + ' mise à jour'; charger(); })
-        .withFailureHandler(function (e) { b.disabled = false; msg.className = 'msg err'; msg.textContent = e.message; })
-        .majFacture(b.dataset.fact, b.dataset.action);
-    };
-  });
-}
-
 
 function tableTriable(id, colonnes, lignes, valeur) {
   var table = document.getElementById(id);
@@ -1154,16 +1037,16 @@ function rendreActivite() {
   var totalMois = caListe(duMois);
   document.getElementById('tuilesAct').innerHTML = socs.map(function (so) {
     var t = caListe(de(duMois, so));
-    return tuile('Total ' + (so === 'LPB' ? 'LPB Transports' : 'Transports Gleyzes') + ' · ' + nomMois(mois), fmtEur.format(t),
-      'Intermarché ' + fmtEur.format(caListe(de(inter, so))) + ' + Carburant ' + fmtEur.format(caListe(de(carbu, so))) + (socs.length > 1 && totalMois ? ' · ' + Math.round(t / totalMois * 100) + ' % du total' : ''));
+    return tuile(so.toUpperCase() + ' · ' + nomMois(mois), fmtEur.format(t),
+      'Intermarché ' + fmtEur.format(caListe(de(inter, so))) + ' + Carburant ' + fmtEur.format(caListe(de(carbu, so))) + (socs.length > 1 && totalMois ? ' · ' + Math.round(t / totalMois * 100) + ' % du total' : ''))
+      .replace('class="tuile"', 'class="tuile soc-' + so.toLowerCase() + '"');
   }).join('');
   // Deux grandes cases : INTERMARCHÉ et CARBURANT, avec Gleyzes, LPB, total général et nombre de tournées / livraisons
   var grandeCase = function (titre, couleur, lignes, unite) {
-    var ligne = function (lib, l) { return '<tr><td>' + lib + '<span class="note">' + l.length + ' ' + unite + (l.length > 1 ? 's' : '') + '</span></td><td class="n">' + fmtEur.format(caListe(l)) + '</td></tr>'; };
-    return '<div class="grande-case"><h3 style="background:' + couleur + '">' + titre + '</h3><table><tbody>' +
-      socs.map(function (so) { return ligne(so === 'LPB' ? 'LPB Transports' : 'Transports Gleyzes', de(lignes, so)); }).join('') +
-      '<tr class="total"><td>TOTAL GÉNÉRAL<span class="note">' + lignes.length + ' ' + unite + (lignes.length > 1 ? 's' : '') + '</span></td><td class="n">' + fmtEur.format(caListe(lignes)) + '</td></tr>' +
-      '</tbody></table></div>';
+    var nb = function (l) { return l.length + ' ' + unite + (l.length > 1 ? 's' : ''); };
+    var ligne = function (so, l) { return '<tr><td class="soc soc-' + so.toLowerCase() + '">' + so.toUpperCase() + '<span class="note">' + nb(l) + '</span></td><td class="n">' + fmtEur.format(caListe(l)) + '</td></tr>'; };
+    return '<div class="grande-case"><h3>' + titre + (socs.length > 1 ? '<span class="tot">' + fmtEur.format(caListe(lignes)) + ' · ' + nb(lignes) + '</span>' : '') + '</h3><table><tbody>' +
+      socs.map(function (so) { return ligne(so, de(lignes, so)); }).join('') + '</tbody></table></div>';
   };
   document.getElementById('tuilesSocAct').innerHTML = grandeCase('INTERMARCHÉ', 'var(--s1)', inter, 'tournée') + grandeCase('CARBURANT', 'var(--s2)', carbu, 'livraison');
 
@@ -2848,14 +2731,12 @@ function rendreConso() {
     var alerte = conso > seuil || (ecart !== null && ecart > hausse);
     return { immat: immat, semaine: recent.map(function (x) { return x.semaine; }).join(' + '), km: km, litres: litres, conso: conso, moy: moy, ecart: ecart, alerte: alerte };
   });
-  var douteux = lit.filter(function (l) { return !l.valide; });
   var recentes = lit.filter(function (l) { return l.valide && (new Date(aujourdhui()) - new Date(l.fin)) / 86400000 <= 35; });
   var moyFlotte = recentes.length ? recentes.reduce(function (t, x) { return t + x.litres; }, 0) / recentes.reduce(function (t, x) { return t + x.km; }, 0) * 100 : null;
   document.getElementById('tuilesConso').innerHTML =
     tuile('Consommation moyenne', moyFlotte === null ? '<span class="nd">N/D</span>' : fmtNb.format(moyFlotte) + ' L/100', '5 dernières semaines, tous camions') +
     tuile('Camions en alerte', '<span class="' + (lignes.some(function (x) { return x.alerte; }) ? 'neg' : '') + '">' + lignes.filter(function (x) { return x.alerte; }).length + '</span>',
-          'au-dessus de ' + seuil + ' L/100 ou +' + hausse + ' % sur leur moyenne') +
-    tuile('Semaines ignorées', douteux.length, 'données incohérentes à vérifier');
+          'au-dessus de ' + seuil + ' L/100 ou +' + hausse + ' % sur leur moyenne');
   document.getElementById('titreConsoS').textContent = nb === 1 ? 'Dernière semaine saisie par camion' : 'Les ' + nb + ' dernières semaines saisies, par camion';
   document.getElementById('noteConsoS').textContent = (D.erreurs || []).join(' · ') ||
     (p.sourceLitrages ? 'Lu en direct dans votre fichier Litrages véhicules. ' + nb + ' semaine(s) regroupée(s) pour lisser les pleins à cheval sur deux semaines ; moyenne habituelle = 8 semaines d\'avant.'
@@ -2867,26 +2748,6 @@ function rendreConso() {
         '</td><td class="n">' + (x.ecart === null ? '' : '<span class="' + (x.ecart > hausse ? 'neg' : '') + '">' + (x.ecart > 0 ? '+' : '') + fmtNb.format(x.ecart) + ' %</span>') +
         '</td><td>' + (x.alerte ? badge('urgent', 'Consomme trop') : badge('ok', 'Normal')) + '</td></tr>';
     }).join('') : '<tr><td colspan="8" class="vide">Aucune semaine exploitable</td></tr>') + '</tbody>';
-  document.getElementById('tabDouteux').innerHTML = '<thead><tr><th>Camion</th><th>Semaine</th><th>Problème</th></tr></thead><tbody>' +
-    (douteux.length ? douteux.slice().reverse().map(function (x) { return '<tr><td>' + txt(x.immat) + '</td><td>' + txt(x.semaine) + '</td><td>' + txt(x.raison) + '</td></tr>'; }).join('')
-      : '<tr><td colspan="3" class="vide">Aucune</td></tr>') + '</tbody>';
-
-  var sel = document.getElementById('choixCamion'), ancien = sel.value, ids = Object.keys(par).sort();
-  sel.innerHTML = ids.map(function (i) { return '<option>' + txt(i) + '</option>'; }).join('');
-  var alerteFirst = lignes.filter(function (x) { return x.alerte; })[0];
-  sel.value = ids.indexOf(ancien) >= 0 ? ancien : (alerteFirst ? alerteFirst.immat : ids[0] || '');
-  var serie = (par[sel.value] || []).slice(-26);
-  legende('legConso', [[sel.value + ' (L/100 km)', css('--s1')], ['Seuil d\'alerte', css('--text-3')]]);
-  var opt = optionsCommunes(false);
-  opt.scales.y.beginAtZero = false;
-  opt.scales.y.ticks.callback = function (v) { return fmtNb.format(v); };
-  opt.plugins.tooltip.callbacks = { title: function (c) { return serie[c[0].dataIndex] ? serie[c[0].dataIndex].semaine : ''; },
-    label: function (c) { return ' ' + c.dataset.label + ' : ' + fmtNb.format(c.parsed.y) + ' L/100'; } };
-  dessiner('gConso', { type: 'line', data: { labels: serie.map(function (x) { return dateFr(x.fin).slice(0, 5); }), datasets: [
-    { label: sel.value, data: serie.map(function (x) { return Math.round(x.conso * 10) / 10; }), borderColor: css('--s1'), backgroundColor: css('--s1'),
-      borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, pointBorderColor: css('--surface'), pointBorderWidth: 2, tension: 0 },
-    { label: 'Seuil', data: serie.map(function () { return seuil; }), borderColor: css('--text-3'), borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0 }
-  ] }, options: opt });
 }
 
 function rendreAlertes() {
@@ -2894,30 +2755,10 @@ function rendreAlertes() {
   document.getElementById('listeAlertes').innerHTML = listeAlertesHtml(alertesFiltrees().filter(function (a) { return !n || a.niveau === n; }));
 }
 
-// ---------- saisie ----------
-document.querySelectorAll('form.saisie').forEach(function (f) {
-  f.addEventListener('submit', function (e) {
-    e.preventDefault();
-    var msg = f.querySelector('.msg'), bouton = f.querySelector('button');
-    var obj = {};
-    new FormData(f).forEach(function (v, k) { obj[k] = v; });
-    if (!(window.google && google.script && google.script.run)) { msg.className = 'msg err'; msg.textContent = 'Mode démonstration : rien n\'est enregistré.'; return; }
-    bouton.disabled = true; msg.className = 'msg'; msg.textContent = 'Enregistrement…';
-    google.script.run.withSuccessHandler(function () {
-      bouton.disabled = false; msg.className = 'msg ok'; msg.textContent = '✓ Enregistré';
-      f.querySelectorAll('input:not([type=date])').forEach(function (i) { i.value = ''; });
-      charger();
-    }).withFailureHandler(function (err) {
-      bouton.disabled = false; msg.className = 'msg err'; msg.textContent = err.message;
-    }).ajouterSaisie(f.dataset.type, obj);
-  });
-});
-
 // ---------- événements ----------
 document.querySelectorAll('nav button').forEach(function (b) { b.addEventListener('click', function () { afficherOnglet(b.dataset.onglet); }); });
 document.getElementById('filtreSociete').addEventListener('change', function () { try { localStorage.setItem('societeTDB', societe()); } catch (e) {} afficherOnglet(ongletActif()); });
 document.getElementById('moisAct').addEventListener('change', rendreActivite);
-document.getElementById('choixCamion').addEventListener('change', rendreConso);
 document.getElementById('moisFact').addEventListener('change', rendreFacturation);
 document.getElementById('filtreNiveau').addEventListener('change', rendreAlertes);
 ['filtreCatV', 'filtreEtatV'].forEach(function (id) { document.getElementById(id).addEventListener('change', rendreFlotte); });
