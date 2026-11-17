@@ -117,9 +117,9 @@ python3 exporter_finances_csv.py --classeur TABLEAU_DE_BORD_FLOTTE.xlsx --sortie
 Une case « Indexation gasoil » calcule, pour le mois choisi et par société (Gleyzes / LPB) :
 
 - **Intermarché** : km des tournées du planning Inter × cours × taux donnés par Intermarché (repris de la préfac du mois si rien n'est saisi) ;
-- **Carburant Brignoles (TD)** : % TD du mois × montant HT des factures Brignoles du mois ;
+- **Carburant TD** : % TD du mois × montant HT des factures du client THEVENIN DUCROT ;
 - **Carburant SCAPED** : % SCAPED du mois × montant HT des factures SCAPED du mois ;
-- **Autres clients carburant** : (indice CNR du mois précédent / 154,44 − 1) × 22 % × montant HT de leurs factures.
+- **Reste carburant** (tous les autres clients : SEB, Hyper U, Super U…) : (indice CNR du mois précédent / 154,44 − 1) × 22 % × montant HT de leurs factures.
 
 Le montant HT vient des factures déposées (onglet Contrôle factures, ou facture SCAPED préparée par le site), sans les lignes
 d'indexation. Tant qu'une facture n'est pas déposée, le CA du planning sert de base provisoire (signalé en rouge).

@@ -1057,11 +1057,11 @@ var IX_ONGLETS = [['ITM', 'INTERMARCHÉ'], ['SCAPED', 'SCAPED'], ['TD', 'TD'], [
 function moisApres(m) { var a = +m.slice(0, 4), n = +m.slice(5, 7) + 1; if (n > 12) { a++; n = 1; } return a + '-' + ('0' + n).slice(-2); }
 function moisAvant(m) { var a = +m.slice(0, 4), n = +m.slice(5, 7) - 1; if (!n) { a--; n = 12; } return a + '-' + ('0' + n).slice(-2); }
 function cleTxt(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase(); }
-function sourceIndexCarbu(l) {   // quelle indexation s'applique à une livraison Carburant
-  var k = cleTxt(l.client + ' ' + l.lieu);
+function sourceIndexCarbu(l) {   // quelle indexation s'applique à une livraison Carburant (d'après le nom du client)
+  var k = cleTxt(l.client);
   if (/SCAPED/.test(k)) return 'SCAPED';
-  if (/BRIGNOLES/.test(k)) return 'TD';
-  return 'CNR';
+  if (/THEVENIN|DUCROT|^\s*TD\b/.test(k)) return 'TD';   // TD = THEVENIN DUCROT (ou « TD » tout court)
+  return 'CNR';                                           // reste carburant : SEB, Hyper U, Super U…
 }
 function nombreSaisi(v) { var s = String(v || '').replace(/[\s€%]/g, '').replace(',', '.'); return s === '' || isNaN(+s) ? null : +s; }
 function rendreIndexationGasoil(mois, inter, carbu, socs) {
@@ -1096,8 +1096,8 @@ function rendreIndexationGasoil(mois, inter, carbu, socs) {
   var factM = (D.FACTURES_CLIENTS || []).filter(function (f) {
     return String(f.Mois).slice(0, 7) === mois && f.Activite === 'Carburant' && f.Nature !== 'INDEXATION' && garderSociete(f.Societe);
   });
-  [['TD', 'Carburant Brignoles (TD)', '% TD du mois'], ['SCAPED', 'Carburant SCAPED', '% SCAPED du mois'],
-   ['CNR', 'Autres clients carburant', cnr != null ? '(CNR ' + nomMois(prec) + ' ' + String(cnr).replace('.', ',') + ' / 154,44 − 1) × 22 % = ' + fPct(pctCNR) : 'indice CNR de ' + nomMois(prec) + ' à saisir']].forEach(function (s) {
+  [['TD', 'Carburant TD (Thevenin Ducrot)', '% TD du mois'], ['SCAPED', 'Carburant SCAPED', '% SCAPED du mois'],
+   ['CNR', 'Reste carburant (SEB, Hyper U, Super U…)', cnr != null ? '(CNR ' + nomMois(prec) + ' ' + String(cnr).replace('.', ',') + ' / 154,44 − 1) × 22 % = ' + fPct(pctCNR) : 'indice CNR de ' + nomMois(prec) + ' à saisir']].forEach(function (s) {
     var l = carbu.filter(function (x) { return sourceIndexCarbu(x) === s[0]; });
     var f = factM.filter(function (x) { return sourceIndexCarbu({ client: x.Client, lieu: x.Lieu }) === s[0]; });
     if (!l.length && !f.length && s[0] !== 'CNR') return;
@@ -1142,14 +1142,14 @@ function rendreIndexationGasoil(mois, inter, carbu, socs) {
         bouton('Enregistrer Intermarché · ' + nomMois(mois)) +
         historique(['ITM_COURS', 'ITM_TAUX'], function (x) { return val(x.ITM_COURS) + ' × ' + val(x.ITM_TAUX); });
     } else if (ixOnglet === 'SCAPED' || ixOnglet === 'TD') {
-      var t = ixOnglet === 'TD' ? 'TD_BRIGNOLES' : 'SCAPED', nomT = ixOnglet === 'TD' ? 'TD Brignoles' : 'SCAPED';
+      var t = ixOnglet === 'TD' ? 'TD_BRIGNOLES' : 'SCAPED', nomT = ixOnglet === 'TD' ? 'TD (Thevenin Ducrot)' : 'SCAPED';
       champs = [['ixPct', mois, t]];
       P.innerHTML = '<p class="note ix-expl">Indexation ' + nomT + ' de ' + nomMois(mois) + ' : montant HT des factures ' + nomT + ' du mois × ce pourcentage</p>' +
         champ('ixPct', '% ' + nomT, V[t], 'ex. 17,2') + bouton('Enregistrer ' + nomT + ' · ' + nomMois(mois)) +
         historique([t], function (x) { return fPct(x[t]); });
     } else {
       champs = [['ixCNR', prec, 'CNR']];
-      P.innerHTML = '<p class="note ix-expl">Autres clients carburant : (indice CNR du mois précédent / 154,44 − 1) × 22 % × montant HT des factures</p>' +
+      P.innerHTML = '<p class="note ix-expl">Reste carburant (tous les clients sauf SCAPED et Thevenin Ducrot : SEB, Hyper U, Super U…) : (indice CNR du mois précédent / 154,44 − 1) × 22 % × montant HT des factures</p>' +
         '<label>Indice CNR de ' + nomMois(prec) + '<input id="ixCNR" inputmode="decimal" placeholder="ex. 178,32" value="' + val(cnr) + '">' +
         '<span class="calc" id="ixCNRpct">' + (pctCNR != null ? '→ ' + fPct(pctCNR) + ' pour ' + nomMois(mois) : '(indice / 154,44 − 1) × 22 %') + '</span></label>' +
         bouton('Enregistrer l\'indice CNR de ' + nomMois(prec)) +
