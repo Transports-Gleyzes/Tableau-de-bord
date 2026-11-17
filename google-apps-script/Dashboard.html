@@ -249,19 +249,6 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
   <section id="accueil" hidden>
     <div class="tuiles kpi" id="tuilesAccueil"></div>
     <div class="attention" id="attention"></div>
-    <div class="grille">
-      <div class="carte">
-        <h2>CA et charges par mois</h2>
-        <p class="note">12 derniers mois : CA des plannings, charges des balances comptables</p>
-        <div class="legende" id="legCaCharges"></div>
-        <div class="graph"><canvas id="gCaCharges" aria-label="CA et charges par mois"></canvas></div>
-      </div>
-      <div class="carte">
-        <h2>Marge par mois</h2>
-        <p class="note">Résultat ÷ CA, 12 derniers mois importés</p>
-        <div class="graph"><canvas id="gMarge" aria-label="Marge par mois"></canvas></div>
-      </div>
-    </div>
   </section>
 
   <!-- FINANCES -->
@@ -946,31 +933,11 @@ function rendreAccueil() {
       ? tuile('Tournées & livraisons', fmtNb.format(plC.length), (delta(plC.length, plP.length, 1, '%', pref) ? delta(plC.length, plP.length, 1, '%', pref) + '<br>' : '') +
           parAct(plC, 'Inter').length + ' tournées Inter · ' + parAct(plC, 'Carburant').length + ' livraisons carburant')
       : tuile('Livraisons', liv.length ? fmtNb.format(nbLiv) : '<span class="nd">0</span>', delta(nbLiv, nbLivP, 1, '%', pref) || nomMois(P.mois))) +
-    tuile('Retards', tauxR === null ? '<span class="nd">N/D</span>' : fmtNb.format(tauxR) + ' %',
-          delta(tauxR, tauxRP, -1, 'pts', pref) || (nbLiv ? somme(liv, 'Nb_Retards') + ' sur ' + nbLiv + ' livraisons' : '')) +
     tuile('Véhicules indisponibles', '<span class="' + (nbIndispo.length ? 'neg' : '') + '">' + nbIndispo.length + '</span>',
-          nbIndispo.length ? nbIndispo.map(function (c) { return txt(c.id + ' : ' + c.raison); }).join('<br>') : 'sur ' + indispo.length + ' véhicules') +
-    tuile('Factures en attente', fa.length, fmtEur.format(somme(fa, 'Montant_TTC')) + (echues.length ? ' · <span class="neg">' + echues.length + ' échue(s)</span>' : '')) +
-    tuile('Heures chauffeurs', hC.length ? fmtNb.format(somme(hC, 'Heures')) + ' h' : '<span class="nd">N/D</span>',
-          hC.length ? (delta(somme(hC, 'Heures'), somme(hP, 'Heures'), 0, '%', pref).replace(/delta (bien|mal)/, 'delta neutre') || nbChauffeurs + ' chauffeur(s)') : 'aucune saisie ce mois');
+          nbIndispo.length ? nbIndispo.map(function (c) { return txt(c.id + ' : ' + c.raison); }).join('<br>') : 'sur ' + indispo.length + ' véhicules');
 
   rendreAttention(alertesFiltrees());
 
-  var derniers = mf.slice(-12), ca = [], ch = [], marges = [];
-  derniers.forEach(function (m) {
-    var t = totauxFinances(fin.filter(function (l) { return l.Mois === m; }));
-    ca.push(t.ca); ch.push(t.charges); marges.push(t.marge === null ? null : Math.round(t.marge * 10) / 10);
-  });
-  legende('legCaCharges', [['CA', css('--s1')], ['Charges', css('--s2')]]);
-  dessiner('gCaCharges', { type: 'bar', data: { labels: derniers.map(nomMois), datasets: [
-    barre('CA', ca, css('--s1')), barre('Charges', ch, css('--s2'))] }, options: optionsCommunes(false) });
-  var opt = optionsCommunes(false);
-  opt.scales.y.beginAtZero = false;
-  opt.scales.y.ticks.callback = function (v) { return fmtNb.format(v) + ' %'; };
-  opt.plugins.tooltip.callbacks = { label: function (c) { return ' Marge : ' + fmtNb.format(c.parsed.y) + ' %'; } };
-  dessiner('gMarge', { type: 'line', data: { labels: derniers.map(nomMois), datasets: [{ label: 'Marge', data: marges,
-    borderColor: css('--s1'), backgroundColor: css('--s1'), borderWidth: 2, pointRadius: 4, pointHoverRadius: 6,
-    pointBorderColor: css('--surface'), pointBorderWidth: 2, tension: 0, spanGaps: false }] }, options: opt });
 }
 
 function societeSalarie(nom) {
