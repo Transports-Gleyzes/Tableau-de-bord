@@ -84,7 +84,7 @@ section[hidden] { display: none; }
 .index-gasoil th:first-child { text-align: left; }
 .index-gasoil td .note { display: block; font-size: 12px; font-weight: 400; }
 .index-gasoil td.n .note { font-size: 12px; }
-.saisie-index { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; padding: 14px 18px; border-top: 1px solid var(--border); background: var(--surface-2); }
+.saisie-index { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; padding: 14px 18px; border-top: 2px solid #3b5876; background: var(--surface-2); }
 .saisie-index label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); font-weight: 600; }
 .saisie-index .duo { display: flex; gap: 6px; align-items: center; }
 .saisie-index input { width: 100%; min-width: 0; }
@@ -94,6 +94,13 @@ section[hidden] { display: none; }
 .index-gasoil td { white-space: normal; }
 .index-gasoil td:first-child, .index-gasoil th:first-child { width: 44%; }
 @media (max-width: 600px) { .index-gasoil td, .index-gasoil th { padding: 9px 8px; font-size: 13px; } .index-gasoil td.n { font-size: 14px; } .index-gasoil tr.total td.n { font-size: 15px; } .index-gasoil td:first-child, .index-gasoil th:first-child { width: 36%; } }
+.ix-onglets { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 18px 0; border-top: 1px solid var(--border); background: var(--surface-2); }
+.ix-onglets button { border: 1px solid var(--border); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--surface); padding: 8px 14px; font-weight: 700; font-size: 13px; letter-spacing: .03em; color: var(--text-2); cursor: pointer; }
+.ix-onglets button[aria-selected="true"] { background: #3b5876; color: #fff; border-color: #3b5876; }
+.saisie-index .ix-expl { grid-column: 1 / -1; margin: 0; }
+.ix-histo { grid-column: 1 / -1; }
+.ix-histo table { width: auto; min-width: 260px; }
+.ix-histo td, .ix-histo td.n { padding: 4px 12px 4px 0; border-top: 1px solid var(--border); font-size: 13px; font-weight: 600; }
 .saisie-index .actions { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; }
 @media (max-width: 600px) { .tuiles-3 { grid-template-columns: 1fr !important; } }
 .tuiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
@@ -1046,6 +1053,8 @@ function caListe(l) { return l.reduce(function (t, x) { return t + (num(x.ca) ||
 
 // ---------- Indexation gasoil (Activité) ----------
 var CNR_BASE = 154.44, CNR_PART = 0.22;   // % = (indice CNR du mois précédent / 154,44 − 1) × 22 %
+var IX_ONGLETS = [['ITM', 'INTERMARCHÉ'], ['SCAPED', 'SCAPED'], ['TD', 'TD'], ['CNR', 'RESTE CARBURANT']], ixOnglet = 'ITM';
+function moisApres(m) { var a = +m.slice(0, 4), n = +m.slice(5, 7) + 1; if (n > 12) { a++; n = 1; } return a + '-' + ('0' + n).slice(-2); }
 function moisAvant(m) { var a = +m.slice(0, 4), n = +m.slice(5, 7) - 1; if (!n) { a--; n = 12; } return a + '-' + ('0' + n).slice(-2); }
 function cleTxt(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase(); }
 function sourceIndexCarbu(l) {   // quelle indexation s'applique à une livraison Carburant
@@ -1110,33 +1119,62 @@ function rendreIndexationGasoil(mois, inter, carbu, socs) {
   var tousTot = socs.reduce(function (t, so) { return t + tot[so]; }, 0);
   z.innerHTML = '<h3>INDEXATION GASOIL · ' + nomMois(mois).toUpperCase() + (socs.length > 1 ? '<span class="tot">' + fEur2(tousTot) + '</span>' : '') + '</h3>' +
     '<div class="defile"><table><thead><tr><th></th>' + socs.map(function (so) { return '<th class="soc-' + so.toLowerCase() + '">' + so.toUpperCase() + '</th>'; }).join('') + '</tr></thead><tbody>' + lignes.join('') + '</tbody></table></div>' +
-    '<div class="saisie-index">' +
-      '<label>Intermarché (donné par ITM)<span class="duo"><input id="ixCours" inputmode="decimal" placeholder="cours" value="' + val(V.ITM_COURS) + '"> × <input id="ixTaux" inputmode="decimal" placeholder="taux" value="' + val(V.ITM_TAUX) + '"></span>' +
-        '<span class="calc">' + (depuisPrefac ? 'vide = repris de la préfac (' + val(cours) + ' × ' + val(taux) + ')' : 'cours gasoil × taux, appliqué aux km') + '</span></label>' +
-      '<label>% TD Brignoles<input id="ixTD" inputmode="decimal" placeholder="ex. 18,5" value="' + val(V.TD_BRIGNOLES) + '"></label>' +
-      '<label>% SCAPED<input id="ixScaped" inputmode="decimal" placeholder="ex. 17,2" value="' + val(V.SCAPED) + '"></label>' +
-      '<label>Indice CNR de ' + nomMois(prec) + '<input id="ixCNR" inputmode="decimal" placeholder="ex. 178,32" value="' + val(cnr) + '">' +
+    '<div class="ix-onglets" role="tablist">' + IX_ONGLETS.map(function (o) {
+      return '<button role="tab" data-ix="' + o[0] + '" aria-selected="' + (o[0] === ixOnglet) + '">' + o[1] + '</button>'; }).join('') + '</div>' +
+    '<div class="saisie-index" id="ixPanneau"></div>';
+  z.querySelectorAll('.ix-onglets button').forEach(function (bt) {
+    bt.onclick = function () { ixOnglet = bt.dataset.ix; z.querySelectorAll('.ix-onglets button').forEach(function (x) { x.setAttribute('aria-selected', x === bt); }); panneau(); };
+  });
+  // Historique des mois déjà saisis pour un type
+  var historique = function (types, rendu) {
+    var ms = Object.keys(IX).filter(function (m) { return types.some(function (t) { return IX[m][t] != null; }); }).sort().reverse().slice(0, 12);
+    return ms.length ? '<div class="ix-histo"><div class="note">Déjà saisi</div><table><tbody>' + ms.map(function (m) { return '<tr><td>' + nomMois(m) + '</td><td class="n">' + rendu(IX[m], m) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '';
+  };
+  var champ = function (id, lib, v, ph) { return '<label>' + lib + '<input id="' + id + '" inputmode="decimal" placeholder="' + ph + '" value="' + val(v) + '"></label>'; };
+  var bouton = function (lib) { return '<div class="actions"><button id="ixEnreg" class="primaire">' + lib + '</button><span class="msg" id="ixMsg"></span></div>'; };
+  function panneau() {
+    var P = document.getElementById('ixPanneau'), champs;
+    if (ixOnglet === 'ITM') {
+      champs = [['ixCours', mois, 'ITM_COURS'], ['ixTaux', mois, 'ITM_TAUX']];
+      P.innerHTML = '<p class="note ix-expl">Indexation Intermarché de ' + nomMois(mois) + ' : km des tournées × cours gasoil × taux (valeurs données par Intermarché)' +
+          (depuisPrefac ? ' — vide = repris de la préfac (' + val(cours) + ' × ' + val(taux) + ')' : '') + '</p>' +
+        champ('ixCours', 'Cours gasoil', V.ITM_COURS, 'ex. 1,45') + champ('ixTaux', 'Taux', V.ITM_TAUX, 'ex. 0,35') +
+        bouton('Enregistrer Intermarché · ' + nomMois(mois)) +
+        historique(['ITM_COURS', 'ITM_TAUX'], function (x) { return val(x.ITM_COURS) + ' × ' + val(x.ITM_TAUX); });
+    } else if (ixOnglet === 'SCAPED' || ixOnglet === 'TD') {
+      var t = ixOnglet === 'TD' ? 'TD_BRIGNOLES' : 'SCAPED', nomT = ixOnglet === 'TD' ? 'TD Brignoles' : 'SCAPED';
+      champs = [['ixPct', mois, t]];
+      P.innerHTML = '<p class="note ix-expl">Indexation ' + nomT + ' de ' + nomMois(mois) + ' : montant HT des factures ' + nomT + ' du mois × ce pourcentage</p>' +
+        champ('ixPct', '% ' + nomT, V[t], 'ex. 17,2') + bouton('Enregistrer ' + nomT + ' · ' + nomMois(mois)) +
+        historique([t], function (x) { return fPct(x[t]); });
+    } else {
+      champs = [['ixCNR', prec, 'CNR']];
+      P.innerHTML = '<p class="note ix-expl">Autres clients carburant : (indice CNR du mois précédent / 154,44 − 1) × 22 % × montant HT des factures</p>' +
+        '<label>Indice CNR de ' + nomMois(prec) + '<input id="ixCNR" inputmode="decimal" placeholder="ex. 178,32" value="' + val(cnr) + '">' +
         '<span class="calc" id="ixCNRpct">' + (pctCNR != null ? '→ ' + fPct(pctCNR) + ' pour ' + nomMois(mois) : '(indice / 154,44 − 1) × 22 %') + '</span></label>' +
-      '<div class="actions"><button id="ixEnreg" class="primaire">Enregistrer l\'indexation de ' + nomMois(mois) + '</button><span class="msg" id="ixMsg"></span></div>' +
-    '</div>';
-  document.getElementById('ixCNR').oninput = function () {
-    var v = nombreSaisi(this.value);
-    document.getElementById('ixCNRpct').textContent = v == null ? '(indice / 154,44 − 1) × 22 %' : '→ ' + fPct((v / CNR_BASE - 1) * CNR_PART * 100) + ' pour ' + nomMois(mois);
-  };
-  document.getElementById('ixEnreg').onclick = function () {
-    var msg = document.getElementById('ixMsg'), b = this, liste = [], faux = [];
-    [['ixCours', mois, 'ITM_COURS'], ['ixTaux', mois, 'ITM_TAUX'], ['ixTD', mois, 'TD_BRIGNOLES'], ['ixScaped', mois, 'SCAPED'], ['ixCNR', prec, 'CNR']].forEach(function (c) {
-      var brut = document.getElementById(c[0]).value.trim(), v = nombreSaisi(brut);
-      if (brut && v == null) faux.push(brut);
-      liste.push({ mois: c[1], type: c[2], valeur: v == null ? '' : v });
-    });
-    if (faux.length) { msg.className = 'msg err'; msg.textContent = 'Nombre non reconnu : ' + faux.join(', '); return; }
-    b.disabled = true; msg.className = 'msg'; msg.textContent = 'Enregistrement…';
-    appelServeur('enregistrerIndexation', liste).then(function (r) {
-      D.INDEXATION = r || {}; rendreActivite();
-      var m2 = document.getElementById('ixMsg'); m2.className = 'msg ok'; m2.textContent = '✓ Indexation enregistrée';
-    }).catch(function (e) { b.disabled = false; msg.className = 'msg err'; msg.textContent = e.message; });
-  };
+        bouton('Enregistrer l\'indice CNR de ' + nomMois(prec)) +
+        historique(['CNR'], function (x, m) { return val(x.CNR) + ' → ' + fPct((x.CNR / CNR_BASE - 1) * CNR_PART * 100) + ' en ' + nomMois(moisApres(m)); });
+      document.getElementById('ixCNR').oninput = function () {
+        var v = nombreSaisi(this.value);
+        document.getElementById('ixCNRpct').textContent = v == null ? '(indice / 154,44 − 1) × 22 %' : '→ ' + fPct((v / CNR_BASE - 1) * CNR_PART * 100) + ' pour ' + nomMois(mois);
+      };
+    }
+    document.getElementById('ixEnreg').onclick = function () {
+      var msg = document.getElementById('ixMsg'), b = this, liste = [], faux = [];
+      champs.forEach(function (c) {
+        var brut = document.getElementById(c[0]).value.trim(), v = nombreSaisi(brut);
+        if (brut && v == null) faux.push(brut);
+        liste.push({ mois: c[1], type: c[2], valeur: v == null ? '' : v });
+      });
+      if (faux.length) { msg.className = 'msg err'; msg.textContent = 'Nombre non reconnu : ' + faux.join(', '); return; }
+      b.disabled = true; msg.className = 'msg'; msg.textContent = 'Enregistrement…';
+      appelServeur('enregistrerIndexation', liste).then(function (r) {
+        D.INDEXATION = r || {}; rendreActivite();
+        var m2 = document.getElementById('ixMsg'); m2.className = 'msg ok'; m2.textContent = '✓ Enregistré';
+      }).catch(function (e) { b.disabled = false; msg.className = 'msg err'; msg.textContent = e.message; });
+    };
+  }
+  panneau();
 }
 
 function rendreActivite() {
