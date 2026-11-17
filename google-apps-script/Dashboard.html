@@ -55,6 +55,17 @@ section[hidden] { display: none; }
 .barre { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 12px; }
 .barre label { color: var(--text-2); font-size: 13px; }
 .tuiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+.tuiles-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+.grandes-cases { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
+@media (max-width: 760px) { .grandes-cases, .tuiles-2 { grid-template-columns: 1fr !important; } }
+.grande-case { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: 0 2px 8px rgba(15, 30, 60, .06); }
+.grande-case h3 { margin: 0; padding: 12px 18px; font-size: 17px; letter-spacing: .04em; color: #fff; }
+.grande-case table { width: 100%; border-collapse: collapse; }
+.grande-case td { padding: 11px 18px; border-top: 1px solid var(--border); font-size: 15px; }
+.grande-case td.n { text-align: right; font-variant-numeric: tabular-nums; font-size: 18px; font-weight: 600; }
+.grande-case td .note { display: block; font-size: 12px; }
+.grande-case tr.total td { background: var(--surface-2); font-weight: 700; }
+.grande-case tr.total td.n { font-size: 22px; }
 @media (max-width: 600px) { .tuiles-3 { grid-template-columns: 1fr !important; } }
 .tuiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .tuile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
@@ -311,8 +322,8 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
   <!-- ACTIVITE : deux plannings distincts -->
   <section id="activite" hidden>
     <div class="barre"><label for="moisAct">Mois</label><select id="moisAct"></select><span class="note" id="noteAct"></span></div>
-    <div class="tuiles" id="tuilesAct"></div>
-    <div class="tuiles tuiles-3" id="tuilesSocAct"></div>
+    <div class="tuiles tuiles-2" id="tuilesAct"></div>
+    <div class="grandes-cases" id="tuilesSocAct"></div>
     <div class="grille">
       <div class="carte inter">
         <h2><span class="pastille-act" style="background:var(--s1)"></span>Planning Inter (ITM)</h2>
@@ -349,10 +360,6 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
       <h2>CA par camion</h2>
       <p class="note">D'après la colonne CAMION des plannings. Charges mut. = part des charges à mutualiser des chauffeurs du camion</p>
       <div class="tableau"><table id="tabCamions"></table></div>
-    </div>
-    <div class="carte carbu">
-      <h2>Clients carburant du mois</h2>
-      <div class="tableau"><table id="tabClients"></table></div>
     </div>
   </section>
 
@@ -1141,18 +1148,24 @@ function rendreActivite() {
   var p = D.parametres;
   document.getElementById('noteAct').textContent = (D.erreurs || []).join(' · ') ||
     (!p.sourceInter || !p.sourceCarburant ? 'Renseignez ID_PLANNING_INTER et ID_PLANNING_CARBURANT dans PARAMETRES.' : 'Lu en direct dans vos deux plannings.');
-  document.getElementById('tuilesAct').innerHTML =
-    tuile('CA total ' + nomMois(mois), fmtEur.format(caListe(duMois))) +
-    tuile('<span class="pastille-act" style="background:var(--s1)"></span>CA Inter', fmtEur.format(caListe(inter)), inter.length + ' tournée(s)') +
-    tuile('<span class="pastille-act" style="background:var(--s2)"></span>CA Carburant', fmtEur.format(caListe(carbu)), carbu.length + ' livraison(s)');
-  // CA par société qui facture : Inter, Carburant, total (une ligne Gleyzes, une ligne LPB)
-  document.getElementById('tuilesSocAct').innerHTML = ['Gleyzes', 'LPB'].filter(function (so) { return !societe() || societe() === so; }).map(function (so) {
-    var de = function (l) { return l.filter(function (x) { return x.societe === so; }); }, nom = so === 'LPB' ? 'LPB' : 'GLEYZES';
-    var i = de(inter), c = de(carbu);
-    return tuile('<span class="pastille-act" style="background:var(--s1)"></span>CA ' + nom + ' Inter', fmtEur.format(caListe(i)), i.length + ' tournée(s)') +
-      tuile('<span class="pastille-act" style="background:var(--s2)"></span>CA ' + nom + ' Carburant', fmtEur.format(caListe(c)), c.length + ' livraison(s)') +
-      tuile('CA ' + nom + ' total', '<b>' + fmtEur.format(caListe(i) + caListe(c)) + '</b>', caListe(duMois) ? Math.round((caListe(i) + caListe(c)) / caListe(duMois) * 100) + ' % du CA du mois' : '');
+  // Deux petites cases : total par société (Intermarché + Carburant)
+  var socs = ['Gleyzes', 'LPB'].filter(function (so) { return !societe() || societe() === so; });
+  var de = function (l, so) { return l.filter(function (x) { return x.societe === so; }); };
+  var totalMois = caListe(duMois);
+  document.getElementById('tuilesAct').innerHTML = socs.map(function (so) {
+    var t = caListe(de(duMois, so));
+    return tuile('Total ' + (so === 'LPB' ? 'LPB Transports' : 'Transports Gleyzes') + ' · ' + nomMois(mois), fmtEur.format(t),
+      'Intermarché ' + fmtEur.format(caListe(de(inter, so))) + ' + Carburant ' + fmtEur.format(caListe(de(carbu, so))) + (socs.length > 1 && totalMois ? ' · ' + Math.round(t / totalMois * 100) + ' % du total' : ''));
   }).join('');
+  // Deux grandes cases : INTERMARCHÉ et CARBURANT, avec Gleyzes, LPB, total général et nombre de tournées / livraisons
+  var grandeCase = function (titre, couleur, lignes, unite) {
+    var ligne = function (lib, l) { return '<tr><td>' + lib + '<span class="note">' + l.length + ' ' + unite + (l.length > 1 ? 's' : '') + '</span></td><td class="n">' + fmtEur.format(caListe(l)) + '</td></tr>'; };
+    return '<div class="grande-case"><h3 style="background:' + couleur + '">' + titre + '</h3><table><tbody>' +
+      socs.map(function (so) { return ligne(so === 'LPB' ? 'LPB Transports' : 'Transports Gleyzes', de(lignes, so)); }).join('') +
+      '<tr class="total"><td>TOTAL GÉNÉRAL<span class="note">' + lignes.length + ' ' + unite + (lignes.length > 1 ? 's' : '') + '</span></td><td class="n">' + fmtEur.format(caListe(lignes)) + '</td></tr>' +
+      '</tbody></table></div>';
+  };
+  document.getElementById('tuilesSocAct').innerHTML = grandeCase('INTERMARCHÉ', 'var(--s1)', inter, 'tournée') + grandeCase('CARBURANT', 'var(--s2)', carbu, 'livraison');
 
   var km = inter.reduce(function (t, l) { return t + (num(l.km) || 0); }, 0);
   var manquants = inter.filter(function (l) { return l.contratManquant; }).length;
@@ -1248,11 +1261,6 @@ function rendreActivite() {
     ['Litres consommés', 'litres', 'nb'], ['L/100 km', 'conso', 'nb']],
     lignesCam, function (o, k) { return o[k]; });
 
-  var cl = {};
-  carbu.forEach(function (l) { var k = (l.client || '?') + ' — ' + (l.lieu || '?'); var x = cl[k] = cl[k] || { nom: k, soc: {}, n: 0, m3: 0, ca: 0 }; x.n++; x.m3 += (num(l.litres) || 0) / 1000; x.ca += num(l.ca) || 0; if (l.societe) x.soc[l.societe] = 1; });
-  Object.keys(cl).forEach(function (k) { cl[k].societe = Object.keys(cl[k].soc).sort().join(' + '); });
-  tableTriable('tabClients', [['Client — lieu', 'nom', 'txt'], ['Client de', 'societe', 'txt'], ['Livraisons', 'n', 'nb'], ['m³', 'm3', 'nb'], ['CA', 'ca', 'eur']],
-    Object.keys(cl).map(function (k) { return cl[k]; }).sort(function (a, b) { return b.ca - a.ca; }), function (o, k) { return o[k]; });
 
   // CA par jour (empilé) et CA par mois (groupé) : bleu = Inter, orange = Carburant, partout
   var pm = mois.split('-'), nbJ = new Date(+pm[0], +pm[1], 0).getDate(), jours = [];
