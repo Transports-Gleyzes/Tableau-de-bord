@@ -264,7 +264,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v17/11-refonte1</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v17/11-refonte2</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -279,10 +279,9 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
   <button role="tab" data-onglet="salaries"><span class="ico-onglet" aria-hidden="true">👥</span>Salariés</button>
   <button role="tab" data-onglet="activite"><span class="ico-onglet" aria-hidden="true">📦</span>Activité</button>
   <button role="tab" data-onglet="conso"><span class="ico-onglet" aria-hidden="true">⛽</span>Consommation</button>
-  <button role="tab" data-onglet="facturation"><span class="ico-onglet" aria-hidden="true">✅</span>Contrôle factures</button>
-  <button role="tab" data-onglet="prefacs"><span class="ico-onglet" aria-hidden="true">📑</span>Préfac ITM</button>
+  <button role="tab" data-onglet="prefacs"><span class="ico-onglet" aria-hidden="true">📑</span>Contrôle préfac ITM</button>
   <button role="tab" data-onglet="peages"><span class="ico-onglet" aria-hidden="true">🛣️</span>Péages ITM</button>
-  <button role="tab" data-onglet="scaped"><span class="ico-onglet" aria-hidden="true">🛢️</span>SCAPED</button>
+  <button role="tab" data-onglet="scaped"><span class="ico-onglet" aria-hidden="true">🛢️</span>Facture SCAPED</button>
   <button role="tab" data-onglet="compta"><span class="ico-onglet" aria-hidden="true">📊</span>Comptabilité</button>
   <button role="tab" data-onglet="alertes"><span class="ico-onglet" aria-hidden="true">🔔</span>Alertes <span class="pastille" id="nbAlertes" hidden></span></button>
 </nav>
@@ -405,46 +404,6 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
       <h2 id="titreConsoS">Dernières semaines saisies par camion</h2>
       <p class="note" id="noteConsoS"></p>
       <div class="tableau"><table id="tabConsoS"></table></div>
-    </div>
-  </section>
-
-  <!-- CONTRÔLE DES FACTURES CLIENTS (PDF INFORCE) -->
-  <section id="facturation" hidden>
-    <div class="carte">
-      <h2>Déposer des factures (PDF INFORCE)</h2>
-      <p class="note">Glissez ici un ou plusieurs PDF de factures clients. Le site les lit, les range dans Google Drive
-        (dossier « Tableau de bord - Factures clients ») et les compare aux plannings. Une facture redéposée remplace l'ancienne.</p>
-      <div class="depot" id="zoneDepot">📄 Glissez les PDF ici, ou cliquez pour les choisir
-        <input type="file" id="choixPdf" accept="application/pdf" multiple hidden></div>
-      <div id="listeDepot"></div>
-    </div>
-    <div class="barre"><label for="moisFact">Mois facturé</label><select id="moisFact"></select><span class="note" id="noteFact"></span></div>
-    <div class="tuiles" id="tuilesFact2"></div>
-    <div class="carte carbu">
-      <h2><span class="pastille-act" style="background:var(--s2)"></span>Contrôle Carburant</h2>
-      <p class="note">Chaque client du planning comparé à sa facture : m³, prix au m³, livraisons (LVN). Client reconnu par le lieu de livraison et les m³.</p>
-      <div class="tableau"><table id="tabCtrlCarbu" class="serre"></table></div>
-    </div>
-    <div class="carte inter">
-      <h2><span class="pastille-act" style="background:var(--s1)"></span>Contrôle Inter (ITM)</h2>
-      <p class="note">Nombre de tournées par terme fixe (286 €, 330 €, 540 €…) au planning et sur les factures ; montants pour information (la préfacture ITM fait foi).</p>
-      <div class="tableau"><table id="tabCtrlInter"></table></div>
-    </div>
-    <div class="grille">
-      <div class="carte">
-        <h2>Fiche indexation</h2>
-        <p class="note" id="noteIndex"></p>
-        <div class="legende" id="legIndex"></div>
-        <div class="graph"><canvas id="gIndex" aria-label="Indexation par mois"></canvas></div>
-      </div>
-      <div class="carte">
-        <h2>Indexation du mois par client</h2>
-        <div class="tableau"><table id="tabIndex"></table></div>
-      </div>
-    </div>
-    <div class="carte">
-      <h2>Factures déposées pour ce mois</h2>
-      <div class="tableau"><table id="tabFactDep"></table></div>
     </div>
   </section>
 
@@ -743,7 +702,7 @@ function afficherOnglet(nom) {
   try { localStorage.setItem('ongletTDB', nom); } catch (e) {}
   if (!D) return;
   ({ accueil: rendreAccueil, flotte: rendreFlotte, salaries: rendreSalaries,
-     activite: rendreActivite, conso: rendreConso, charges: rendreCharges, facturation: rendreFacturation, prefacs: rendrePrefacs, peages: rendrePeages, scaped: rendreScaped, compta: rendreCompta, alertes: rendreAlertes })[nom]();
+     activite: rendreActivite, conso: rendreConso, charges: rendreCharges, prefacs: rendrePrefacs, peages: rendrePeages, scaped: rendreScaped, compta: rendreCompta, alertes: rendreAlertes })[nom]();
 }
 
 function alertesFiltrees() {
@@ -1092,7 +1051,7 @@ function rendreIndexationGasoil(mois, inter, carbu, socs) {
       var p = pf.filter(function (x) { return x.societe === so; }).reduce(function (t, x) { return t + (x.indexation.montant || 0); }, 0);
       return cellule(m, fmtNb.format(km) + ' km' + (p ? ' · préfac ' + fEur2(p) : ''));
     }).join('') + '</tr>');
-  // Carburant : montant HT des factures du mois (hors lignes d'indexation) × % ; sans facture déposée, CA du planning
+  // Carburant : montant HT du mois (CA du planning ; la facture SCAPED préparée par le site si elle existe) × %
   var factM = (D.FACTURES_CLIENTS || []).filter(function (f) {
     return String(f.Mois).slice(0, 7) === mois && f.Activite === 'Carburant' && f.Nature !== 'INDEXATION' && garderSociete(f.Societe);
   });
@@ -1101,7 +1060,7 @@ function rendreIndexationGasoil(mois, inter, carbu, socs) {
     var l = carbu.filter(function (x) { return sourceIndexCarbu(x) === s[0]; });
     var f = factM.filter(function (x) { return sourceIndexCarbu({ client: x.Client, lieu: x.Lieu }) === s[0]; });
     if (!l.length && !f.length && s[0] !== 'CNR') return;
-    lignes.push('<tr><td><b>' + s[1] + '</b><span class="note">' + (s[0] === 'CNR' ? s[2] : pct[s[0]] == null ? s[2] + ' à saisir' : fPct(pct[s[0]])) + ' × montant HT des factures</span></td>' +
+    lignes.push('<tr><td><b>' + s[1] + '</b><span class="note">' + (s[0] === 'CNR' ? s[2] : pct[s[0]] == null ? s[2] + ' à saisir' : fPct(pct[s[0]])) + ' × montant HT du mois</span></td>' +
       socs.map(function (so) {
         var fs = f.filter(function (x) { return x.Societe === so; }), nums = {};
         fs.forEach(function (x) { nums[x.N_Facture] = 1; });
@@ -1109,8 +1068,7 @@ function rendreIndexationGasoil(mois, inter, carbu, socs) {
         var base = nbF ? fs.reduce(function (t, x) { return t + (num(x.Montant_HT) || 0); }, 0) : caPl;
         var m = pct[s[0]] == null ? null : Math.round(base * pct[s[0]]) / 100;
         if (m != null) tot[so] += m;
-        var detail = nbF ? 'sur ' + fEur2(base) + ' HT · ' + nbF + ' facture' + (nbF > 1 ? 's' : '')
-          : base ? '<span class="neg">facture non déposée</span> : CA planning ' + fmtEur.format(base) : 'aucune facture';
+        var detail = base ? 'sur ' + fEur2(base) + ' HT' + (nbF ? ' · facture ' + Object.keys(nums).join(', ') : '') : 'aucune livraison';
         return cellule(m, detail);
       }).join('') + '</tr>');
   });
@@ -1144,12 +1102,12 @@ function rendreIndexationGasoil(mois, inter, carbu, socs) {
     } else if (ixOnglet === 'SCAPED' || ixOnglet === 'TD') {
       var t = ixOnglet === 'TD' ? 'TD_BRIGNOLES' : 'SCAPED', nomT = ixOnglet === 'TD' ? 'TD (Thevenin Ducrot)' : 'SCAPED';
       champs = [['ixPct', mois, t]];
-      P.innerHTML = '<p class="note ix-expl">Indexation ' + nomT + ' de ' + nomMois(mois) + ' : montant HT des factures ' + nomT + ' du mois × ce pourcentage</p>' +
+      P.innerHTML = '<p class="note ix-expl">Indexation ' + nomT + ' de ' + nomMois(mois) + ' : montant HT du mois (' + nomT + ') × ce pourcentage</p>' +
         champ('ixPct', '% ' + nomT, V[t], 'ex. 17,2') + bouton('Enregistrer ' + nomT + ' · ' + nomMois(mois)) +
         historique([t], function (x) { return fPct(x[t]); });
     } else {
       champs = [['ixCNR', prec, 'CNR']];
-      P.innerHTML = '<p class="note ix-expl">Reste carburant (tous les clients sauf SCAPED et Thevenin Ducrot : SEB, Hyper U, Super U…) : (indice CNR du mois précédent / 154,44 − 1) × 22 % × montant HT des factures</p>' +
+      P.innerHTML = '<p class="note ix-expl">Reste carburant (tous les clients sauf SCAPED et Thevenin Ducrot : SEB, Hyper U, Super U…) : (indice CNR du mois précédent / 154,44 − 1) × 22 % × montant HT du mois</p>' +
         '<label>Indice CNR de ' + nomMois(prec) + '<input id="ixCNR" inputmode="decimal" placeholder="ex. 178,32" value="' + val(cnr) + '">' +
         '<span class="calc" id="ixCNRpct">' + (pctCNR != null ? '→ ' + fPct(pctCNR) + ' pour ' + nomMois(mois) : '(indice / 154,44 − 1) × 22 %') + '</span></label>' +
         bouton('Enregistrer l\'indice CNR de ' + nomMois(prec)) +
@@ -1676,14 +1634,6 @@ function afficherVerif(id) {
   v.querySelector('[data-a=non]').onclick = function () { delete enAttenteVerif[id]; el.remove(); };
   v.querySelector('[data-a=ok]').onclick = function () { lire(); f.avertissements = []; enregistrerFacture(id, f, a.b64, a.nom).then(function () { charger(); }); };
 }
-(function () {
-  var zone = document.getElementById('zoneDepot'), choix = document.getElementById('choixPdf');
-  zone.addEventListener('click', function (e) { if (e.target !== choix) choix.click(); });
-  choix.addEventListener('change', function () { traiterFichiers(choix.files); choix.value = ''; });
-  ['dragenter', 'dragover'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.add('survol'); }); });
-  ['dragleave', 'drop'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.remove('survol'); }); });
-  zone.addEventListener('drop', function (e) { traiterFichiers(e.dataTransfer.files); });
-})();
 
 // ---------- péages Intermarché : relevés de badge CSV ----------
 function lireRelevePeages(texte, nomFichier) {
@@ -2528,116 +2478,6 @@ function indexationLignes(fact) {
   });
   return res;
 }
-function rendreFacturation() {
-  rendreScaped();
-  rendrePeages();
-  var fact = (D.FACTURES_CLIENTS || []).filter(function (l) { return garderSociete(l.Societe); });
-  var mois = {};
-  fact.forEach(function (l) { if (l.Mois) mois[String(l.Mois).slice(0, 7)] = 1; });
-  Object.keys(D.CONTROLE || {}).forEach(function (m) { mois[m] = 1; });
-  Object.keys(D.PREFACS || {}).forEach(function (m) { mois[m] = 1; });
-  var sel = document.getElementById('moisFact'), ancien = sel.value, liste = Object.keys(mois).sort().reverse();
-  sel.innerHTML = liste.map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
-  if (liste.indexOf(ancien) >= 0) sel.value = ancien;
-  var M = sel.value, ctrl = (D.CONTROLE || {})[M] || { carburant: [], inter: [], indexation: [] };
-  rendrePrefacs();
-  var fM = fact.filter(function (l) { return String(l.Mois).slice(0, 7) === M; });
-  var an = (M || aujourdhui()).slice(0, 4);
-  var htM = fM.filter(function (l) { return l.Nature !== 'INDEXATION'; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0);
-  var ixM = fM.filter(function (l) { return l.Nature === 'INDEXATION'; }).reduce(function (t, l) { return t + (num(l.Montant_HT) || 0); }, 0);
-  var IX = indexationLignes(fact);
-  var ixAn = IX.filter(function (x) { return x.mois.slice(0, 4) === an; }).reduce(function (t, x) { return t + x.montant; }, 0);
-  ixM = IX.filter(function (x) { return x.mois === M; }).reduce(function (t, x) { return t + x.montant; }, 0);
-  var aVerifier = ctrl.carburant.filter(function (x) { return x.etats && x.etats.length && garderSociete(x.societe); }).length +
-    ctrl.inter.filter(function (x) { return x.etats && x.etats.length && garderSociete(x.societe); }).length;
-  var nbFact = {}; fM.forEach(function (l) { nbFact[l.N_Facture] = 1; });
-  document.getElementById('noteFact').textContent = M ? Object.keys(nbFact).length + ' facture(s) déposée(s) pour ' + nomMois(M) : 'Aucune facture déposée pour l\'instant.';
-  document.getElementById('tuilesFact2').innerHTML =
-    tuile('Facturé ' + (M ? nomMois(M) : ''), fmtEur.format(htM), 'HT, hors indexation') +
-    tuile('Indexation ' + (M ? nomMois(M) : ''), fmtEur.format(ixM), htM ? fmtNb.format(ixM / htM * 100) + ' % du facturé' : '') +
-    tuile('Indexation ' + an, fmtEur.format(ixAn), 'depuis janvier') +
-    tuile('Points à vérifier', '<span class="' + (aVerifier ? 'neg' : '') + '">' + aVerifier + '</span>', aVerifier ? 'voir les tableaux ci-dessous' : 'tout correspond');
-
-  var etat = function (x) {
-    if (!x.etats || !x.etats.length) return badge('ok', 'Conforme');
-    return x.etats.map(function (e) {
-      var niv = e === 'à facturer' ? 'a_prevoir' : (e === 'prix' || e === 'absent du planning') ? 'a_prevoir' : 'urgent';
-      var lib = { 'm³': 'Écart m³', prix: 'Écart prix', lieu: 'Lieu différent', livraisons: 'Livraisons manquantes', 'non facturé': 'Non facturé', 'à facturer': 'À facturer', 'absent du planning': 'Hors planning', tournees: 'Écart tournées', 'tournées': 'Écart tournées' }[e] || e;
-      return badge(niv, lib);
-    }).join(' ');
-  };
-  var gravite = function (x) {
-    var e = x.etats || [];
-    return e.indexOf('non facturé') >= 0 || e.indexOf('m³') >= 0 || e.indexOf('livraisons') >= 0 ? 0 : e.indexOf('absent du planning') >= 0 ? 1 : e.indexOf('lieu') >= 0 || e.indexOf('prix') >= 0 ? 2 : e.length ? 3 : 4;
-  };
-  var c = ctrl.carburant.filter(function (x) { return garderSociete(x.societe); }).sort(function (a, b) { return gravite(a) - gravite(b) || String(a.clientPlanning || a.clientFacture).localeCompare(String(b.clientPlanning || b.clientFacture)); });
-  var v = function (x) { return x === undefined || x === null || x === '' ? '<span class="nd">—</span>' : txt(x); };
-  document.getElementById('tabCtrlCarbu').innerHTML = '<thead><tr><th>Client planning</th><th>Client facture</th><th>Lieu</th><th>Soc.</th><th class="n">Livr.</th><th class="n">m³ plan.</th><th class="n">m³ fact.</th><th class="n">Prix plan.</th><th class="n">Prix fact.</th><th class="n">CA planning</th><th class="n">Facturé HT</th><th>État</th></tr></thead><tbody>' +
-    (c.length ? c.map(function (x) {
-      return '<tr><td>' + v(x.clientPlanning) + '</td><td>' + v(x.clientFacture) + '</td><td>' + v(x.lieu) + (x.lieuFacture && x.lieu && sansAccents(x.lieuFacture) !== sansAccents(x.lieu) && (x.etats || []).indexOf('lieu') >= 0 ? '<div class="note">facturé : ' + txt(x.lieuFacture) + '</div>' : '') + (x.periode ? '<div class="note">' + txt(x.periode) + '</div>' : '') + '</td><td>' + v(x.societe) + '</td><td class="n">' + v(x.n) +
-        '</td><td class="n">' + v(x.m3Plan) + '</td><td class="n' + (x.m3Plan !== undefined && x.m3Fact !== undefined && Math.abs(x.m3Plan - x.m3Fact) > 0.5 ? ' neg' : '') + '">' + v(x.m3Fact) +
-        '</td><td class="n">' + v(x.prixPlan) + '</td><td class="n' + ((x.etats || []).indexOf('prix') >= 0 ? ' neg' : '') + '">' + v(x.prixFact) +
-        '</td><td class="n">' + (x.caPlan !== undefined ? eur(x.caPlan) : '<span class="nd">—</span>') + '</td><td class="n">' + (x.montantFact !== undefined ? eur(x.montantFact) : '<span class="nd">—</span>') +
-        '</td><td title="' + txt(x.factures || '') + '">' + etat(x) + (x.lvnManquants ? '<div class="note">Manquent : ' + txt(x.lvnManquants) + '</div>' : '') +
-        (x.ajustements ? '<div class="note">' + x.ajustements.map(function (j) { return txt(j.libelle) + ' ' + (j.montant > 0 ? '+' : '') + eur(j.montant); }).join(' · ') + ' (hors m³)</div>' : '') + '</td></tr>';
-    }).join('') : '<tr><td colspan="12" class="vide">Rien à contrôler pour ce mois</td></tr>') + '</tbody>';
-  var it = ctrl.inter.filter(function (x) { return garderSociete(x.societe); });
-  document.getElementById('tabCtrlInter').innerHTML = '<thead><tr><th>Société</th><th>Tournées par terme fixe (planning / facturé)</th><th class="n">CA planning</th><th class="n">Terme fixe</th><th class="n">Terme variable</th><th class="n">Indexation</th><th class="n">Péages</th><th class="n">Facturé (hors péages)</th><th>Factures</th><th>État</th></tr></thead><tbody>' +
-    (it.length ? it.map(function (x) {
-      return '<tr><td>' + txt(x.societe) + '</td><td>' + (x.detail || []).map(function (d) {
-        return '<span class="' + (d.plan !== d.fact ? 'neg' : '') + '">' + fmtNb.format(d.prix) + ' € : ' + d.plan + ' / ' + d.fact + '</span>';
-      }).join('<br>') + '</td><td class="n">' + eur(x.caPlan) + '</td><td class="n">' + eur(x.termeFixe) + '</td><td class="n">' + eur(x.termeVariable) + '</td><td class="n">' + eur(x.indexation) +
-        '</td><td class="n">' + eur(x.peage) + '</td><td class="n">' + eur(x.facture) + '</td><td>' + v(x.factures) + '</td><td>' + etat(x) + '</td></tr>';
-    }).join('') : '<tr><td colspan="10" class="vide">Rien à contrôler pour ce mois</td></tr>') + '</tbody>';
-
-  // Fiche indexation : par mois de l'année (Gleyzes / LPB) et par client pour le mois choisi
-  var moisAn = []; for (var k = 1; k <= 12; k++) moisAn.push(an + '-' + ('0' + k).slice(-2));
-  var parMoisSoc = function (m, so) { return IX.filter(function (x) { return x.mois === m && x.societe === so; }).reduce(function (t, x) { return t + x.montant; }, 0); };
-  var avecIndex = moisAn.filter(function (m) { return parMoisSoc(m, 'Gleyzes') || parMoisSoc(m, 'LPB'); });
-  var ixG = IX.filter(function (x) { return x.mois.slice(0, 4) === an && x.societe === 'Gleyzes'; }).reduce(function (t, x) { return t + x.montant; }, 0);
-  document.getElementById('noteIndex').textContent = 'Total ' + an + ' : ' + fmtEur.format(ixAn) + ' (Gleyzes ' + fmtEur.format(ixG) + ', LPB ' + fmtEur.format(ixAn - ixG) + '), d\'après les factures et les préfacs Intermarché déposées';
-  legende('legIndex', [['Gleyzes', css('--s1')], ['LPB', css('--s2')]]);
-  dessiner('gIndex', { type: 'bar', data: { labels: avecIndex.map(nomMois), datasets: [
-    barre('Gleyzes', avecIndex.map(function (m) { return parMoisSoc(m, 'Gleyzes') || null; }), css('--s1')),
-    barre('LPB', avecIndex.map(function (m) { return parMoisSoc(m, 'LPB') || null; }), css('--s2'))] }, options: optionsCommunes(false) });
-  var socPrefac = {}; IX.forEach(function (x) { if (x.mois === M && x.source === 'prefac') socPrefac[x.societe] = 1; });
-  var lignesIx = (ctrl.indexation || []).filter(function (x) { return garderSociete(x.societe) && x.montant && !(x.activite === 'Inter' && socPrefac[x.societe]); })
-    .concat(IX.filter(function (x) { return x.mois === M && x.source === 'prefac' && garderSociete(x.societe); }).map(function (x) {
-      return { client: 'ITM contrat ' + x.contrat, activite: 'Inter', societe: x.societe, base: x.km && x.cours ? Math.round(x.km * x.cours * 100) / 100 : null,
-        pct: x.taux !== null && x.taux !== undefined ? Math.round(x.taux * 10000) / 100 : null, montant: x.montant,
-        factures: 'préfac ' + x.prefac + (x.km ? ' · ' + fmtNb.format(x.km) + ' km × ' + String(x.cours || '?').replace('.', ',') + ' € × ' + String(x.taux || '?').replace('.', ',') : '') };
-    }));
-  tableTriable('tabIndex', [['Client', 'client', 'txt'], ['Activité', 'activite', 'txt'], ['Société', 'societe', 'txt'], ['Base facturée', 'base', 'eur'], ['Taux %', 'pct', 'nb'], ['Indexation', 'montant', 'eur'], ['Factures / calcul', 'factures', 'txt']],
-    lignesIx, function (o, k) { return o[k]; });
-
-  // Factures déposées du mois
-  var parN = {};
-  fM.forEach(function (l) {
-    var x = parN[l.N_Facture] = parN[l.N_Facture] || { n: l.N_Facture, date: l.Date_Facture, client: l.Client, societe: l.Societe, activite: l.Activite, ht: 0, ix: 0, url: l.Fichier };
-    if (l.Nature === 'INDEXATION') x.ix += num(l.Montant_HT) || 0; else x.ht += num(l.Montant_HT) || 0;
-  });
-  var lf = Object.keys(parN).sort().map(function (k) { return parN[k]; });
-  var t = document.getElementById('tabFactDep');
-  t.innerHTML = '<thead><tr><th>N°</th><th>Date</th><th>Client</th><th>Société</th><th>Activité</th><th class="n">HT (hors index.)</th><th class="n">Indexation</th><th></th><th></th></tr></thead><tbody>' +
-    (lf.length ? lf.map(function (x) {
-      return '<tr><td>' + txt(x.n) + '</td><td>' + dateFr(x.date) + '</td><td>' + txt(x.client) + '</td><td>' + txt(x.societe) + '</td><td>' + txt(x.activite) +
-        '</td><td class="n">' + eur(x.ht) + '</td><td class="n">' + (x.ix ? eur(x.ix) : '') + '</td><td>' + (x.url ? '<a href="' + txt(x.url) + '" target="_blank">PDF</a>' : '') +
-        '</td><td><button class="petit" data-supf="' + txt(x.n) + '">Supprimer</button></td></tr>';
-    }).join('') : '<tr><td colspan="9" class="vide">Aucune facture déposée pour ce mois</td></tr>') + '</tbody>';
-  t.querySelectorAll('[data-supf]').forEach(function (b) {
-    b.onclick = function () {
-      if (!confirm('Supprimer la facture ' + b.dataset.supf + ' du contrôle (le PDF part à la corbeille Drive) ?')) return;
-      b.disabled = true;
-      appelServeur('supprimerFactureClient', b.dataset.supf).then(charger).catch(function (e) { b.disabled = false; alert(e.message); });
-    };
-  });
-}
-
-// ---------- consommation (fichier Litrages) ----------
-// ---------- comptabilité : lecture et affichage des balances ----------
-var POSTES_BAL = ['Carburant', 'Péages', 'Entretien', 'Leasing', 'Locations', 'Assurances', 'Sous-traitance', 'Personnel', 'Frais bancaires', 'Honoraires',
-  'Déplacements', 'Frais généraux', 'Impôts et taxes', 'Charges financières', 'Charges exceptionnelles', 'Amortissements', 'Autres charges',
-  'Chiffre d\'affaires', 'Subventions', 'Autres produits', 'Bilan'];
 function plaqueLibelle(lib) { var m = sansAccents(lib).match(/(?:^|[^A-Z0-9])([A-Z]{2})[ -]?(\d{3})[ -]?([A-Z]{2})(?![A-Z0-9])/); return m ? m[1] + m[2] + m[3] : ''; }
 function posteCompte(c, lib) {
   var l = sansAccents(lib); c = String(c);
@@ -2913,7 +2753,6 @@ function rendreAlertes() {
 document.querySelectorAll('nav button').forEach(function (b) { b.addEventListener('click', function () { afficherOnglet(b.dataset.onglet); }); });
 document.getElementById('filtreSociete').addEventListener('change', function () { try { localStorage.setItem('societeTDB', societe()); } catch (e) {} afficherOnglet(ongletActif()); });
 document.getElementById('moisAct').addEventListener('change', rendreActivite);
-document.getElementById('moisFact').addEventListener('change', rendreFacturation);
 document.getElementById('filtreNiveau').addEventListener('change', rendreAlertes);
 ['filtreCatV', 'filtreEtatV'].forEach(function (id) { document.getElementById(id).addEventListener('change', rendreFlotte); });
 document.getElementById('filtreEtatS').addEventListener('change', rendreSalaries);
