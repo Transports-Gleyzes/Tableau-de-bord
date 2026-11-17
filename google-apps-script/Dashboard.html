@@ -65,6 +65,7 @@ section[hidden] { display: none; }
 .grande-case td.soc { border-left: 5px solid; font-weight: 700; letter-spacing: .03em; }
 .grande-case td.soc-gleyzes { border-left-color: var(--soc-gleyzes); color: var(--soc-gleyzes); }
 .grande-case td.soc-lpb { border-left-color: var(--soc-lpb); color: var(--soc-lpb); }
+.grande-case h3 { display: flow-root; }
 .grande-case h3 span.tot { float: right; font-weight: 600; font-size: 14px; opacity: .9; }
 .grandes-cases { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
 @media (max-width: 760px) { .grandes-cases, .tuiles-2 { grid-template-columns: 1fr !important; } }
@@ -76,6 +77,24 @@ section[hidden] { display: none; }
 .grande-case td .note { display: block; font-size: 12px; }
 .grande-case tr.total td { background: var(--surface-2); font-weight: 700; }
 .grande-case tr.total td.n { font-size: 22px; }
+/* Indexation gasoil (Activité) */
+.index-gasoil th.soc-gleyzes { color: var(--soc-gleyzes); border-bottom: 3px solid var(--soc-gleyzes); }
+.index-gasoil th.soc-lpb { color: var(--soc-lpb); border-bottom: 3px solid var(--soc-lpb); }
+.index-gasoil th { text-align: right; padding: 8px 18px; font-size: 13px; letter-spacing: .04em; background: var(--surface-2); }
+.index-gasoil th:first-child { text-align: left; }
+.index-gasoil td .note { display: block; font-size: 12px; font-weight: 400; }
+.index-gasoil td.n .note { font-size: 12px; }
+.saisie-index { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; padding: 14px 18px; border-top: 1px solid var(--border); background: var(--surface-2); }
+.saisie-index label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); font-weight: 600; }
+.saisie-index .duo { display: flex; gap: 6px; align-items: center; }
+.saisie-index input { width: 100%; min-width: 0; }
+.saisie-index .calc { font-weight: 400; color: var(--text-3); }
+.index-gasoil .defile { overflow-x: auto; }
+.index-gasoil .defile table { table-layout: fixed; width: 100%; }
+.index-gasoil td { white-space: normal; }
+.index-gasoil td:first-child, .index-gasoil th:first-child { width: 44%; }
+@media (max-width: 600px) { .index-gasoil td, .index-gasoil th { padding: 9px 8px; font-size: 13px; } .index-gasoil td.n { font-size: 14px; } .index-gasoil tr.total td.n { font-size: 15px; } .index-gasoil td:first-child, .index-gasoil th:first-child { width: 36%; } }
+.saisie-index .actions { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; }
 @media (max-width: 600px) { .tuiles-3 { grid-template-columns: 1fr !important; } }
 .tuiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .tuile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
@@ -332,6 +351,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
     <div class="barre"><label for="moisAct">Mois</label><select id="moisAct"></select><span class="note" id="noteAct"></span></div>
     <div class="tuiles tuiles-2" id="tuilesAct"></div>
     <div class="grandes-cases" id="tuilesSocAct"></div>
+    <div class="grande-case index-gasoil" id="indexAct" style="margin-bottom:18px"></div>
     <div class="grille">
       <div class="carte inter">
         <h2><span class="pastille-act" style="background:var(--s1)"></span>Planning Inter (ITM)</h2>
@@ -1024,6 +1044,90 @@ var ACT = [['Inter', 'Inter (ITM)', '--s1'], ['Carburant', 'Carburant', '--s2']]
 function planning() { return (D.PLANNING || []).filter(function (l) { return garderSociete(l.societe); }); }
 function caListe(l) { return l.reduce(function (t, x) { return t + (num(x.ca) || 0); }, 0); }
 
+// ---------- Indexation gasoil (Activité) ----------
+var CNR_BASE = 154.44, CNR_PART = 0.22;   // % = (indice CNR du mois précédent / 154,44 − 1) × 22 %
+function moisAvant(m) { var a = +m.slice(0, 4), n = +m.slice(5, 7) - 1; if (!n) { a--; n = 12; } return a + '-' + ('0' + n).slice(-2); }
+function cleTxt(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase(); }
+function sourceIndexCarbu(l) {   // quelle indexation s'applique à une livraison Carburant
+  var k = cleTxt(l.client + ' ' + l.lieu);
+  if (/BRIGNOLES/.test(k)) return 'TD';
+  if (/SCAPED/.test(k)) return 'SCAPED';
+  return 'CNR';
+}
+function nombreSaisi(v) { var s = String(v || '').replace(/[\s€%]/g, '').replace(',', '.'); return s === '' || isNaN(+s) ? null : +s; }
+function rendreIndexationGasoil(mois, inter, carbu, socs) {
+  var z = document.getElementById('indexAct'); if (!z) return;
+  var IX = D.INDEXATION || {}, V = IX[mois] || {}, prec = moisAvant(mois), cnr = (IX[prec] || {}).CNR;
+  // cours / taux Intermarché : saisis, sinon repris d'une préfac du mois
+  var pf = ((D.PREFACS || {})[mois] || []).filter(function (x) { return x.indexation && x.indexation.cours; });
+  var cours = V.ITM_COURS != null ? V.ITM_COURS : pf.length ? pf[0].indexation.cours : null;
+  var taux = V.ITM_TAUX != null ? V.ITM_TAUX : pf.length ? pf[0].indexation.taux : null;
+  var depuisPrefac = V.ITM_COURS == null && pf.length;
+  var pctCNR = cnr != null ? (cnr / CNR_BASE - 1) * CNR_PART * 100 : null;
+  var pct = { TD: V.TD_BRIGNOLES != null ? V.TD_BRIGNOLES : null, SCAPED: V.SCAPED != null ? V.SCAPED : null, CNR: pctCNR };
+  var de = function (l, so) { return l.filter(function (x) { return x.societe === so; }); };
+  var kmDe = function (l) { return l.reduce(function (t, x) { return t + (num(x.km) || 0); }, 0); };
+  var fPct = function (p) { return p == null ? '—' : p.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) + ' %'; };
+  var fEur2 = function (n) { return n.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' }); };
+  var tot = {}; socs.forEach(function (so) { tot[so] = 0; });
+  var cellule = function (montant, detail) {
+    return '<td class="n">' + (montant == null ? '<span class="nd">à saisir</span>' : fEur2(montant)) + '<span class="note">' + detail + '</span></td>';
+  };
+  var lignes = [];
+  // Intermarché : km des tournées × cours × taux
+  var coef = cours != null && taux != null ? cours * taux : null;
+  lignes.push('<tr><td><b>Intermarché</b><span class="note">km des tournées × cours ' + (cours == null ? '?' : String(cours).replace('.', ',')) + ' × taux ' + (taux == null ? '?' : String(taux).replace('.', ',')) + (depuisPrefac ? ' (repris de la préfac)' : '') + '</span></td>' +
+    socs.map(function (so) {
+      var km = kmDe(de(inter, so)), m = coef == null ? null : Math.round(km * coef * 100) / 100;
+      if (m != null) tot[so] += m;
+      var p = pf.filter(function (x) { return x.societe === so; }).reduce(function (t, x) { return t + (x.indexation.montant || 0); }, 0);
+      return cellule(m, fmtNb.format(km) + ' km' + (p ? ' · préfac ' + fEur2(p) : ''));
+    }).join('') + '</tr>');
+  [['TD', 'Carburant Brignoles (TD)', '% TD du mois'], ['SCAPED', 'Carburant SCAPED', '% SCAPED du mois'],
+   ['CNR', 'Autres clients carburant', cnr != null ? '(CNR ' + nomMois(prec) + ' ' + String(cnr).replace('.', ',') + ' / 154,44 − 1) × 22 % = ' + fPct(pctCNR) : 'indice CNR de ' + nomMois(prec) + ' à saisir']].forEach(function (s) {
+    var l = carbu.filter(function (x) { return sourceIndexCarbu(x) === s[0]; });
+    if (!l.length && s[0] !== 'CNR') return;
+    lignes.push('<tr><td><b>' + s[1] + '</b><span class="note">' + (s[0] === 'CNR' ? s[2] : pct[s[0]] == null ? s[2] + ' à saisir' : fPct(pct[s[0]]) + ' du CA') + '</span></td>' +
+      socs.map(function (so) {
+        var ca = caListe(de(l, so)), m = pct[s[0]] == null ? null : Math.round(ca * pct[s[0]]) / 100;
+        if (m != null) tot[so] += m;
+        return cellule(m, 'sur ' + fmtEur.format(ca) + ' de CA');
+      }).join('') + '</tr>');
+  });
+  lignes.push('<tr class="total"><td>TOTAL INDEXATION</td>' + socs.map(function (so) { return '<td class="n">' + fEur2(tot[so]) + '</td>'; }).join('') + '</tr>');
+  var val = function (v) { return v == null ? '' : String(v).replace('.', ','); };
+  var tousTot = socs.reduce(function (t, so) { return t + tot[so]; }, 0);
+  z.innerHTML = '<h3>INDEXATION GASOIL · ' + nomMois(mois).toUpperCase() + (socs.length > 1 ? '<span class="tot">' + fEur2(tousTot) + '</span>' : '') + '</h3>' +
+    '<div class="defile"><table><thead><tr><th></th>' + socs.map(function (so) { return '<th class="soc-' + so.toLowerCase() + '">' + so.toUpperCase() + '</th>'; }).join('') + '</tr></thead><tbody>' + lignes.join('') + '</tbody></table></div>' +
+    '<div class="saisie-index">' +
+      '<label>Intermarché (donné par ITM)<span class="duo"><input id="ixCours" inputmode="decimal" placeholder="cours" value="' + val(V.ITM_COURS) + '"> × <input id="ixTaux" inputmode="decimal" placeholder="taux" value="' + val(V.ITM_TAUX) + '"></span>' +
+        '<span class="calc">' + (depuisPrefac ? 'vide = repris de la préfac (' + val(cours) + ' × ' + val(taux) + ')' : 'cours gasoil × taux, appliqué aux km') + '</span></label>' +
+      '<label>% TD Brignoles<input id="ixTD" inputmode="decimal" placeholder="ex. 18,5" value="' + val(V.TD_BRIGNOLES) + '"></label>' +
+      '<label>% SCAPED<input id="ixScaped" inputmode="decimal" placeholder="ex. 17,2" value="' + val(V.SCAPED) + '"></label>' +
+      '<label>Indice CNR de ' + nomMois(prec) + '<input id="ixCNR" inputmode="decimal" placeholder="ex. 178,32" value="' + val(cnr) + '">' +
+        '<span class="calc" id="ixCNRpct">' + (pctCNR != null ? '→ ' + fPct(pctCNR) + ' pour ' + nomMois(mois) : '(indice / 154,44 − 1) × 22 %') + '</span></label>' +
+      '<div class="actions"><button id="ixEnreg" class="primaire">Enregistrer l\'indexation de ' + nomMois(mois) + '</button><span class="msg" id="ixMsg"></span></div>' +
+    '</div>';
+  document.getElementById('ixCNR').oninput = function () {
+    var v = nombreSaisi(this.value);
+    document.getElementById('ixCNRpct').textContent = v == null ? '(indice / 154,44 − 1) × 22 %' : '→ ' + fPct((v / CNR_BASE - 1) * CNR_PART * 100) + ' pour ' + nomMois(mois);
+  };
+  document.getElementById('ixEnreg').onclick = function () {
+    var msg = document.getElementById('ixMsg'), b = this, liste = [], faux = [];
+    [['ixCours', mois, 'ITM_COURS'], ['ixTaux', mois, 'ITM_TAUX'], ['ixTD', mois, 'TD_BRIGNOLES'], ['ixScaped', mois, 'SCAPED'], ['ixCNR', prec, 'CNR']].forEach(function (c) {
+      var brut = document.getElementById(c[0]).value.trim(), v = nombreSaisi(brut);
+      if (brut && v == null) faux.push(brut);
+      liste.push({ mois: c[1], type: c[2], valeur: v == null ? '' : v });
+    });
+    if (faux.length) { msg.className = 'msg err'; msg.textContent = 'Nombre non reconnu : ' + faux.join(', '); return; }
+    b.disabled = true; msg.className = 'msg'; msg.textContent = 'Enregistrement…';
+    appelServeur('enregistrerIndexation', liste).then(function (r) {
+      D.INDEXATION = r || {}; rendreActivite();
+      var m2 = document.getElementById('ixMsg'); m2.className = 'msg ok'; m2.textContent = '✓ Indexation enregistrée';
+    }).catch(function (e) { b.disabled = false; msg.className = 'msg err'; msg.textContent = e.message; });
+  };
+}
+
 function rendreActivite() {
   var mois = document.getElementById('moisAct').value, pl = planning();
   var duMois = pl.filter(function (l) { return l.date.slice(0, 7) === mois; });
@@ -1049,6 +1153,7 @@ function rendreActivite() {
       socs.map(function (so) { return ligne(so, de(lignes, so)); }).join('') + '</tbody></table></div>';
   };
   document.getElementById('tuilesSocAct').innerHTML = grandeCase('INTERMARCHÉ', 'var(--s1)', inter, 'tournée') + grandeCase('CARBURANT', 'var(--s2)', carbu, 'livraison');
+  rendreIndexationGasoil(mois, inter, carbu, socs);
 
   var km = inter.reduce(function (t, l) { return t + (num(l.km) || 0); }, 0);
   var manquants = inter.filter(function (l) { return l.contratManquant; }).length;

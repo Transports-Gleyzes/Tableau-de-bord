@@ -45,6 +45,7 @@ var FEUILLES = {
   PEAGES: ['Mois', 'Quinzaine', 'Facture_Badge', 'Immatriculation', 'Date_Entree', 'Heure_Entree', 'Gare_Entree', 'Autoroute_Entree',
            'Date_Sortie', 'Heure_Sortie', 'Gare_Sortie', 'Autoroute_Sortie', 'Societe_Autoroute', 'KM', 'Montant_HT', 'Montant_TTC', 'Contrat', 'Rembourse', 'Depose_Le', 'Manuel', 'Societe_Releve', 'Garder'],
   PEAGES_REGLES: ['Type', 'Badge', 'Camion', 'Chauffeur', 'Contrat', 'Du', 'Au', 'Note', 'Modifie_Le'],
+  INDEXATION: ['Mois', 'Type', 'Valeur', 'Modifie_Le'],
   PEAGES_BADGES: ['Mois', 'Badge', 'Camion_Reel', 'Du', 'Au', 'Commentaire', 'Documents', 'Modifie_Le'],
   BALANCE: ['Societe', 'Du', 'Au', 'Compte', 'Libelle', 'Debit', 'Credit', 'Poste', 'Camion', 'Importe_Le'],
   CORRESPONDANCES: ['Type', 'Sur_la_facture', 'Sur_le_planning', 'Remarque'],
@@ -299,6 +300,7 @@ function getDonnees() {
   try { d.PEAGES_DETAIL = detailPeages_(ss); } catch (e) { d.PEAGES_DETAIL = {}; }
   try { d.PEAGES_BADGES = badgesMois_(ss); } catch (e) { d.PEAGES_BADGES = {}; }
   try { d.PEAGES_REGLES = reglesPeages_(ss); } catch (e) { d.PEAGES_REGLES = []; }
+  try { d.INDEXATION = indexationGasoil_(ss); } catch (e) { d.INDEXATION = {}; }
   try { d.PEAGES_RELEVES = relevesPeages_(ss); } catch (e) { d.PEAGES_RELEVES = []; }
   try { d.PEAGES_FICHIERS = fichiersPeages_(ss); } catch (e) { d.PEAGES_FICHIERS = []; }
   try { d.PEAGES_GARDES = gardesPeages_(); } catch (e) { d.PEAGES_GARDES = {}; }
@@ -3595,4 +3597,52 @@ function euros_(n) {
 
 function echapper_(s) {
   return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+}
+
+
+// ---------------------------------------------------------------------------------------------------------------
+// Indexation gasoil (onglet Activité) : valeurs saisies chaque mois, rangées dans l'onglet INDEXATION
+//   ITM_COURS / ITM_TAUX : donnés par Intermarché (indexation = km des tournées × cours × taux)
+//   TD_BRIGNOLES : % d'indexation TD pour Brignoles (carburant)
+//   SCAPED : % d'indexation SCAPED (carburant)
+//   CNR : indice CNR gazole du mois (sert au mois suivant : % = (indice / 154,44 − 1) × 22 %)
+var TYPES_INDEXATION = ['ITM_COURS', 'ITM_TAUX', 'TD_BRIGNOLES', 'SCAPED', 'CNR'];
+
+/** { 'AAAA-MM': { ITM_COURS: n, ... } } */
+function indexationGasoil_(ss) {
+  var sh = ss.getSheetByName('INDEXATION'), res = {};
+  if (!sh || sh.getLastRow() < 2) return res;
+  sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues().forEach(function (l) {
+    var m = moisTexte_(l[0]), t = String(l[1] || '').trim().toUpperCase(), v = nombre_(l[2], null);
+    if (!/^\d{4}-\d{2}$/.test(m) || TYPES_INDEXATION.indexOf(t) < 0 || v === null) return;
+    (res[m] = res[m] || {})[t] = v;
+  });
+  return res;
+}
+
+/** Depuis le site : liste de { mois: 'AAAA-MM', type, valeur } ; valeur vide = effacée. */
+function enregistrerIndexation(liste) {
+  if (!Array.isArray(liste)) throw new Error('Données invalides');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var ss = classeur_(), sh = ss.getSheetByName('INDEXATION');
+    if (!sh) {
+      sh = ss.insertSheet('INDEXATION'); sh.setFrozenRows(1);
+      sh.getRange(1, 1, 1, FEUILLES.INDEXATION.length).setValues([FEUILLES.INDEXATION]).setFontWeight('bold');
+    }
+    var vals = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues() : [];
+    liste.forEach(function (x) {
+      var m = String(x.mois || ''), t = String(x.type || '').trim().toUpperCase();
+      if (!/^\d{4}-\d{2}$/.test(m)) throw new Error('Mois invalide : ' + m);
+      if (TYPES_INDEXATION.indexOf(t) < 0) throw new Error('Type inconnu : ' + x.type);
+      var brut = String(x.valeur === undefined || x.valeur === null ? '' : x.valeur).trim(), v = brut === '' ? null : nombre_(brut, NaN);
+      if (v !== null && !isFinite(v)) throw new Error(t + ' : nombre attendu (« ' + brut + ' »)');
+      vals = vals.filter(function (l) { return !(moisTexte_(l[0]) === m && String(l[1]).trim().toUpperCase() === t); });
+      if (v !== null) vals.push(["'" + m, t, v, new Date()]);
+    });
+    vals.sort(function (a, b) { var x = moisTexte_(a[0]) + a[1], y = moisTexte_(b[0]) + b[1]; return x < y ? -1 : x > y ? 1 : 0; });
+    if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 4).clearContent();
+    if (vals.length) sh.getRange(2, 1, vals.length, 4).setValues(vals);
+    return indexationGasoil_(ss);
+  } finally { lock.releaseLock(); }
 }
