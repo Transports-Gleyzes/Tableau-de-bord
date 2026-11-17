@@ -230,7 +230,6 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </header>
 <nav role="tablist" id="onglets">
   <button role="tab" data-onglet="accueil" aria-selected="true"><span class="ico-onglet" aria-hidden="true">🏠</span>Accueil</button>
-  <button role="tab" data-onglet="finances"><span class="ico-onglet" aria-hidden="true">💶</span>Finances</button>
   <button role="tab" data-onglet="charges"><span class="ico-onglet" aria-hidden="true">🧾</span>Charges</button>
   <button role="tab" data-onglet="flotte"><span class="ico-onglet" aria-hidden="true">🚛</span>Flotte</button>
   <button role="tab" data-onglet="salaries"><span class="ico-onglet" aria-hidden="true">👥</span>Salariés</button>
@@ -252,29 +251,6 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
   </section>
 
   <!-- FINANCES -->
-  <section id="finances" hidden>
-    <div class="barre"><label for="moisFin">Mois</label><select id="moisFin"></select></div>
-    <div class="tuiles" id="tuilesFin"></div>
-    <p class="note" id="noteFin"></p>
-    <div class="grille">
-      <div class="carte">
-        <h2>Résultat par camion</h2>
-        <p class="note">CA − toutes les charges du mois. En rouge : camion en perte.</p>
-        <div class="graph"><canvas id="gResultat" aria-label="Résultat par camion"></canvas></div>
-      </div>
-      <div class="carte">
-        <h2>Charges par poste et par mois</h2>
-        <p class="note">12 derniers mois</p>
-        <div class="legende" id="legPostes"></div>
-        <div class="graph"><canvas id="gPostes" aria-label="Charges par poste"></canvas></div>
-      </div>
-    </div>
-    <div class="carte">
-      <h2>Détail par camion</h2>
-      <p class="note">N/D = donnée pas encore disponible (jamais remplacée par 0). Cliquez un titre de colonne pour trier.</p>
-      <div class="tableau"><table id="tabFin"></table></div>
-    </div>
-  </section>
 
   <!-- CHARGES (modifiables depuis le site) -->
   <section id="charges" hidden>
@@ -715,9 +691,6 @@ function moisFinances() {
   return Object.keys(m).sort();
 }
 function remplirSelectMois() {
-  var sel = document.getElementById('moisFin'), ancien = sel.value, mois = moisFinances();
-  sel.innerHTML = mois.slice().reverse().map(function (m) { return '<option value="' + m + '">' + nomMois(m) + '</option>'; }).join('');
-  if (mois.indexOf(ancien) >= 0) sel.value = ancien;
 
   var selA = document.getElementById('moisAct'), ancienA = selA.value, ma = {};
   ma[aujourdhui().slice(0, 7)] = 1;
@@ -824,11 +797,12 @@ function barre(label, data, couleur) { return Object.assign({ label: label, data
 // ---------- onglets ----------
 function ongletActif() { var b = document.querySelector('nav button[aria-selected="true"]'); return b ? b.dataset.onglet : 'accueil'; }
 function afficherOnglet(nom) {
+  if (!document.getElementById(nom)) nom = 'accueil';   // onglet supprimé (Finances) ou inconnu
   document.querySelectorAll('nav button').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.onglet === nom); });
   document.querySelectorAll('main section').forEach(function (s) { s.hidden = s.id !== nom; });
   try { localStorage.setItem('ongletTDB', nom); } catch (e) {}
   if (!D) return;
-  ({ accueil: rendreAccueil, finances: rendreFinances, flotte: rendreFlotte, salaries: rendreSalaries,
+  ({ accueil: rendreAccueil, flotte: rendreFlotte, salaries: rendreSalaries,
      activite: rendreActivite, conso: rendreConso, factures: rendreFactures, charges: rendreCharges, facturation: rendreFacturation, compta: rendreCompta, alertes: rendreAlertes, saisie: function () {} })[nom]();
 }
 
@@ -1032,50 +1006,6 @@ function rendreFactures() {
   });
 }
 
-function rendreFinances() {
-  var mois = document.getElementById('moisFin').value;
-  var fin = financesFiltrees();
-  var lignes = fin.filter(function (l) { return l.Mois === mois; });
-  // Finances calculées : une société sans balance ce mois-là n'a que du CA ; elle est montrée mais pas comptée dans le résultat
-  var socCompta = {}, exclues = {};
-  lignes.forEach(function (l) { if (num(l.Carburant) !== null) socCompta[l['Société']] = 1; });
-  var lignesTot = !D.financesCalculees ? lignes : lignes.filter(function (l) { if (socCompta[l['Société']]) return true; exclues[l['Société'] || '?'] = 1; return false; });
-  var t = totauxFinances(lignesTot);
-  var horsTotal = Object.keys(exclues).length ? 'Sans ' + Object.keys(exclues).join(', ') + ' (pas de balance)' : '';
-  document.getElementById('tuilesFin').innerHTML = !mois ? '<div class="vide">Aucune donnée financière : déposez une balance comptable dans l\'onglet Comptabilité.</div>' :
-    tuile('Chiffre d\'affaires', eur(t.ca), nomMois(mois) + (horsTotal ? ' · ' + horsTotal : '')) + tuile('Charges totales', eur(t.charges), horsTotal) +
-    tuile('Résultat', eur(t.resultat), incomplet(t)) + tuile('Marge', pct(t.marge), incomplet(t)) +
-    tuile('Coût au km', t.coutKm === null ? '<span class="nd">N/D</span>' : fmtEur2.format(t.coutKm), t.km ? fmtNb.format(t.km) + ' km' : '');
-
-  var typeM = (D.financesMoisReels || {})[mois];
-  document.getElementById('noteFin').innerHTML = !D.financesCalculees || !mois ? '' :
-    'CA : tournées des plannings. Charges : balances comptables' + (typeM === 'moyenne'
-      ? ' — <b>moyenne mensuelle</b> de la balance (déposez une balance chaque fin de mois pour avoir les charges réelles du mois)' : ' (différence avec la balance du mois précédent)') +
-    '. Comptes sans immatriculation, salaires compris : ligne « Non affecté ». N/D : pas encore de balance pour cette société.';
-  // Par camion
-  var ids = {}; lignes.forEach(function (l) { (ids[l.Camion_ID] = ids[l.Camion_ID] || []).push(l); });
-  var parCamion = Object.keys(ids).sort().map(function (id) {
-    var tc = totauxFinances(ids[id]);
-    tc.id = id; tc.societe = ids[id].map(function (l) { return l['Société']; }).filter(function (v, i, a) { return v && a.indexOf(v) === i; }).join(' + ');
-    return tc;
-  });
-  var colonnes = [['Camion', 'id', 'txt'], ['Société', 'societe', 'txt'], ['CA', 'ca', 'eur']]
-    .concat(POSTES.map(function (p) { return [p[1], 'p:' + p[0], 'eur']; }))
-    .concat([['Total charges', 'charges', 'eur'], ['Résultat', 'resultat', 'eur'], ['Marge', 'marge', 'pct'], ['€ / km', 'coutKm', 'eur2']]);
-  tableTriable('tabFin', colonnes, parCamion, function (o, k) { return k.indexOf('p:') === 0 ? o.postes[k.slice(2)] : o[k]; });
-
-  var trie = parCamion.filter(function (c) { return c.resultat !== null; }).sort(function (a, b) { return b.resultat - a.resultat; });
-  dessiner('gResultat', { type: 'bar', data: { labels: trie.map(function (c) { return c.id; }), datasets: [Object.assign(
-    barre('Résultat', trie.map(function (c) { return c.resultat; }), trie.map(function (c) { return c.resultat < 0 ? css('--neg') : css('--s1'); })),
-    { borderSkipped: false })] }, options: optionsCommunes(false, true) });
-
-  var derniers = moisFinances().slice(-12), couleurs = ['--s1', '--s2', '--s3', '--s4', '--s5', '--s6'].map(css);
-  legende('legPostes', POSTES.map(function (p, i) { return [p[1], couleurs[i]]; }));
-  dessiner('gPostes', { type: 'bar', data: { labels: derniers.map(nomMois), datasets: POSTES.map(function (p, i) {
-    return Object.assign(barre(p[1], derniers.map(function (m) { return totauxFinances(fin.filter(function (l) { return l.Mois === m; })).postes[p[0]]; }), couleurs[i]),
-      { borderColor: css('--surface'), borderWidth: { top: 2 }, borderRadius: 0 });
-  }) }, options: optionsCommunes(true) });
-}
 
 function tableTriable(id, colonnes, lignes, valeur) {
   var table = document.getElementById(id);
@@ -2992,7 +2922,6 @@ document.querySelectorAll('form.saisie').forEach(function (f) {
 // ---------- événements ----------
 document.querySelectorAll('nav button').forEach(function (b) { b.addEventListener('click', function () { afficherOnglet(b.dataset.onglet); }); });
 document.getElementById('filtreSociete').addEventListener('change', function () { try { localStorage.setItem('societeTDB', societe()); } catch (e) {} afficherOnglet(ongletActif()); });
-document.getElementById('moisFin').addEventListener('change', rendreFinances);
 document.getElementById('moisAct').addEventListener('change', rendreActivite);
 document.getElementById('choixCamion').addEventListener('change', rendreConso);
 document.getElementById('moisFact').addEventListener('change', rendreFacturation);
