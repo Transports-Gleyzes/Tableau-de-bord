@@ -283,17 +283,10 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
       </div>
       <div class="tableau"><table id="tabEchV"></table></div>
     </div>
-    <div class="grille">
-      <div class="carte">
-        <h2>Véhicules</h2>
-        <p class="note">Société, activité et statut : onglet FLOTTE du Google Sheet du tableau de bord</p>
-        <div class="tableau"><table id="tabFlotte"></table></div>
-      </div>
-      <div class="carte">
-        <h2>Documents de l'entreprise</h2>
-        <p class="note">Licences, ADR, DUERP, assurances</p>
-        <div class="tableau"><table id="tabEchE"></table></div>
-      </div>
+    <div class="carte">
+      <h2>Documents de l'entreprise</h2>
+      <p class="note">Licences, ADR, DUERP, assurances</p>
+      <div class="tableau"><table id="tabEchE"></table></div>
     </div>
   </section>
 
@@ -1110,13 +1103,6 @@ function rendreFlotte() {
   noteSource('noteEchV');
   tableListeEcheances('tabEchV', liste, true);
   tableListeEcheances('tabEchE', echeancesDe('Entreprise'), false);
-  var raisons = {}; indispo.forEach(function (x) { raisons[x.id] = x.raison; });
-  document.getElementById('tabFlotte').innerHTML = '<thead><tr><th>Immat.</th><th>Type</th><th>Société</th><th>Activité</th><th>Statut</th></tr></thead><tbody>' +
-    (flotte.length ? flotte.map(function (v) {
-      var r = raisons[v.Camion_ID];
-      return '<tr><td>' + txt(v.Camion_ID) + '</td><td>' + txt(v.Type) + '</td><td>' + (v['Société'] ? txt(v['Société']) : '<span class="nd">à compléter</span>') +
-        '</td><td>' + txt(v.Activite) + '</td><td>' + (r ? badge(r === 'CT expiré' ? 'depasse' : 'urgent', r) : badge('ok', v.Statut || 'Disponible')) + '</td></tr>';
-    }).join('') : '<tr><td colspan="5" class="vide">Aucun véhicule dans FLOTTE</td></tr>') + '</tbody>';
 }
 
 function nomComplet(s) { return ((s['Prénom'] || '') + ' ' + (s.Nom || '')).trim(); }
