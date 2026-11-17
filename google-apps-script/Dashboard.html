@@ -1050,8 +1050,8 @@ function moisAvant(m) { var a = +m.slice(0, 4), n = +m.slice(5, 7) - 1; if (!n) 
 function cleTxt(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase(); }
 function sourceIndexCarbu(l) {   // quelle indexation s'applique à une livraison Carburant
   var k = cleTxt(l.client + ' ' + l.lieu);
-  if (/BRIGNOLES/.test(k)) return 'TD';
   if (/SCAPED/.test(k)) return 'SCAPED';
+  if (/BRIGNOLES/.test(k)) return 'TD';
   return 'CNR';
 }
 function nombreSaisi(v) { var s = String(v || '').replace(/[\s€%]/g, '').replace(',', '.'); return s === '' || isNaN(+s) ? null : +s; }
@@ -1083,15 +1083,26 @@ function rendreIndexationGasoil(mois, inter, carbu, socs) {
       var p = pf.filter(function (x) { return x.societe === so; }).reduce(function (t, x) { return t + (x.indexation.montant || 0); }, 0);
       return cellule(m, fmtNb.format(km) + ' km' + (p ? ' · préfac ' + fEur2(p) : ''));
     }).join('') + '</tr>');
+  // Carburant : montant HT des factures du mois (hors lignes d'indexation) × % ; sans facture déposée, CA du planning
+  var factM = (D.FACTURES_CLIENTS || []).filter(function (f) {
+    return String(f.Mois).slice(0, 7) === mois && f.Activite === 'Carburant' && f.Nature !== 'INDEXATION' && garderSociete(f.Societe);
+  });
   [['TD', 'Carburant Brignoles (TD)', '% TD du mois'], ['SCAPED', 'Carburant SCAPED', '% SCAPED du mois'],
    ['CNR', 'Autres clients carburant', cnr != null ? '(CNR ' + nomMois(prec) + ' ' + String(cnr).replace('.', ',') + ' / 154,44 − 1) × 22 % = ' + fPct(pctCNR) : 'indice CNR de ' + nomMois(prec) + ' à saisir']].forEach(function (s) {
     var l = carbu.filter(function (x) { return sourceIndexCarbu(x) === s[0]; });
-    if (!l.length && s[0] !== 'CNR') return;
-    lignes.push('<tr><td><b>' + s[1] + '</b><span class="note">' + (s[0] === 'CNR' ? s[2] : pct[s[0]] == null ? s[2] + ' à saisir' : fPct(pct[s[0]]) + ' du CA') + '</span></td>' +
+    var f = factM.filter(function (x) { return sourceIndexCarbu({ client: x.Client, lieu: x.Lieu }) === s[0]; });
+    if (!l.length && !f.length && s[0] !== 'CNR') return;
+    lignes.push('<tr><td><b>' + s[1] + '</b><span class="note">' + (s[0] === 'CNR' ? s[2] : pct[s[0]] == null ? s[2] + ' à saisir' : fPct(pct[s[0]])) + ' × montant HT des factures</span></td>' +
       socs.map(function (so) {
-        var ca = caListe(de(l, so)), m = pct[s[0]] == null ? null : Math.round(ca * pct[s[0]]) / 100;
+        var fs = f.filter(function (x) { return x.Societe === so; }), nums = {};
+        fs.forEach(function (x) { nums[x.N_Facture] = 1; });
+        var nbF = Object.keys(nums).length, caPl = caListe(de(l, so));
+        var base = nbF ? fs.reduce(function (t, x) { return t + (num(x.Montant_HT) || 0); }, 0) : caPl;
+        var m = pct[s[0]] == null ? null : Math.round(base * pct[s[0]]) / 100;
         if (m != null) tot[so] += m;
-        return cellule(m, 'sur ' + fmtEur.format(ca) + ' de CA');
+        var detail = nbF ? 'sur ' + fEur2(base) + ' HT · ' + nbF + ' facture' + (nbF > 1 ? 's' : '')
+          : base ? '<span class="neg">facture non déposée</span> : CA planning ' + fmtEur.format(base) : 'aucune facture';
+        return cellule(m, detail);
       }).join('') + '</tr>');
   });
   lignes.push('<tr class="total"><td>TOTAL INDEXATION</td>' + socs.map(function (so) { return '<td class="n">' + fEur2(tot[so]) + '</td>'; }).join('') + '</tr>');
