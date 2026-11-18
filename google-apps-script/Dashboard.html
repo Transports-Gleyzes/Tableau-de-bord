@@ -264,7 +264,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v17/11-refonte2</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v18/11-refonte3</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -282,6 +282,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
   <button role="tab" data-onglet="prefacs"><span class="ico-onglet" aria-hidden="true">📑</span>Contrôle préfac ITM</button>
   <button role="tab" data-onglet="peages"><span class="ico-onglet" aria-hidden="true">🛣️</span>Péages ITM</button>
   <button role="tab" data-onglet="scaped"><span class="ico-onglet" aria-hidden="true">🛢️</span>Facture SCAPED</button>
+  <button role="tab" data-onglet="factureTD"><span class="ico-onglet" aria-hidden="true">🚚</span>Facture TD</button>
   <button role="tab" data-onglet="compta"><span class="ico-onglet" aria-hidden="true">📊</span>Comptabilité</button>
   <button role="tab" data-onglet="alertes"><span class="ico-onglet" aria-hidden="true">🔔</span>Alertes <span class="pastille" id="nbAlertes" hidden></span></button>
 </nav>
@@ -451,6 +452,18 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
       <div id="controlePeages"></div>
       <div id="badgesPeages"></div>
       <div id="planningPeages"></div>
+    </div>
+  </section>
+
+  <!-- FACTURE TD (THEVENIN DUCROT), à la quinzaine -->
+  <section id="factureTD" hidden>
+    <div class="carte">
+      <h2>Facture TD (Thevenin Ducrot)</h2>
+      <p class="note">Facturée deux fois par mois : le 15 (livraisons du 1er au 15) et le 31 (livraisons du 16 à la fin du mois).
+        Ci-dessous, les livraisons THEVENIN DUCROT du planning Carburant pour la quinzaine choisie, à contrôler avant de facturer.</p>
+      <div class="barre"><label for="quinzTD">Quinzaine</label><select id="quinzTD"></select><span class="msg" id="msgTD"></span></div>
+      <div class="tuiles" id="tuilesTD"></div>
+      <div id="apercuTD"></div>
     </div>
   </section>
 
@@ -702,7 +715,7 @@ function afficherOnglet(nom) {
   try { localStorage.setItem('ongletTDB', nom); } catch (e) {}
   if (!D) return;
   ({ accueil: rendreAccueil, flotte: rendreFlotte, salaries: rendreSalaries,
-     activite: rendreActivite, conso: rendreConso, charges: rendreCharges, prefacs: rendrePrefacs, peages: rendrePeages, scaped: rendreScaped, compta: rendreCompta, alertes: rendreAlertes })[nom]();
+     activite: rendreActivite, conso: rendreConso, charges: rendreCharges, prefacs: rendrePrefacs, peages: rendrePeages, scaped: rendreScaped, factureTD: rendreFactureTD, compta: rendreCompta, alertes: rendreAlertes })[nom]();
 }
 
 function alertesFiltrees() {
@@ -2322,6 +2335,45 @@ function lireFichierMailAvoir(f) {
     if (it) { e.preventDefault(); var f = it.getAsFile(); lireFichierMailAvoir(new File([f], 'capture.png', { type: f.type })); }
   });
 })();
+// ---------- Facture TD (THEVENIN DUCROT) : deux factures par mois, 1-15 et 16-fin ----------
+function estClientTD(l) { return sourceIndexCarbu(l) === 'TD'; }
+function rendreFactureTD() {
+  var sel = document.getElementById('quinzTD'), ancien = sel.value, j = new Date(), liste = [];
+  for (var k = 0; k < 4; k++) {
+    var d = new Date(j.getFullYear(), j.getMonth() - k, 1), m = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
+    liste.push(m + '|2', m + '|1');
+  }
+  var fin = function (m) { var a = +m.slice(0, 4), n = +m.slice(5, 7); return new Date(a, n, 0).getDate(); };
+  var libelle = function (v) { var m = v.split('|')[0], q = v.split('|')[1]; return (q === '1' ? '1er au 15 ' : '16 au ' + fin(m) + ' ') + nomMois(m) + (q === '1' ? ' (facture du 15)' : ' (facture du ' + fin(m) + ')'); };
+  // par défaut : la dernière quinzaine terminée (ou en cours de facturation)
+  var auj = aujourdhui(), defaut = liste.filter(function (v) {
+    var m = v.split('|')[0], q = v.split('|')[1]; return (m + '-' + (q === '1' ? '15' : ('0' + fin(m)).slice(-2))) <= auj;
+  })[0] || liste[0];
+  sel.innerHTML = liste.map(function (v) { return '<option value="' + v + '">' + libelle(v) + '</option>'; }).join('');
+  sel.value = liste.indexOf(ancien) >= 0 ? ancien : defaut;
+  sel.onchange = rendreFactureTD;
+  var M = sel.value.split('|')[0], Q = sel.value.split('|')[1];
+  var lignes = (D.PLANNING || []).filter(function (l) {
+    if (l.activite !== 'Carburant' || !estClientTD(l) || l.date.slice(0, 7) !== M) return false;
+    var jour = +l.date.slice(8, 10); return Q === '1' ? jour <= 15 : jour >= 16;
+  }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+  var m3 = function (l) { return num(l.m3) || (num(l.litres) || 0) / 1000; };
+  var tot = { nb: lignes.length, m3: lignes.reduce(function (t, l) { return t + m3(l); }, 0), ca: caListe(lignes),
+    sansLvn: lignes.filter(function (l) { return !l.lvn; }).length, sansPrix: lignes.filter(function (l) { return !num(l.ca); }).length };
+  document.getElementById('tuilesTD').innerHTML = !lignes.length ? '' :
+    tuile('Livraisons', tot.nb, libelle(sel.value)) + tuile('m³ livrés', fmtNb.format(tot.m3), '') +
+    tuile('Montant HT (planning)', fmtEur.format(tot.ca), 'à facturer') +
+    tuile('À compléter', '<span class="' + (tot.sansLvn + tot.sansPrix ? 'neg' : '') + '">' + (tot.sansLvn + tot.sansPrix) + '</span>',
+      (tot.sansLvn ? tot.sansLvn + ' sans LVN' : '') + (tot.sansLvn && tot.sansPrix ? ' · ' : '') + (tot.sansPrix ? tot.sansPrix + ' sans prix' : '') || 'tout est rempli');
+  document.getElementById('apercuTD').innerHTML = !lignes.length ? '<div class="vide">Aucune livraison THEVENIN DUCROT au planning pour le ' + libelle(sel.value) + '.</div>' :
+    '<div class="tableau"><table class="serre"><thead><tr><th>Date</th><th>Lieu</th><th>Chauffeur</th><th>LVN</th><th class="n">m³</th><th class="n">Prix</th><th>DD</th><th class="n">Montant HT</th></tr></thead><tbody>' +
+    lignes.map(function (l) {
+      return '<tr><td>' + dateFr(l.date) + '</td><td>' + txt(l.lieu) + '</td><td>' + txt(l.chauffeur) + '</td><td>' + (l.lvn ? txt(l.lvn) : '<span class="neg">manquante</span>') +
+        '</td><td class="n">' + fmtNb.format(m3(l)) + '</td><td class="n">' + (num(l.prix) ? fmtNb.format(num(l.prix)) : '') + '</td><td>' + (l.dd ? 'DD' : '') +
+        '</td><td class="n">' + (num(l.ca) ? eur(num(l.ca)) : '<span class="neg">sans prix</span>') + '</td></tr>';
+    }).join('') + '<tr class="total"><td colspan="4"><b>Total</b></td><td class="n"><b>' + fmtNb.format(tot.m3) + '</b></td><td></td><td></td><td class="n"><b>' + eur(tot.ca) + '</b></td></tr></tbody></table></div>';
+}
+
 function rendreScaped() {
   var sel = document.getElementById('moisScaped'), ancien = sel.value, j = new Date(), liste = [];
   for (var k = 0; k < 4; k++) { var d = new Date(j.getFullYear(), j.getMonth() - k, 1); liste.push(d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2)); }
