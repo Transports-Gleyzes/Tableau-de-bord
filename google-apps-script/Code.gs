@@ -1084,8 +1084,49 @@ function genererFactureTD(periode, numero) {
   if (anc && anc !== numero) { try { var sh = classeur_().getSheetByName('FACTURES_CLIENTS'); if (sh) supprimerLignesFacture_(sh, anc); } catch (e) {} }
   var id = res.url.match(/\/d\/([a-zA-Z0-9_-]+)/), gid = (res.url.match(/gid=(\d+)/) || [])[1];
   res.pdf = id ? 'https://docs.google.com/spreadsheets/d/' + id[1] + '/export?format=pdf&gid=' + gid +
-    '&size=A4&portrait=true&fitw=true&gridlines=false&printtitle=false&sheetnames=false&pagenum=UNDEFINED&top_margin=0.3&bottom_margin=0.3&left_margin=0.3&right_margin=0.3' : '';
+    '&size=A4&portrait=true&scale=4&gridlines=false&printtitle=false&sheetnames=false&pagenum=UNDEFINED&top_margin=0.3&bottom_margin=0.3&left_margin=0.3&right_margin=0.3' : '';
   return res;
+}
+
+/**
+ * Facture TD sur une seule feuille : retire les lignes vides du tableau (une seule gardée avant TOTAL HT) et les
+ * « Sous total page », écrit H.T / TVA 20 % / TOTAL TTC en valeurs et met le n° de page à 1/1.
+ */
+function compacterFactureTD_(sh, totalHT) {
+  var v = sh.getDataRange().getValues(), cl = function (r, c) { return cle_(v[r][c]); };
+  // 1. lignes « Sous total page »
+  for (var r = v.length - 1; r >= 0; r--) if (cl(r, 0).indexOf('SOUS TOTAL PAGE') === 0) sh.deleteRow(r + 1);
+  v = sh.getDataRange().getValues();
+  // 2. lignes vides entre la dernière ligne remplie du tableau et TOTAL HT (première page)
+  var rTot = -1, rDes = -1;
+  for (r = 0; r < v.length && rTot < 0; r++) {
+    if (cl(r, 0) === 'DESIGNATION' || v[r].some(function (x) { return cle_(x) === 'DESIGNATION'; })) rDes = r;
+    if (rDes >= 0 && r > rDes && v[r].some(function (x) { return cle_(x) === 'TOTAL HT'; })) rTot = r;
+  }
+  if (rDes >= 0 && rTot > rDes) {
+    var dernier = rDes;
+    for (r = rDes + 1; r < rTot; r++) if (v[r].some(function (x) { return String(x).trim() !== ''; })) dernier = r;
+    var aSupprimer = rTot - dernier - 2;   // une ligne vide gardée
+    if (aSupprimer > 0) sh.deleteRows(dernier + 3, aSupprimer);
+  }
+  // 3. totaux en valeurs (le récapitulatif du modèle SCAPED renvoie aux sous-totaux de plusieurs pages)
+  v = sh.getDataRange().getValues();
+  var ht = Math.round(totalHT * 100) / 100, tva = Math.round(ht * 20) / 100;
+  for (r = 0; r < v.length; r++) for (var c = 0; c < v[r].length - 1; c++) {
+    var t = cl(r, c), val = null;
+    if (t === 'H.T' || t === 'HT' || t === 'NET HT') val = ht;
+    else if (t.indexOf('TVA') === 0 && /20/.test(t)) val = tva;
+    else if (t === 'TOTAL TTC' || t === 'TTC') val = Math.round((ht + tva) * 100) / 100;
+    if (val === null) continue;
+    for (var c2 = c + 1; c2 < v[r].length; c2++) {   // la case du montant : la première à droite qui n'est pas un libellé
+      if (typeof v[r][c2] === 'number' || String(v[r][c2]).charAt(0) === '#' || String(v[r][c2]).trim() === '' && c2 === v[r].length - 1 || /^=/.test(String(v[r][c2]))) { sh.getRange(r + 1, c2 + 1).setValue(val); break; }
+      if (String(v[r][c2]).trim() === '') continue;
+      break;
+    }
+  }
+  // 4. n° de page
+  var f = sh.getDataRange().getDisplayValues();
+  for (r = 0; r < f.length; r++) for (c = 0; c < f[r].length; c++) if (/^\d+\/\d+$/.test(String(f[r][c]).trim())) sh.getRange(r + 1, c + 1).setNumberFormat('@').setValue('1/1');
 }
 
 /** Remplace le bloc client SCAPED (nom + adresse) par celui du client TD, partout dans l'onglet. */
@@ -1221,7 +1262,7 @@ function genererFactureCarbu_(cfg) {
   });
   var sites = ordre.filter(function (k) { return parSite[k]; }).map(function (k) {
     var chg = (parSite[k].map(function (l) { return l.chargement; }).filter(String)[0] || 'FOS SUR MER').toUpperCase();
-    var inf = td ? { entete: [chg + ' / ' + k], km: '', prix: null } : infos[k] || { entete: ['Chargement : DPF FOS CODE 13011', k], km: '', prix: null };
+    var inf = td ? { entete: [chg + ' / ' + (k || 'BRIGNOLES')], km: '', prix: null } : infos[k] || { entete: ['Chargement : DPF FOS CODE 13011', k], km: '', prix: null };
     if (!td && !infos[k]) avert.push('Nouveau lieu ' + k + ' : vérifiez son en-tête et ajoutez la ligne « KM - TK - TF »');
     var prixPl = parSite[k].map(function (l) { return l.prix; }).filter(function (x) { return x; });
     var pp = prixPl.length ? prixPl.sort(function (a, b) { return prixPl.filter(function (x) { return x === b; }).length - prixPl.filter(function (x) { return x === a; }).length; })[0] : null;
@@ -1328,7 +1369,7 @@ function genererFactureCarbu_(cfg) {
   var pnR = pageNoDe(recapDebut, hRecap); if (pnR) sh.getRange(baseR + pnR[0], pnR[1] + 1).setNumberFormat('@').setValue(nbPages + '/' + nbPages);
   var finUtile = baseR + hRecap - 1;
   if (sh.getMaxRows() > finUtile) sh.deleteRows(finUtile + 1, sh.getMaxRows() - finUtile);
-  if (td) remplacerClientFacture_(sh, cfg.client || []);
+  if (td) { remplacerClientFacture_(sh, cfg.client || []); compacterFactureTD_(sh, totalHT); }
   SpreadsheetApp.flush();
   // Enregistrement pour le contrôle des factures (FACTURES_CLIENTS)
   var refClient = td ? (cfg.refClient || '') : rRef >= 0 ? String(mv[rRef][1] || '') : '';
