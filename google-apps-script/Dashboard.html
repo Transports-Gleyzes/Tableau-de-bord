@@ -264,7 +264,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v18/11-refonte3</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v18/11-td1</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -460,10 +460,22 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
     <div class="carte">
       <h2>Facture TD (Thevenin Ducrot)</h2>
       <p class="note">Facturée deux fois par mois : le 15 (livraisons du 1er au 15) et le 31 (livraisons du 16 à la fin du mois).
-        Ci-dessous, les livraisons THEVENIN DUCROT du planning Carburant pour la quinzaine choisie, à contrôler avant de facturer.</p>
-      <div class="barre"><label for="quinzTD">Quinzaine</label><select id="quinzTD"></select><span class="msg" id="msgTD"></span></div>
+        Choisissez la quinzaine, vérifiez les livraisons ci-dessous, puis « Préparer la facture » : un onglet « TD 1-15 NOVEMBRE 2026 » est créé dans le classeur
+        des factures SCAPED, avec la même mise en page, les livraisons, l'indexation (% TD du mois, saisi dans Activité) et les totaux. Relisez puis téléchargez le PDF.</p>
+      <div class="barre"><label for="quinzTD">Quinzaine</label><select id="quinzTD"></select>
+        <label for="numTD">N° de facture</label><input id="numTD" size="12" placeholder="ex. FA2019921">
+        <button id="btnTD" class="primaire">Préparer la facture</button></div>
+      <p class="msg" id="msgTD"></p>
       <div class="tuiles" id="tuilesTD"></div>
       <div id="apercuTD"></div>
+      <details id="clientTD" style="margin-top:12px"><summary><b>Coordonnées du client TD</b> <span class="note" id="resumeClientTD"></span></summary>
+        <p class="note">Une seule fois : elles remplacent le bloc client SCAPED sur la facture (même mise en page que la facture SCAPED, dans le même classeur).</p>
+        <div class="saisie-index" style="border-top:0">
+          <label>Nom et adresse (une ligne par ligne)<textarea id="adrTD" rows="4" placeholder="THEVENIN &amp; DUCROT&#10;rue…&#10;code postal  ville"></textarea></label>
+          <label>Réf. client<input id="refTD" placeholder="ex. 00011 / 20002"></label>
+          <div class="actions"><button id="enregClientTD" class="primaire">Enregistrer</button><span class="msg" id="msgClientTD"></span></div>
+        </div>
+      </details>
     </div>
   </section>
 
@@ -1077,8 +1089,11 @@ function rendreIndexationGasoil(mois, inter, carbu, socs) {
       socs.map(function (so) {
         var fs = f.filter(function (x) { return x.Societe === so; }), nums = {};
         fs.forEach(function (x) { nums[x.N_Facture] = 1; });
-        var nbF = Object.keys(nums).length, caPl = caListe(de(l, so));
-        var base = nbF ? fs.reduce(function (t, x) { return t + (num(x.Montant_HT) || 0); }, 0) : caPl;
+        // quinzaines couvertes par une facture (d'après les dates LVN) ; le reste du mois est pris au planning
+        var couvert = {}; fs.forEach(function (x) { var j = +(String(x.Date_LVN || '').match(/^(\d{1,2})/) || [])[1]; if (j) couvert[j <= 15 ? 1 : 2] = 1; else couvert[1] = couvert[2] = 1; });
+        var nbF = Object.keys(nums).length;
+        var resteMois = de(l, so).filter(function (x) { return !couvert[+x.date.slice(8, 10) <= 15 ? 1 : 2]; });
+        var base = fs.reduce(function (t, x) { return t + (num(x.Montant_HT) || 0); }, 0) + caListe(resteMois);
         var m = pct[s[0]] == null ? null : Math.round(base * pct[s[0]]) / 100;
         if (m != null) tot[so] += m;
         var detail = base ? 'sur ' + fEur2(base) + ' HT' + (nbF ? ' · facture ' + Object.keys(nums).join(', ') : '') : 'aucune livraison';
@@ -2365,6 +2380,36 @@ function rendreFactureTD() {
     tuile('Montant HT (planning)', fmtEur.format(tot.ca), 'à facturer') +
     tuile('À compléter', '<span class="' + (tot.sansLvn + tot.sansPrix ? 'neg' : '') + '">' + (tot.sansLvn + tot.sansPrix) + '</span>',
       (tot.sansLvn ? tot.sansLvn + ' sans LVN' : '') + (tot.sansLvn && tot.sansPrix ? ' · ' : '') + (tot.sansPrix ? tot.sansPrix + ' sans prix' : '') || 'tout est rempli');
+  // n° de facture : celui déjà donné à cette quinzaine, sinon le suivant du dernier utilisé
+  var F = D.FACTURE_TD || {}, nIn = document.getElementById('numTD');
+  var suivant = function (n) { var m = String(n || '').match(/^(\D*)(\d+)$/); return m ? m[1] + String(+m[2] + 1).padStart(m[2].length, '0') : ''; };
+  if (nIn.dataset.periode !== sel.value) { nIn.value = (F.parPeriode || {})[sel.value] || suivant(F.dernier); nIn.dataset.periode = sel.value; }
+  var dejaFaite = (F.parPeriode || {})[sel.value];
+  document.getElementById('btnTD').textContent = dejaFaite ? 'Refaire la facture ' + dejaFaite : 'Préparer la facture';
+  var adr = String(F.client || '').split(/\s*\/\s*/).filter(String);
+  document.getElementById('resumeClientTD').textContent = adr.length ? '· ' + adr[0] + (F.ref ? ' · réf. ' + F.ref : '') : '· à renseigner';
+  if (!adr.length) document.getElementById('clientTD').open = true;
+  var aTD = document.getElementById('adrTD'); if (!aTD.value) aTD.value = adr.join('\n');
+  var rTD = document.getElementById('refTD'); if (!rTD.value) rTD.value = F.ref || '';
+  document.getElementById('enregClientTD').onclick = function () {
+    var m = document.getElementById('msgClientTD'); m.className = 'msg'; m.textContent = 'Enregistrement…';
+    appelServeur('enregistrerClientTD', aTD.value, rTD.value).then(function (r) { D.FACTURE_TD = r; m.className = 'msg ok'; m.textContent = '✓ Enregistré'; rendreFactureTD(); })
+      .catch(function (e) { m.className = 'msg err'; m.textContent = e.message; });
+  };
+  document.getElementById('btnTD').onclick = function () {
+    var m = document.getElementById('msgTD'), b = this, num = nIn.value.trim();
+    if (!num) { m.className = 'msg err'; m.textContent = 'Indiquez le n° de facture (ex. FA2019921).'; return; }
+    if (!lignes.length) { m.className = 'msg err'; m.textContent = 'Aucune livraison TD sur cette quinzaine.'; return; }
+    if (dejaFaite && !confirm('La facture ' + dejaFaite + ' de cette quinzaine existe déjà : la refaire (l\'onglet est remplacé) ?')) return;
+    b.disabled = true; m.className = 'msg'; m.textContent = 'Préparation…';
+    appelServeur('genererFactureTD', sel.value, num).then(function (r) {
+      b.disabled = false; m.className = 'msg ok';
+      m.innerHTML = '✓ Facture ' + txt(r.numero) + ' : ' + r.livraisons + ' livraisons, ' + fmtEur2.format(r.totalHT) + ' HT (indexation comprise) — <a href="' + txt(r.url) + '" target="_blank" rel="noopener">ouvrir l\'onglet « ' + txt(r.onglet) + ' »</a>' +
+        (r.pdf ? ' · <a href="' + txt(r.pdf) + '" target="_blank" rel="noopener">télécharger le PDF</a>' : '') +
+        (r.avertissements.length ? '<div class="note">⚠ ' + r.avertissements.map(txt).join('<br>⚠ ') + '</div>' : '');
+      charger();
+    }).catch(function (e) { b.disabled = false; m.className = 'msg err'; m.textContent = '⚠ ' + e.message; });
+  };
   document.getElementById('apercuTD').innerHTML = !lignes.length ? '<div class="vide">Aucune livraison THEVENIN DUCROT au planning pour le ' + libelle(sel.value) + '.</div>' :
     '<div class="tableau"><table class="serre"><thead><tr><th>Date</th><th>Lieu</th><th>Chauffeur</th><th>LVN</th><th class="n">m³</th><th class="n">Prix</th><th>DD</th><th class="n">Montant HT</th></tr></thead><tbody>' +
     lignes.map(function (l) {

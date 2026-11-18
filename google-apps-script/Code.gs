@@ -89,6 +89,8 @@ var PARAMETRES_DEFAUT = [
   ['JOURS_URGENT', 7, 'Une échéance passe « urgente » ce nombre de jours avant la date'],
   ['SEUIL_MARGE_PCT', 5, 'Alerte si la marge d\'un camion sur le dernier mois est sous ce % (négatif = urgent)'],
   ['SEUIL_CONSO_L100', 38, 'Alerte si la consommation d\'un camion dépasse ce nombre de L/100 km (90 derniers jours)'],
+  ['CLIENT_TD', '', 'Facture TD : nom et adresse du client (une ligne par ligne de l\'adresse, séparées par « / »)'],
+  ['REF_CLIENT_TD', '', 'Facture TD : référence client'],
   ['ID_FACTURE_SCAPED', '', 'Lien du Google Sheet des factures SCAPED (faites hors INFORCE) : un onglet par mois, préparé depuis le planning Carburant'],
   ['PREFIXE_PEAGES_REMBOURSES', '7531', 'Péages remboursés par Intermarché : contrats commençant par ce numéro (les autres, ex. 7539…, ne le sont pas)'],
   ['NOM_FICHIER_FINANCES', 'FINANCES_EXPORT.csv', 'Nom du fichier déposé dans Google Drive par exporter_finances_csv.py'],
@@ -301,6 +303,7 @@ function getDonnees() {
   try { d.PEAGES_BADGES = badgesMois_(ss); } catch (e) { d.PEAGES_BADGES = {}; }
   try { d.PEAGES_REGLES = reglesPeages_(ss); } catch (e) { d.PEAGES_REGLES = []; }
   try { d.INDEXATION = indexationGasoil_(ss); } catch (e) { d.INDEXATION = {}; }
+  try { d.FACTURE_TD = infosFactureTD_(ss); } catch (e) { d.FACTURE_TD = {}; }
   try { d.PEAGES_RELEVES = relevesPeages_(ss); } catch (e) { d.PEAGES_RELEVES = []; }
   try { d.PEAGES_FICHIERS = fichiersPeages_(ss); } catch (e) { d.PEAGES_FICHIERS = []; }
   try { d.PEAGES_GARDES = gardesPeages_(); } catch (e) { d.PEAGES_GARDES = {}; }
@@ -1000,6 +1003,94 @@ function factureScapedManuel() {
     (res.avertissements.length ? '\n\nÀ vérifier :\n- ' + res.avertissements.join('\n- ') : ''));
 }
 
+// ---------------------------------------------------------------------------
+// Facture TD (THEVENIN DUCROT) : deux fois par mois (1-15 et 16-fin), même mise en page que la facture SCAPED,
+// dans le même classeur ; un onglet par facture « TD 1-15 NOVEMBRE 2026 ».
+// ---------------------------------------------------------------------------
+function estClientTD_(client) { var k = cle_(client); return /THEVENIN|DUCROT/.test(k) || /^TD\b/.test(k); }
+
+/** periode = 'AAAA-MM|1' (1er au 15) ou 'AAAA-MM|2' (16 à la fin du mois). */
+function periodeTD_(periode) {
+  var m = String(periode || '').match(/^(\d{4})-(\d{2})\|([12])$/);
+  if (!m) throw new Error('Quinzaine invalide : ' + periode);
+  var an = +m[1], mo = +m[2], q = +m[3], dernier = new Date(an, mo, 0).getDate();
+  return { mois: m[1] + '-' + m[2], q: q, du: q === 1 ? 1 : 16, au: q === 1 ? 15 : dernier, dateFac: new Date(an, mo - 1, q === 1 ? 15 : dernier),
+    onglet: 'TD ' + (q === 1 ? '1-15' : '16-' + dernier) + ' ' + MOIS_MAJ[mo - 1] + ' ' + an };
+}
+
+/** Numéros déjà donnés aux factures TD : { periode: numero }, et le dernier numéro utilisé. */
+function numerosTD_() {
+  var p = PropertiesService.getScriptProperties(), par = {};
+  try { par = JSON.parse(p.getProperty('TD_NUMEROS') || '{}'); } catch (e) {}
+  return { parPeriode: par, dernier: p.getProperty('TD_DERNIER_NUMERO') || '' };
+}
+
+function infosFactureTD_(ss) {
+  var prm = lireParametres_(ss), n = numerosTD_();
+  return { client: String(prm.CLIENT_TD || ''), ref: String(prm.REF_CLIENT_TD || ''), parPeriode: n.parPeriode, dernier: n.dernier,
+    classeur: !!String(prm.ID_FACTURE_SCAPED || '').trim() };
+}
+
+/** Depuis le site : coordonnées du client TD (rangées dans PARAMETRES). */
+function enregistrerClientTD(client, ref) {
+  var c = String(client || '').split(/\s*\/\s*|\n/).map(function (x) { return x.trim(); }).filter(String).join(' / ');
+  majParametre_('CLIENT_TD', c.replace(/^[=+\-@]/, ''), 'Facture TD : nom et adresse du client (lignes séparées par « / »)');
+  majParametre_('REF_CLIENT_TD', String(ref || '').trim().replace(/^[=+\-@]/, ''), 'Facture TD : référence client');
+  return infosFactureTD_(classeur_());
+}
+
+/** Depuis le site : prépare la facture TD de la quinzaine. */
+function genererFactureTD(periode, numero) {
+  var P = periodeTD_(periode), ss = classeur_(), prm = lireParametres_(ss);
+  numero = String(numero || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (/^\d{4,}$/.test(numero)) numero = 'FA' + numero;
+  if (!/^[A-Z]{1,3}\d{4,}$/.test(numero)) throw new Error('Numéro de facture invalide (ex. FA2019921)');
+  var client = String(prm.CLIENT_TD || '').split(/\s*\/\s*/).filter(String);
+  if (!client.length) throw new Error('Renseignez d\'abord le nom et l\'adresse du client TD (en bas de l\'onglet Facture TD)');
+  var n = numerosTD_();
+  Object.keys(n.parPeriode).forEach(function (k) {
+    if (n.parPeriode[k] === numero && k !== periode) throw new Error('Le numéro ' + numero + ' est déjà celui de la facture TD ' + periodeTD_(k).onglet);
+  });
+  var livs = plannings_(ss).filter(function (l) {
+    var j = +Utilities.formatDate(l.date, FUSEAU, 'd');
+    return l.activite === 'Carburant' && estClientTD_(l.client) && Utilities.formatDate(l.date, FUSEAU, 'yyyy-MM') === P.mois && j >= P.du && j <= P.au;
+  }).sort(function (a, b) { return a.date - b.date || String(a.lvn).localeCompare(String(b.lvn)); });
+  var res = genererFactureCarbu_({ mois: P.mois, td: true, nomOnglet: P.onglet, numero: numero, dateFac: P.dateFac, livraisons: livs,
+    client: client, refClient: String(prm.REF_CLIENT_TD || ''), periode: 'du ' + P.du + ' au ' + P.au + ' ' + nomMois_(P.mois) });
+  var anc = n.parPeriode[periode];
+  n.parPeriode[periode] = numero;
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('TD_NUMEROS', JSON.stringify(n.parPeriode));
+  var num = function (x) { return +(String(x).match(/\d+/) || [0])[0]; };
+  if (!n.dernier || num(numero) > num(n.dernier)) props.setProperty('TD_DERNIER_NUMERO', numero);
+  if (anc && anc !== numero) { try { var sh = classeur_().getSheetByName('FACTURES_CLIENTS'); if (sh) supprimerLignesFacture_(sh, anc); } catch (e) {} }
+  var id = res.url.match(/\/d\/([a-zA-Z0-9_-]+)/), gid = (res.url.match(/gid=(\d+)/) || [])[1];
+  res.pdf = id ? 'https://docs.google.com/spreadsheets/d/' + id[1] + '/export?format=pdf&gid=' + gid +
+    '&size=A4&portrait=true&fitw=true&gridlines=false&printtitle=false&sheetnames=false&pagenum=UNDEFINED&top_margin=0.3&bottom_margin=0.3&left_margin=0.3&right_margin=0.3' : '';
+  return res;
+}
+
+/** Remplace le bloc client SCAPED (nom + adresse) par celui du client TD, partout dans l'onglet. */
+function remplacerClientFacture_(sh, lignesClient) {
+  var v = sh.getDataRange().getValues();
+  for (var r = 0; r < v.length; r++) for (var c = 0; c < v[r].length; c++) {
+    if (!/SCAPED|SCA PETROLE/.test(cle_(v[r][c]))) continue;
+    // le bloc d'origine : cette case et les cases remplies juste en dessous (adresse), une ligne vide tolérée
+    var n = 1, vides = 0;
+    for (var k = r + 1; k < Math.min(v.length, r + 6); k++) {
+      var t = cle_(v[k][c]);
+      if (!t) { if (++vides > 1) break; continue; }
+      if (/^(DATE|FACTURE|REF|DEVISE|DESIGNATION|SAS LPB)/.test(t)) break;
+      n = k - r + 1; vides = 0;
+    }
+    for (var i = 0; i < Math.max(n, lignesClient.length); i++) {
+      if (r + i >= v.length) break;
+      sh.getRange(r + i + 1, c + 1).setValue(i < lignesClient.length ? lignesClient[i] : '');
+      v[r + i][c] = '';
+    }
+  }
+}
+
 /** Livraisons SCAPED du mois au planning Carburant, avec le lieu, les m³, le prix, la LVN et le double dépotage. */
 function livraisonsScaped_(ss, mois) {
   return plannings_(ss).filter(function (l) {
@@ -1012,7 +1103,7 @@ function livraisonsScaped_(ss, mois) {
  * sites : [{ lieu, entete: [lignes de texte], km, prix, livraisons: [{ m3, lvn, jour }], dd: { nb, prix } | null }]
  * zone : nombre de lignes utilisables par page. Renvoie des pages de lignes { type, ... } ('' = ligne vide).
  */
-function planFactureScaped_(sites, zone) {
+function planFactureScaped_(sites, zone, extra) {
   var pages = [[]], page = function () { return pages[pages.length - 1]; };
   var place = function (n) { if (page().length + n > zone) pages.push([]); };
   var ajout = function (x) { page().push(x); };
@@ -1034,6 +1125,7 @@ function planFactureScaped_(sites, zone) {
     }
     if (page().length && page().length < zone) ajout({ type: '' });
   });
+  (extra || []).forEach(function (x) { place(2); ajout(x); ajout({ type: '' }); });
   pages.forEach(function (p) { while (p.length > zone) p.pop(); });
   return pages;
 }
@@ -1044,12 +1136,20 @@ function planFactureScaped_(sites, zone) {
  * le double dépotage (« DD » au planning), les totaux par page et la page récapitulative.
  * La facture est aussi enregistrée dans FACTURES_CLIENTS pour le contrôle des factures.
  */
-function genererFactureScaped(mois) {
+function genererFactureScaped(mois) { return genererFactureCarbu_({ mois: mois }); }
+
+/**
+ * Cœur commun des factures préparées dans le classeur des factures SCAPED (même mise en page) :
+ * cfg = { mois, nomOnglet?, numero?, dateFac?, livraisons? (sinon SCAPED du mois), td? : facture THEVENIN DUCROT
+ *         (client et réf. client remplacés, prix du planning, ligne d'indexation) }.
+ */
+function genererFactureCarbu_(cfg) {
+  var mois = cfg.mois, td = !!cfg.td;
   var ss = classeur_();
   if (!/^\d{4}-\d{2}$/.test(String(mois || ''))) throw new Error('Mois invalide : écrivez AAAA-MM (ex. 2026-09)');
   var fac = classeurParam_(ss, 'ID_FACTURE_SCAPED');
   if (!fac) throw new Error('Collez le lien du Google Sheet des factures SCAPED dans PARAMETRES (ID_FACTURE_SCAPED)');
-  var an = +mois.slice(0, 4), mo = +mois.slice(5, 7), nomOnglet = MOIS_MAJ[mo - 1] + ' ' + an;
+  var an = +mois.slice(0, 4), mo = +mois.slice(5, 7), nomOnglet = cfg.nomOnglet || MOIS_MAJ[mo - 1] + ' ' + an;
   var cleMois = function (nom) {
     var n = cle_(nom), m = MOIS_MAJ.filter(function (x) { return n.indexOf(x) === 0; })[0], a = (n.match(/(20\d\d)/) || [])[1];
     return m && a ? +a * 100 + MOIS_MAJ.indexOf(m) + 1 : null;
@@ -1093,8 +1193,8 @@ function genererFactureScaped(mois) {
     if (t.indexOf('DOUBLE DEPOTAGE') === 0) prixDD = nombre_(l[4], null);
   });
   // Livraisons du planning, par site (ordre des sites du modèle, puis les nouveaux)
-  var livs = livraisonsScaped_(ss, mois);
-  if (!livs.length) throw new Error('Aucune livraison SCAPED au planning Carburant en ' + nomMois_(mois));
+  var livs = cfg.livraisons || livraisonsScaped_(ss, mois);
+  if (!livs.length) throw new Error('Aucune livraison ' + (td ? 'THEVENIN DUCROT' : 'SCAPED') + ' au planning Carburant ' + (cfg.periode || 'en ' + nomMois_(mois)));
   var avert = [], parSite = {}, ordre = Object.keys(infos);
   livs.forEach(function (l) {
     var k = cle_(l.lieu), connu = ordre.filter(function (o) { return memeLieu_(o, k); })[0] || k;
@@ -1102,8 +1202,9 @@ function genererFactureScaped(mois) {
     (parSite[connu] = parSite[connu] || []).push(l);
   });
   var sites = ordre.filter(function (k) { return parSite[k]; }).map(function (k) {
-    var inf = infos[k] || { entete: ['Chargement : DPF FOS CODE 13011', k], km: '', prix: null };
-    if (!infos[k]) avert.push('Nouveau lieu ' + k + ' : vérifiez son en-tête et ajoutez la ligne « KM - TK - TF »');
+    var chg = (parSite[k].map(function (l) { return l.chargement; }).filter(String)[0] || 'FOS SUR MER').toUpperCase();
+    var inf = td ? { entete: [chg + ' / ' + k], km: '', prix: null } : infos[k] || { entete: ['Chargement : DPF FOS CODE 13011', k], km: '', prix: null };
+    if (!td && !infos[k]) avert.push('Nouveau lieu ' + k + ' : vérifiez son en-tête et ajoutez la ligne « KM - TK - TF »');
     var prixPl = parSite[k].map(function (l) { return l.prix; }).filter(function (x) { return x; });
     var pp = prixPl.length ? prixPl.sort(function (a, b) { return prixPl.filter(function (x) { return x === b; }).length - prixPl.filter(function (x) { return x === a; }).length; })[0] : null;
     // prix exact du dernier mois (3 décimales) s'il correspond au prix arrondi du planning ; sinon le prix du planning
@@ -1120,7 +1221,16 @@ function genererFactureScaped(mois) {
       livraisons: parSite[k].map(function (l) { return { m3: l.m3 || Math.round((l.litres || 0) / 1000), lvn: l.lvn || '?', jour: Utilities.formatDate(l.date, FUSEAU, 'dd/MM') }; }),
       dd: nbDD ? { nb: nbDD, prix: prixDD === null ? 45 : prixDD } : null };
   });
-  var pages = planFactureScaped_(sites, zone);
+  // TD : ligne d'indexation (% TD du mois saisi dans Activité) sous les livraisons
+  var extra = [];
+  if (td) {
+    var pctTD = (indexationGasoil_(ss)[mois] || {}).TD_BRIGNOLES;
+    if (pctTD === undefined || pctTD === null) throw new Error('Saisissez d\'abord le % TD de ' + nomMois_(mois) + ' (site > Activité > Indexation gasoil > onglet TD)');
+    var baseTD = 0;
+    sites.forEach(function (s2) { s2.livraisons.forEach(function (l) { baseTD += Math.round(l.m3 * s2.prix * 100) / 100; }); if (s2.dd) baseTD += s2.dd.nb * s2.dd.prix; });
+    extra.push({ type: 'index', texte: 'INDEXATION CARBURANT : + ' + pctTD + ' %', montant: Math.round(baseTD * pctTD) / 100, pct: pctTD });
+  }
+  var pages = planFactureScaped_(sites, zone, extra);
   // Onglet du mois : remplacé s'il existe déjà
   var ancien = fac.getSheetByName(nomOnglet);
   if (ancien) fac.deleteSheet(ancien);
@@ -1129,7 +1239,7 @@ function genererFactureScaped(mois) {
   var nbLignes = pages.length * hauteur + hRecap;
   if (sh.getMaxRows() < nbLignes) sh.insertRowsAfter(sh.getMaxRows(), nbLignes - sh.getMaxRows());
   sh.getRange(1, 1, sh.getMaxRows(), nbCol).breakApart().clear();
-  var dateFac = new Date(an, mo, 0), numero = 'FA' + ('0' + mo).slice(-2) + an, nbPages = pages.length + 1;
+  var dateFac = cfg.dateFac || new Date(an, mo, 0), numero = cfg.numero || 'FA' + ('0' + mo).slice(-2) + an, nbPages = pages.length + 1;
   var poser = function (base, srcDebut, n) {   // copie un bloc d'une page du modèle (mise en page + textes fixes)
     modele.getRange(srcDebut + 1, 1, n, nbCol).copyTo(sh.getRange(base, 1));
     for (var k0 = 0; k0 < n; k0++) { var hh = modele.getRowHeight(srcDebut + k0 + 1); if (hh) sh.setRowHeight(base + k0, hh); }
@@ -1137,6 +1247,7 @@ function genererFactureScaped(mois) {
       var t = cle_(mv[srcDebut + k][0]);
       if (t.indexOf('DATE') === 0) sh.getRange(base + k, 2).setValue(dateFac);
       if (t.indexOf('FACTURE N') === 0) sh.getRange(base + k, 2).setValue(numero);
+      if (td && t.indexOf('REF') === 0) sh.getRange(base + k, 2).setNumberFormat('@').setValue(cfg.refClient || '');
     }
   };
   var pageNoDe = function (srcDebut, n) {   // case du n° de page (« 1/5 ») : une date au format j/m (ou ce texte) sous le TOTAL
@@ -1157,6 +1268,11 @@ function genererFactureScaped(mois) {
       var r = r0 + k, cel = sh.getRange(r, 1, 1, 7);
       if (x.type === 'texte') sh.getRange(r, 1).setValue(x.texte);
       else if (x.type === 'lvn') { fmt(rTrans + 1).copyTo(sh.getRange(r, 1), { formatOnly: true }); sh.getRange(r, 1).setValue(x.texte); }
+      else if (x.type === 'index') {
+        fmt(rTrans).copyTo(sh.getRange(r, 1), { formatOnly: true });
+        cel.setValues([[x.texte, '', '', 1, x.montant, 0.2, '=D' + r + '*E' + r]]);
+        totalHT += x.montant;
+      }
       else if (x.type === 'transport' || x.type === 'dd') {
         fmt(rTrans).copyTo(sh.getRange(r, 1), { formatOnly: true });
         cel.setValues([[x.type === 'dd' ? 'DOUBLE DEPOTAGE' : 'TRANSPORTS CARBURANT', '', '', x.type === 'dd' ? x.nb : x.m3, x.prix, 0.2, '=D' + r + '*E' + r]]);
@@ -1194,16 +1310,18 @@ function genererFactureScaped(mois) {
   var pnR = pageNoDe(recapDebut, hRecap); if (pnR) sh.getRange(baseR + pnR[0], pnR[1] + 1).setNumberFormat('@').setValue(nbPages + '/' + nbPages);
   var finUtile = baseR + hRecap - 1;
   if (sh.getMaxRows() > finUtile) sh.deleteRows(finUtile + 1, sh.getMaxRows() - finUtile);
+  if (td) remplacerClientFacture_(sh, cfg.client || []);
   SpreadsheetApp.flush();
   // Enregistrement pour le contrôle des factures (FACTURES_CLIENTS)
-  var refClient = rRef >= 0 ? String(mv[rRef][1] || '') : '';
+  var refClient = td ? (cfg.refClient || '') : rRef >= 0 ? String(mv[rRef][1] || '') : '';
   var lignesF = [];
   sites.forEach(function (s) {
     s.livraisons.forEach(function (l) { lignesF.push({ nature: 'TRANSPORT', lieu: s.lieu, quantite: l.m3, prix: s.prix, montant: Math.round(l.m3 * s.prix * 100) / 100, lvn: l.lvn, dateLvn: l.jour }); });
     if (s.dd) lignesF.push({ nature: 'DEPOTAGE', lieu: s.lieu, quantite: s.dd.nb, prix: s.dd.prix, montant: s.dd.nb * s.dd.prix });
   });
+  extra.forEach(function (x) { lignesF.push({ nature: 'INDEXATION', lieu: '', quantite: 1, prix: x.montant, montant: x.montant, indexPct: x.pct }); });
   try {
-    deposerFacture({ numero: numero, date: Utilities.formatDate(dateFac, FUSEAU, 'yyyy-MM-dd'), mois: mois, societe: 'LPB', client: 'SCA PETROLE & DERIVES (SCAPED)',
+    deposerFacture({ numero: numero, date: Utilities.formatDate(dateFac, FUSEAU, 'yyyy-MM-dd'), mois: mois, societe: 'LPB', client: td ? 'THEVENIN & DUCROT' : 'SCA PETROLE & DERIVES (SCAPED)',
       refClient: refClient, activite: 'Carburant', lignes: lignesF, netHT: Math.round(totalHT * 100) / 100 }, '', '');
   } catch (e) { avert.push('Facture préparée mais non enregistrée pour le contrôle : ' + e.message); }
   return { onglet: nomOnglet, numero: numero, url: fac.getUrl() + '#gid=' + sh.getSheetId(), livraisons: livs.length, pages: nbPages,
@@ -2567,6 +2685,7 @@ function plannings_(ss) {
         chauffeur: col(function (h) { return h.indexOf('CHAUFFEUR') === 0; }),
         client: col(function (h) { return h === 'CLIENT'; }),
         lieu: col(function (h) { return h === 'LIEU DE LIVRAISON' || h === 'LIVRAISON'; }),
+        chargement: col(function (h) { return h === 'CHARGEMENT' || h.indexOf('LIEU DE CHARGEMENT') === 0; }),
         contrat: col(function (h) { return h.indexOf('CONTRAT MANQUANT') === 0; }),
         numContrat: col(function (h) { return /^N\W{0,3}\s*CONTRAT$/.test(h); }), tournee: col(function (h) { return /^N\W{0,3}\s*TOURNEE$/.test(h); }),
         camion: col(function (h) { return /^(CAMION|VEHICULE|IMMAT|TRACTEUR)/.test(h); }),
@@ -2590,7 +2709,7 @@ function plannings_(ss) {
         var normSoc = function (x) { var k = cle_(x); return k.indexOf('LPB') >= 0 ? 'LPB' : (k.indexOf('GLEYZES') >= 0 ? 'Gleyzes' : k); };
         res.push({
           date: dt, activite: src[1], societe: normSoc(val(l, c.societe)), societeChauffeur: normSoc(val(l, c.societeChauffeur)),
-          chauffeur: chauffeur, client: String(val(l, c.client) || '').trim(), lieu: String(val(l, c.lieu) || '').trim(),
+          chauffeur: chauffeur, client: String(val(l, c.client) || '').trim(), lieu: String(val(l, c.lieu) || '').trim(), chargement: String(val(l, c.chargement) || '').trim(),
           ca: ca, km: nombre_(val(l, c.km), null), litres: nombre_(val(l, c.litres), null),
           attente: nombre_(val(l, c.attente), null), contratManquant: String(val(l, c.contrat) || '').trim(),
           numContrat: String(val(l, c.numContrat) || '').replace(/\.0+$/, '').trim(), tournee: String(val(l, c.tournee) || '').replace(/\.0+$/, '').trim(),

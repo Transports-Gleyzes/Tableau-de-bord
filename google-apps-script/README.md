@@ -124,3 +124,12 @@ Une case « Indexation gasoil » calcule, pour le mois choisi et par société (
 Le montant HT est le CA du mois lu dans le planning Carburant (pour SCAPED, le total de la facture préparée par le site quand elle existe).
 
 Les valeurs saisies sur le site sont rangées dans l'onglet `INDEXATION` du Google Sheet (créé au premier enregistrement).
+
+## Facture TD (Thevenin Ducrot)
+
+Facturée deux fois par mois (le 15 pour les livraisons du 1er au 15, le dernier jour du mois pour le 16 à la fin).
+Onglet **Facture TD** du site : choisir la quinzaine, contrôler les livraisons, indiquer le n° de facture (proposé : le suivant du dernier),
+puis **Préparer la facture**. Un onglet « TD 1-15 NOVEMBRE 2026 » est créé dans le classeur des factures SCAPED (`ID_FACTURE_SCAPED`),
+avec la même mise en page que la facture SCAPED : bloc client remplacé par celui de TD (`CLIENT_TD`, `REF_CLIENT_TD` dans PARAMETRES,
+saisis une fois en bas de l'onglet), une ligne par livraison au prix du planning, la ligne « INDEXATION CARBURANT : + x % »
+(% TD du mois saisi dans Activité) et les totaux. Un lien télécharge directement le PDF.
