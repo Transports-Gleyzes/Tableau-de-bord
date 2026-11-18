@@ -247,11 +247,13 @@ function doGet() {
 /** Toutes les données du site en un seul appel (dates converties en texte AAAA-MM-JJ). */
 function getDonnees() {
   var ss = classeur_();
-  var d = {};
+  var d = {}, t0 = Date.now(), dernierT = t0, chronos = [];
+  var etape = function (nom) { var t = Date.now(); chronos.push(nom + ' ' + ((t - dernierT) / 1000).toFixed(1) + ' s'); console.log('Chargement : ' + nom + ' ' + ((t - dernierT) / 1000).toFixed(1) + ' s (total ' + ((t - t0) / 1000).toFixed(0) + ' s)'); dernierT = t; };
   ['FINANCES', 'FLOTTE', 'SALARIES', 'ABSENCES', 'CARBURANT', 'LIVRAISONS', 'FACTURES', 'HEURES', 'CHARGES_MUTUALISEES', 'FACTURES_CLIENTS'].forEach(function (nom) {
     var sh = ss.getSheetByName(nom);
     d[nom] = (nom === 'FACTURES_CLIENTS' ? facturesClients_(ss) : sh ? lireTable_(sh) : []).map(serialiser_);
   });
+  etape('onglets du classeur');
   var srcFin = finances_(ss);
   d.FINANCES = srcFin.lignes.map(serialiser_);
   d.financesCalculees = srcFin.calcule; d.financesMoisReels = srcFin.mois || {};
@@ -268,6 +270,7 @@ function getDonnees() {
     d.ECHEANCES = d.ECHEANCES || [];
     d.erreurEcheances = 'Tableau « Échéances flotte » illisible : ' + e.message;
   }
+  etape('finances + échéances');
   d.erreurs = [];
   try {
     d.PLANNING = plannings_(ss).map(function (l) {
@@ -276,6 +279,7 @@ function getDonnees() {
       return o;
     });
   } catch (e) { d.PLANNING = []; d.erreurs.push('Plannings illisibles : ' + e.message); }
+  etape('plannings Inter + Carburant');
   try {
     d.LITRAGES = litrages_(ss).map(function (l) {
       var o = serialiser_(l);
@@ -283,6 +287,7 @@ function getDonnees() {
       return o;
     });
   } catch (e) { d.LITRAGES = []; d.erreurs.push('Litrages illisibles : ' + e.message); }
+  etape('litrages');
   var params = lireParametres_();
   d.parametres = {
     JOURS_PREAVIS: nombre_(params.JOURS_PREAVIS, 30),
@@ -298,7 +303,9 @@ function getDonnees() {
     SEUIL_HAUSSE_CONSO_PCT: nombre_(params.SEUIL_HAUSSE_CONSO_PCT, 15),
     NB_SEMAINES_CONSO: Math.max(1, nombre_(params.NB_SEMAINES_CONSO, 2))
   };
+  etape('paramètres');
   try { d.PREFACS = controlePrefacs_(ss, minuit_(new Date())).mois; } catch (e) { d.PREFACS = {}; d.erreurs.push('Préfacs Intermarché : ' + e.message); }
+  etape('préfacs ITM');
   try { d.PEAGES_DETAIL = detailPeages_(ss); } catch (e) { d.PEAGES_DETAIL = {}; }
   try { d.PEAGES_BADGES = badgesMois_(ss); } catch (e) { d.PEAGES_BADGES = {}; }
   try { d.PEAGES_REGLES = reglesPeages_(ss); } catch (e) { d.PEAGES_REGLES = []; }
@@ -307,12 +314,17 @@ function getDonnees() {
   try { d.PEAGES_RELEVES = relevesPeages_(ss); } catch (e) { d.PEAGES_RELEVES = []; }
   try { d.PEAGES_FICHIERS = fichiersPeages_(ss); } catch (e) { d.PEAGES_FICHIERS = []; }
   try { d.PEAGES_GARDES = gardesPeages_(); } catch (e) { d.PEAGES_GARDES = {}; }
+  etape('péages (détail, badges, relevés)');
   try { d.PEAGES_CONTROLE = controlePeagesTournees_(ss); } catch (e) { d.PEAGES_CONTROLE = {}; d.erreurs.push('Contrôle péages : ' + e.message); }
   try { d.PEAGES = synthesePeages_(ss); } catch (e) { d.PEAGES = []; d.erreurs.push('Péages : ' + e.message); }
+  etape('péages (contrôle, synthèse)');
   try { d.COMPTA = balances_(ss).map(syntheseBalance_); } catch (e) { d.COMPTA = []; d.erreurs.push('Balance comptable : ' + e.message); }
-  try { d.CONTROLE = controleFactures_(ss, minuit_(new Date())).mois; } catch (e) { d.CONTROLE = {}; d.erreurs.push('Contrôle des factures : ' + e.message); }
+  d.CONTROLE = {};
+  etape('comptabilité');
   d.alertes = calculerAlertes_(ss, new Date());
+  etape('alertes');
   d.genereLe = Utilities.formatDate(new Date(), FUSEAU, "dd/MM/yyyy 'à' HH:mm");
+  d.chronos = chronos;
   d.derniereImport = PropertiesService.getScriptProperties().getProperty('DERNIER_IMPORT_TEXTE') || '';
   return d;
 }
@@ -549,7 +561,13 @@ function facturesClients_(ss) {
  * Mois contrôlés : ceux qui ont des factures déposées, plus le mois précédent à partir du JOUR_CONTROLE_FACTURES.
  * Renvoie { mois: { 'AAAA-MM': { carburant: [...], inter: [...], indexation: [...] } }, alertes: [...] }.
  */
+var MEMO_CONTROLEFACTURES_ = {};
 function controleFactures_(ss, jour0) {
+  var cleMemo = String(jour0 && jour0.getTime ? jour0.getTime() : jour0);
+  if (MEMO_CONTROLEFACTURES_[cleMemo]) return MEMO_CONTROLEFACTURES_[cleMemo];
+  return (MEMO_CONTROLEFACTURES_[cleMemo] = controleFactures_Calcul_(ss, jour0));
+}
+function controleFactures_Calcul_(ss, jour0) {
   var p = lireParametres_(ss), jourCtrl = nombre_(p.JOUR_CONTROLE_FACTURES, 7);
   var fact = facturesClients_(ss);
   var pl = [];
@@ -1923,7 +1941,13 @@ function supprimerPrefac(numero) {
  *  - contrats du planning sans préfac ; préfac facturée sur INFORCE (n° de préfacture repris sur la facture).
  * Renvoie { mois: { 'AAAA-MM': [lignes par contrat] }, alertes }.
  */
+var MEMO_CONTROLEPREFACS_ = {};
 function controlePrefacs_(ss, jour0) {
+  var cleMemo = String(jour0 && jour0.getTime ? jour0.getTime() : jour0);
+  if (MEMO_CONTROLEPREFACS_[cleMemo]) return MEMO_CONTROLEPREFACS_[cleMemo];
+  return (MEMO_CONTROLEPREFACS_[cleMemo] = controlePrefacs_Calcul_(ss, jour0));
+}
+function controlePrefacs_Calcul_(ss, jour0) {
   var sh = ss.getSheetByName('PREFACTURES'), lignes = sh ? lireTable_(sh) : [];
   var res = {}, alertes = [], r2 = function (x) { return Math.round(x * 100) / 100; };
   if (!lignes.length) return { mois: res, alertes: alertes };
@@ -3764,4 +3788,11 @@ function enregistrerIndexation(liste) {
     if (vals.length) sh.getRange(2, 1, vals.length, 4).setValues(vals);
     return indexationGasoil_(ss);
   } finally { lock.releaseLock(); }
+}
+
+
+/** À lancer depuis l'éditeur Apps Script si le site est lent : le journal affiche le temps de chaque étape du chargement. */
+function diagnosticChargement() {
+  var d = getDonnees();
+  console.log('Terminé. Détail : ' + d.chronos.join(' · '));
 }
