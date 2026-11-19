@@ -101,6 +101,12 @@ section[hidden] { display: none; }
 .ix-histo { grid-column: 1 / -1; }
 .ix-histo table { width: auto; min-width: 260px; }
 .ix-histo td, .ix-histo td.n { padding: 4px 12px 4px 0; border-top: 1px solid var(--border); font-size: 13px; font-weight: 600; }
+.saisie-paie input { width: 64px; padding: 3px 4px; text-align: right; }
+.saisie-paie input.txt { width: 110px; text-align: left; }
+.saisie-paie input.nom { width: 120px; text-align: left; font-weight: 600; }
+.saisie-paie input.lu { background: #eaf6ee; border-color: #7cc49a; }
+.saisie-paie th { white-space: normal; font-size: 11px; vertical-align: bottom; }
+#tabSimPaie tr.cliquable { cursor: pointer; } #tabSimPaie tr.choisi td { background: #e8f0fe; }
 .saisie-index .actions { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; }
 @media (max-width: 600px) { .tuiles-3 { grid-template-columns: 1fr !important; } }
 .tuiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
@@ -264,7 +270,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v18/11-td1</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/11-paie1</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -283,6 +289,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
   <button role="tab" data-onglet="peages"><span class="ico-onglet" aria-hidden="true">🛣️</span>Péages ITM</button>
   <button role="tab" data-onglet="scaped"><span class="ico-onglet" aria-hidden="true">🛢️</span>Facture SCAPED</button>
   <button role="tab" data-onglet="factureTD"><span class="ico-onglet" aria-hidden="true">🚚</span>Facture TD</button>
+  <button role="tab" data-onglet="paie"><span class="ico-onglet" aria-hidden="true">💶</span>Paie</button>
   <button role="tab" data-onglet="compta"><span class="ico-onglet" aria-hidden="true">📊</span>Comptabilité</button>
   <button role="tab" data-onglet="alertes"><span class="ico-onglet" aria-hidden="true">🔔</span>Alertes <span class="pastille" id="nbAlertes" hidden></span></button>
 </nav>
@@ -502,6 +509,38 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
   </section>
 
   <!-- ALERTES -->
+  <!-- PAIE : fichier PAIE de chaque société + simulation brut / net -->
+  <section id="paie" hidden>
+    <div class="carte">
+      <h2>Paie du mois</h2>
+      <div class="barre"><label for="socPaie">Société</label><select id="socPaie"><option value="Gleyzes">GLEYZES</option><option value="LPB">LPB</option></select>
+        <label for="moisPaie">Mois</label><select id="moisPaie"></select>
+        <button id="rechargerPaie">↻ Relire le fichier</button><a id="lienPaie" target="_blank" rel="noopener" class="note"></a><span class="msg" id="msgPaie"></span></div>
+      <div class="depot" id="zonePaie">📄 Glissez ici le PDF des relevés d'activité SOLID (scan de tous les chauffeurs), ou cliquez pour le choisir
+        <input type="file" id="choixPaie" accept="application/pdf,image/*" hidden></div>
+      <div id="etatPaie" class="note" style="margin:6px 0"></div>
+      <p class="note">Les chiffres lus sur les relevés (temps de service, nuit, repas, casse-croûte, repos compensateur) remplissent le tableau ;
+        complétez avances, acomptes, absences et commentaires, puis enregistrez : l'onglet du mois du fichier PAIE est rempli (créé s'il n'existe pas).</p>
+      <div class="tableau"><table id="tabPaie" class="serre saisie-paie"></table></div>
+      <div class="barre" style="margin-top:10px"><button id="ajoutPaie">+ Ajouter un salarié</button>
+        <button id="enregPaie" class="primaire">Enregistrer dans le fichier de paie</button><span class="msg" id="msgEnregPaie"></span></div>
+    </div>
+    <div class="carte">
+      <h2>Simulation brut / net</h2>
+      <p class="note" id="noteSimPaie"></p>
+      <div class="tuiles" id="tuilesPaie"></div>
+      <div class="tableau"><table id="tabSimPaie" class="serre"></table></div>
+      <div id="detailSimPaie"></div>
+      <details style="margin-top:12px"><summary><b>Taux de calcul</b> <span class="note" id="resumeParamsPaie"></span></summary>
+        <p class="note">Les taux (cotisations, indemnités, taux horaire, ancienneté, prélèvement à la source…) viennent de votre fichier SIMULATION PAIE :
+          déposez-le ici pour les mettre à jour. Ils sont rangés dans les onglets « PARAMETRES PAIE » et « SALARIES PAIE » du fichier de paie, où on peut aussi les corriger.</p>
+        <div class="depot" id="zoneSimPaie">📊 Glissez ici le fichier SIMULATION PAIE (.xlsx), ou cliquez pour le choisir
+          <input type="file" id="choixSimPaie" accept=".xlsx,.xls" hidden></div>
+        <div class="tableau"><table id="tabParamsPaie" class="serre"></table></div>
+      </details>
+    </div>
+  </section>
+
   <!-- COMPTABILITÉ (balances déposées) -->
   <section id="compta" hidden>
     <div class="carte">
@@ -727,7 +766,7 @@ function afficherOnglet(nom) {
   try { localStorage.setItem('ongletTDB', nom); } catch (e) {}
   if (!D) return;
   ({ accueil: rendreAccueil, flotte: rendreFlotte, salaries: rendreSalaries,
-     activite: rendreActivite, conso: rendreConso, charges: rendreCharges, prefacs: rendrePrefacs, peages: rendrePeages, scaped: rendreScaped, factureTD: rendreFactureTD, compta: rendreCompta, alertes: rendreAlertes })[nom]();
+     activite: rendreActivite, conso: rendreConso, charges: rendreCharges, prefacs: rendrePrefacs, peages: rendrePeages, scaped: rendreScaped, factureTD: rendreFactureTD, paie: rendrePaie, compta: rendreCompta, alertes: rendreAlertes })[nom]();
 }
 
 function alertesFiltrees() {
@@ -2350,6 +2389,368 @@ function lireFichierMailAvoir(f) {
     if (it) { e.preventDefault(); var f = it.getAsFile(); lireFichierMailAvoir(new File([f], 'capture.png', { type: f.type })); }
   });
 })();
+
+// ---------- Paie ----------
+// Simulation de paie : reprise exacte des formules du fichier SIMULATION PAIE (onglet salarié + PARAMÈTRES)
+function r2p(x) { return Math.round((x + 1e-9 * Math.sign(x)) * 100) / 100; }
+function simulerPaie(P, S, M) {
+  // P : paramètres communs ; S : paramètres du salarié ; M : données du mois (heures décimales, nombres)
+  var o = {};
+  var D7 = r2p(M.service), D8 = r2p(M.nuit);
+  var D24 = 151.67;
+  var D25 = Math.min(Math.max(D7 - D24, 0), 17.33);
+  var D26 = Math.min(Math.max(D7 - D24 - D25, 0), 17.33);
+  var D27 = r2p(Math.max(D7 - 186.33, 0));
+  var D28 = D8 > P.seuilNuit ? P.majNuitPlus : P.majNuit;
+  var D33 = r2p(D24 * S.tauxHoraire), D34 = r2p(D8 * S.tauxNuit * D28);
+  var D29 = Math.round((D33 + D34) / 151.67 * 10000) / 10000;
+  var D35 = r2p(D25 * S.tauxHoraire * 1.25), D36 = r2p(D26 * D29 * 1.25), D37 = r2p(D27 * D29 * 1.5);
+  var D38 = r2p((D33 + D35 + D36 + D37) * S.anciennete);
+  var D39 = D33 + D34 + D35 + D36 + D37 + D38;
+  var D40 = D36 + D37;
+  var D41 = r2p(Math.min(D40, Math.max(P.plafondHS - S.cumulHS, 0) / P.ratioHS));
+  var D42 = r2p(D39 * S.coefAssiette);
+  var D43 = r2p((D39 - D41) * 0.9825 + P.mutuelle + D42 * P.prevoyance);
+  var T = P.taux, lignes = [];
+  var cot = function (nom, base, k) { var s = r2p(base * T[k][0]), e = r2p(base * T[k][1]); lignes.push([nom, base, s, e]); return [s, e]; };
+  var tot = [0, 0], add = function (x) { tot[0] += x[0]; tot[1] += x[1]; };
+  add(cot('Maladie', D42, 'maladie'));
+  lignes.push(['Complémentaire santé', null, P.mutuelle, P.mutuelle]); add([P.mutuelle, P.mutuelle]);
+  add(cot('AT/MP', D42, 'atmp'));
+  add(cot('Vieillesse plafonnée', Math.min(D42, P.pmss), 'vieillessePlaf'));
+  add(cot('Vieillesse déplafonnée', D42, 'vieillesseDeplaf'));
+  add(cot('Complémentaire T1', Math.min(D42, P.pmss), 'complementaireT1'));
+  add(cot('Famille', D42, 'famille'));
+  add(cot('Assurance chômage', D42, 'chomage'));
+  add(cot('Autres contributions employeur', D42, 'autres'));
+  add(cot('Cotisations conventionnelles', D42, 'conventionnelles'));
+  var csgD = cot('CSG déductible', D43, 'csgDed'); add(csgD);
+  var csgN = cot('CSG/CRDS non déductible', D43, 'csgNonDed'); add(csgN);
+  var csgHS = cot('CSG/CRDS sur HS exonérées', r2p(D41 * 0.9825), 'csgHS'); add(csgHS);
+  add(cot('Réduction salariale HS', r2p(D40 * S.coefAssiette), 'reducHS'));
+  var dedHS = -r2p((D26 + D27) * P.deductionHS); lignes.push(['Déduction forfaitaire patronale HS', D26 + D27, 0, dedHS]); add([0, dedHS]);
+  var rg = -r2p(S.calibrage * D42 * (0.02 + P.coefRG * Math.pow(Math.max(0.5 * (3 * P.smic * (D24 + D25 + D26 + D27) / D42 - 1), 0), 1.75)));
+  lignes.push(['Réduction générale (estimation)', D42, 0, rg]); add([0, rg]);
+  var D63 = r2p(tot[0]), E63 = r2p(tot[1]);
+  var D66 = r2p(D39 - D63);
+  var D67 = r2p(D66 + csgN[0] + csgHS[0] - D41 + P.mutuelle);
+  var frais = [r2p(M.cc * P.indCC), r2p(M.repas * P.indRepas), r2p(M.repasUnique * P.indRepasUnique), r2p(M.decouche * P.indGD)];
+  var totFrais = frais[0] + frais[1] + frais[2] + frais[3];
+  var D72 = -r2p(D67 * S.pas) || 0;
+  var D73 = r2p(D66 + totFrais + D72);
+  return { heures: { service: D7, nuit: D8, normales: D24, equivalence: D25, hs125: D26, hs150: D27, majNuit: D28, tauxHS: D29 },
+    gains: [['Salaire horaire', D24, S.tauxHoraire, D33], ['Travail de nuit', D8, S.tauxNuit * D28, D34], ["Heures d'équivalence 125%", D25, S.tauxHoraire * 1.25, D35],
+      ['Heures supplémentaires 125%', D26, D29 * 1.25, D36], ['Heures supplémentaires 150%', D27, D29 * 1.5, D37], ['Ancienneté', D33 + D35 + D36 + D37, S.anciennete, D38]],
+    brut: r2p(D39), hsBrutes: r2p(D40), hsExo: D41, assiette: D42, assietteCSG: D43, cotisations: lignes, cotSal: D63, cotPat: E63,
+    netSocial: D66, netImposable: D67, frais: { cc: frais[0], repas: frais[1], repasUnique: frais[2], decouche: frais[3], total: r2p(totFrais) },
+    pas: D72, netAPayer: D73, coutEmployeur: r2p(D39 + E63), coutTotal: r2p(D39 + E63 + totFrais), cumulHSApres: r2p(S.cumulHS + r2p(D41 * P.ratioHS)) };
+}
+
+// Lecture des relevés mensuels d'activité SOLID (texte issu de la reconnaissance de caractères)
+function cleNom(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z]/g, ''); }
+function nomSansDoubles(s) { return cleNom(s).replace(/(.)\1+/g, '$1'); }
+function hDec(h, m) { return +h + (+m) / 60; }
+function lireRelevesSolid(texte, connus) {
+  // connus : [{ nom, prenom }] ; renvoie [{ nom, prenom, nomLu, mois, service, nuit, repasMidi, repasSoir, cc, repasUnique, decouche, rcAcquis, soldeRC, soldeCP, avertissements }]
+  var t = String(texte || '').replace(/\r/g, ''), res = [];
+  var re = /RELEV[ÉE]\s+MENSUEL/gi, pos = [], m;
+  while ((m = re.exec(t))) pos.push(m.index);
+  pos.forEach(function (p, k) {
+    var bloc = t.slice(p, k + 1 < pos.length ? pos[k + 1] : t.length);
+    var avant = t.slice(k ? pos[k - 1] : 0, p);
+    var finPrec = Math.max(avant.lastIndexOf('SOLID'), avant.lastIndexOf('dit le'));
+    var entete = finPrec >= 0 ? avant.slice(finPrec) : avant.slice(-600);
+    // le nom : un salarié connu dont le nom figure dans l'en-tête (CICULLO = CICCULLO)
+    var hE = nomSansDoubles(entete), qui = null;
+    (connus || []).forEach(function (c) { if (!qui && c.nom && hE.indexOf(nomSansDoubles(c.nom)) >= 0) qui = c; });
+    var lignesE = entete.split('\n').map(function (x) { return x.trim(); }).filter(function (x) { return /^[A-ZÀ-Ü' -]{6,}$/.test(x); });
+    var r = { nom: qui ? qui.nom : '', prenom: qui ? qui.prenom : '', nomLu: lignesE[0] || '', avertissements: [] };
+    var per = bloc.match(/P[ée]riode\s+du\s+(\d{2})\/(\d{2})\/(\d{4})/i);
+    r.mois = per ? per[3] + '-' + per[2] : '';
+    // heures : sur la même ligne que le libellé, sinon dans l'ordre du tableau « Heures »
+    var duree = function (libelle) { var x = bloc.match(new RegExp(libelle + '[^\\d\\n]{0,40}(\\d{1,3})\\s*[:h]\\s*(\\d{2})', 'i')); return x ? hDec(x[1], x[2]) : null; };
+    r.service = duree('Total\\s+temps\\s+de\\s+service');
+    r.nuit = duree('dont\\s+Travail\\s+de\\s+nuit');
+    if (r.service === null || r.nuit === null) {
+      var deb = bloc.search(/Heures/i), fin = bloc.search(/Repos\s+compensateur|compensateur/i);
+      var zone = bloc.slice(Math.max(0, deb), fin > deb ? fin : undefined), d = zone.match(/\b\d{1,3}:\d{2}\b/g) || [];
+      if (d.length >= 6) {
+        if (r.service === null) r.service = hDec.apply(null, d[4].split(':'));
+        if (r.nuit === null) r.nuit = hDec.apply(null, d[5].split(':'));
+      }
+    }
+    if (r.service === null) r.avertissements.push('temps de service total non lu');
+    if (r.nuit === null) r.avertissements.push('heures de nuit non lues');
+    // frais : quantité sur la ligne du libellé, sinon les lignes « quantité  P.U.  montant » dans l'ordre des libellés
+    var fraisDeb = bloc.search(/R[ée]capitulatif\s+des\s+Frais/i), fz = fraisDeb >= 0 ? bloc.slice(fraisDeb) : '';
+    var LIB = [['repasUnique', 'Repas\\s+unique'], ['cc', 'Casse[\\s-]*cro[uû]te'], ['repasMidi', 'Repas\\s+midi'], ['repasSoir', 'Repas\\s+soir'],
+      ['decouche', '(?:Petit|Grand)\\s+d[ée]couch[ée]|Grand\\s+d[ée]placement|D[ée]couch[ée]']];
+    var trouves = [];
+    LIB.forEach(function (l) {
+      r[l[0]] = 0;
+      var x = new RegExp('(' + l[1] + ')[^\\n]*', 'i').exec(fz);
+      if (!x) return;
+      trouves.push({ k: l[0], i: x.index });
+      var q = x[0].match(/(\d{1,3})\s+\d{1,3}[,.]\d{2}\s+\d{1,4}[,.]\d{2}/);
+      if (q) r[l[0]] = +q[1]; else r[l[0]] = null;
+    });
+    if (trouves.some(function (x) { return r[x.k] === null; })) {
+      trouves.sort(function (a, b) { return a.i - b.i; });
+      var tri = fz.match(/(\d{1,3})\s+\d{1,3}[,.]\d{2}\s+\d{1,4}[,.]\d{2}/g) || [];
+      if (tri.length >= trouves.length) trouves.forEach(function (x, i) { if (r[x.k] === null) r[x.k] = +tri[i].match(/^\d+/)[0]; });
+      trouves.forEach(function (x) { if (r[x.k] === null) { r[x.k] = 0; r.avertissements.push('quantité « ' + x.k + ' » non lue'); } });
+    }
+    // repos compensateur et congés
+    var rc = bloc.match(/RC\s+calcul[ée][^\n]*?(\d{1,4}:\d{2})/i); r.rcAcquis = rc ? rc[1] : '';
+    var ns = bloc.match(/Nouveau\s+solde[^\n]*?(\d{1,4}:\d{2})\s+(\d+(?:[,.]\d+)?)/i); r.soldeRC = ns ? ns[1] + ' (' + ns[2].replace('.', ',') + ' j)' : '';
+    if (!qui) r.avertissements.push('salarié non reconnu (' + (r.nomLu || 'nom illisible') + ')');
+    if (r.service !== null || r.nuit !== null) res.push(r);
+  });
+  return res;
+}
+
+var PAIE = { soc: '', data: null, onglet: '', mois: '', lignes: [], lus: {}, choisi: '' };
+var CHAMPS_SAISIE_PAIE = [['service', 'Temps de service total', 'h'], ['nuit', 'dont nuit', 'h'], ['repasMidi', 'Repas midi', 'n'], ['repasSoir', 'Repas soir', 'n'],
+  ['cc', 'Casse-croûte', 'n'], ['repasUnique', 'Repas unique', 'n'], ['decouche', 'Petit découché', 'n'], ['avance', 'Avance €', 'n'], ['acompte', 'Acompte €', 'n'],
+  ['absCP', 'Abs. CP', 't'], ['absRC', 'Abs. RC', 't'], ['maladie', 'Maladie', 't'], ['at', 'AT', 't'], ['absNR', 'Abs. non rém.', 't'], ['absAutres', 'Autres abs.', 't'],
+  ['rcAcquis', 'RC acquis trim.', 't'], ['soldeRC', 'Solde RC', 't'], ['commentaires', 'Commentaires', 't']];
+function hhmm(h) { if (h === null || h === undefined || h === '' || isNaN(h)) return ''; var m = Math.round(h * 60); return Math.floor(m / 60) + ':' + ('0' + m % 60).slice(-2); }
+function depuisHhmm(t) { t = String(t || '').trim(); if (!t) return null; var m = t.match(/^(\d{1,4})\s*[:h]\s*(\d{1,2})?$/); if (m) return +m[1] + (+(m[2] || 0)) / 60; var n = Number(t.replace(',', '.')); return isNaN(n) ? NaN : n; }
+function paramsPaie() {   // taux à plat (onglet PARAMETRES PAIE) → objet du calcul
+  var f = (PAIE.data || {}).params; if (!f) return null;
+  var P = {}; Object.keys(f).forEach(function (k) { if (k.indexOf('taux.') !== 0) P[k] = f[k]; });
+  P.taux = {}; Object.keys(f).forEach(function (k) { var x = k.split('.'); if (x[0] === 'taux') { P.taux[x[1]] = P.taux[x[1]] || [0, 0]; P.taux[x[1]][x[2] === 'emp' ? 1 : 0] = f[k] || 0; } });
+  return P;
+}
+function salariePaie(nom) { return ((PAIE.data || {}).salaries || []).filter(function (s) { return nomSansDoubles(s.nom) === nomSansDoubles(nom); })[0]; }
+function moisSuivant(m) { var a = +m.slice(0, 4), n = +m.slice(5, 7) + 1; if (n > 12) { a++; n = 1; } return a + '-' + ('0' + n).slice(-2); }
+
+function rendrePaie() {
+  var sel = document.getElementById('socPaie');
+  if (!PAIE.soc) { PAIE.soc = societe() === 'LPB' ? 'LPB' : 'Gleyzes'; sel.value = PAIE.soc; }
+  sel.onchange = function () { PAIE.soc = sel.value; PAIE.data = null; PAIE.onglet = ''; chargerPaie(); };
+  document.getElementById('rechargerPaie').onclick = function () { PAIE.data = null; chargerPaie(PAIE.onglet); };
+  if (!PAIE.data) chargerPaie(); else afficherPaie();
+}
+function chargerPaie(garder) {
+  var m = document.getElementById('msgPaie'); m.className = 'msg'; m.textContent = 'Lecture du fichier de paie…';
+  appelServeur('lirePaie', PAIE.soc).then(function (d) {
+    PAIE.data = d; m.textContent = '';
+    var a = document.getElementById('lienPaie'); a.href = d.url; a.textContent = '↗ ouvrir le fichier PAIE ' + PAIE.soc.toUpperCase();
+    choisirOngletPaie(garder);
+  }).catch(function (e) { m.className = 'msg err'; m.textContent = e.message; PAIE.data = { onglets: [], salaries: [], params: null }; choisirOngletPaie(); });
+}
+function choisirOngletPaie(garder) {
+  var d = PAIE.data, sel = document.getElementById('moisPaie'), ong = d.onglets || [];
+  var dernier = ong.length ? ong[ong.length - 1].mois : aujourdhui().slice(0, 7), nouveau = moisSuivant(dernier);
+  var opts = ong.map(function (o) { return '<option value="' + txt(o.nom) + '">' + txt(o.nom) + '</option>'; });
+  opts.push('<option value="+' + nouveau + '">+ nouveau mois : ' + nomMois(nouveau) + '</option>');
+  sel.innerHTML = opts.reverse().join('');
+  var cible = garder && (ong.some(function (o) { return o.nom === garder; }) || garder.charAt(0) === '+') ? garder : '';
+  if (!cible) {   // par défaut : la paie du mois dernier (préparée au début du mois)
+    var mPrec = moisAvant(aujourdhui().slice(0, 7)), o = ong.filter(function (x) { return x.mois === mPrec; }).pop();
+    cible = o ? o.nom : (ong.length ? ong[ong.length - 1].nom : '+' + nouveau);
+  }
+  sel.value = cible;
+  sel.onchange = function () { ouvrirOngletPaie(sel.value); };
+  ouvrirOngletPaie(cible);
+}
+function ouvrirOngletPaie(nom) {
+  var d = PAIE.data;
+  if (nom.charAt(0) === '+') {   // nouveau mois : mêmes salariés que le dernier onglet, saisies vides
+    PAIE.onglet = ''; PAIE.mois = nom.slice(1);
+    var der = (d.onglets || []).slice(-1)[0];
+    PAIE.lignes = der ? der.lignes.map(function (l) { return { nom: l.nom, prenom: l.prenom, dfs: l.dfs, mutuelle: l.mutuelle, caisseCP: l.caisseCP, horaire: l.horaire, netGarantir: l.netGarantir }; }) : [];
+  } else {
+    var o = (d.onglets || []).filter(function (x) { return x.nom === nom; })[0] || { lignes: [], mois: '' };
+    PAIE.onglet = nom; PAIE.mois = o.mois;
+    PAIE.lignes = o.lignes.map(function (l) { var c = {}; Object.keys(l).forEach(function (k) { c[k] = l[k]; }); return c; });
+  }
+  PAIE.lus = {}; PAIE.choisi = '';
+  afficherPaie();
+}
+function afficherPaie() {
+  var t = document.getElementById('tabPaie');
+  t.innerHTML = '<thead><tr><th>Salarié</th>' + CHAMPS_SAISIE_PAIE.map(function (c) { return '<th>' + c[1] + '</th>'; }).join('') + '<th></th></tr></thead><tbody>' +
+    (PAIE.lignes.length ? PAIE.lignes.map(function (l, i) {
+      return '<tr><td><input class="nom" data-i="' + i + '" data-k="nom" value="' + txt(l.nom || '') + '" title="' + txt(l.prenom || '') + '"></td>' + CHAMPS_SAISIE_PAIE.map(function (c) {
+        var v = l[c[0]], aff = c[2] === 'h' ? hhmm(v) : (v === null || v === undefined ? '' : String(v));
+        return '<td><input data-i="' + i + '" data-k="' + c[0] + '" class="' + (c[2] === 't' ? 'txt' : '') + ((PAIE.lus[i] || {})[c[0]] ? ' lu' : '') + '" value="' + txt(aff) + '"' + (c[2] === 'h' ? ' placeholder="hh:mm"' : '') + '></td>';
+      }).join('') + '<td><button class="petit" data-suppr="' + i + '" title="Retirer de ce tableau (pas du fichier)">✕</button></td></tr>';
+    }).join('') : '<tr><td colspan="20" class="vide">Aucun salarié : déposez les relevés ou ajoutez un salarié</td></tr>') + '</tbody>';
+  t.querySelectorAll('input').forEach(function (inp) {
+    inp.onchange = function () {
+      var l = PAIE.lignes[+inp.dataset.i], k = inp.dataset.k, c = CHAMPS_SAISIE_PAIE.filter(function (x) { return x[0] === k; })[0];
+      if (k === 'nom') l.nom = inp.value.trim().toUpperCase();
+      else if (c[2] === 'h') { var h = depuisHhmm(inp.value); inp.style.borderColor = isNaN(h) ? '#c0392b' : ''; l[k] = isNaN(h) ? l[k] : h; }
+      else if (c[2] === 'n') { var n = inp.value.trim() === '' ? null : Number(inp.value.replace(',', '.')); inp.style.borderColor = isNaN(n) ? '#c0392b' : ''; if (!isNaN(n)) l[k] = n; }
+      else l[k] = inp.value;
+      simulerPaieMois();
+    };
+  });
+  t.querySelectorAll('button[data-suppr]').forEach(function (b) { b.onclick = function () { PAIE.lignes.splice(+b.dataset.suppr, 1); afficherPaie(); }; });
+  document.getElementById('ajoutPaie').onclick = function () { PAIE.lignes.push({ nom: '' }); afficherPaie(); };
+  document.getElementById('enregPaie').onclick = enregistrerPaieMois;
+  document.getElementById('etatPaie').textContent = PAIE.onglet ? 'Onglet « ' + PAIE.onglet + ' » du fichier PAIE ' + PAIE.soc.toUpperCase() : (PAIE.mois ? 'Nouvel onglet « ' + nomMois(PAIE.mois).toUpperCase() + ' » : créé à l\'enregistrement' : '');
+  simulerPaieMois();
+  afficherParamsPaie();
+}
+function enregistrerPaieMois() {
+  var m = document.getElementById('msgEnregPaie'), b = document.getElementById('enregPaie');
+  var lignes = PAIE.lignes.filter(function (l) { return String(l.nom || '').trim(); });
+  if (!lignes.length) { m.className = 'msg err'; m.textContent = 'Aucun salarié à enregistrer'; return; }
+  b.disabled = true; m.className = 'msg'; m.textContent = 'Enregistrement…';
+  var envoi = lignes.map(function (l) { var o = { nom: l.nom }; ['prenom', 'dfs', 'mutuelle', 'caisseCP', 'horaire', 'netGarantir'].forEach(function (k) { if (l[k] !== undefined) o[k] = l[k]; });
+    CHAMPS_SAISIE_PAIE.forEach(function (c) { o[c[0]] = l[c[0]] === undefined ? '' : l[c[0]]; }); return o; });
+  appelServeur('enregistrerPaie', PAIE.soc, PAIE.onglet, PAIE.mois, envoi).then(function (d) {
+    b.disabled = false; PAIE.data = d;
+    var o = d.onglets.filter(function (x) { return x.nom === PAIE.onglet || (!PAIE.onglet && x.mois === PAIE.mois); }).pop();
+    choisirOngletPaie(o ? o.nom : '');
+    var m2 = document.getElementById('msgEnregPaie'); m2.className = 'msg ok'; m2.textContent = '✓ Enregistré dans l\'onglet « ' + (o ? o.nom : '') + ' »';
+  }).catch(function (e) { b.disabled = false; m.className = 'msg err'; m.textContent = e.message; });
+}
+function nombreGaranti(t) { var m = String(t || '').match(/(\d{3,5})/); return m && !/prorata/i.test(t) ? +m[1] : null; }
+function simulerPaieMois() {
+  var P = paramsPaie(), t = document.getElementById('tabSimPaie'), note = document.getElementById('noteSimPaie');
+  if (!P) { note.textContent = 'Déposez d\'abord le fichier SIMULATION PAIE dans « Taux de calcul » (en bas) pour calculer le brut et le net.'; t.innerHTML = ''; document.getElementById('tuilesPaie').innerHTML = ''; return; }
+  note.textContent = 'Estimation d\'après les formules de votre fichier SIMULATION PAIE (le bulletin Sage fait foi). Cliquez sur un salarié pour le détail.';
+  var tot = { brut: 0, net: 0, frais: 0, cout: 0 }, res = [];
+  PAIE.lignes.forEach(function (l) {
+    if (!String(l.nom || '').trim()) return;
+    var S = salariePaie(l.nom), M = { service: +l.service || 0, nuit: +l.nuit || 0, cc: +l.cc || 0, repas: (+l.repasMidi || 0) + (+l.repasSoir || 0), repasUnique: +l.repasUnique || 0, decouche: +l.decouche || 0 };
+    if (!S) { res.push({ l: l, err: 'taux du salarié absents (onglet SALARIES PAIE)' }); return; }
+    if (!M.service) { res.push({ l: l, err: 'temps de service à saisir' }); return; }
+    // horaire du contrat « à garantir » : payé au minimum, sauf mois avec absences (à proratiser à la main)
+    var abs = ['absCP', 'absRC', 'maladie', 'at', 'absNR', 'absAutres'].some(function (k) { return String(l[k] === undefined || l[k] === null ? '' : l[k]).trim(); });
+    var garantieH = !abs && +l.horaire && M.service < +l.horaire ? +l.horaire : null;
+    if (garantieH) M.service = garantieH;
+    var r = simulerPaie(P, S, M), g = nombreGaranti(l.netGarantir), netAvantFrais = r2p(r.netAPayer - r.frais.total);
+    res.push({ l: l, S: S, r: r, abs: abs, garantieH: garantieH, garanti: g, manque: !abs && g !== null && netAvantFrais < g ? r2p(g - netAvantFrais) : 0, netAvantFrais: netAvantFrais });
+    tot.brut += r.brut; tot.net += r.netAPayer; tot.frais += r.frais.total; tot.cout += r.coutTotal;
+  });
+  document.getElementById('tuilesPaie').innerHTML = tuile('Brut total', fmtEur.format(tot.brut), nomMois(PAIE.mois || '')) + tuile('Net à payer total', fmtEur.format(tot.net), 'frais compris') +
+    tuile('Frais (indemnités)', fmtEur.format(tot.frais), '') + tuile('Coût total employeur', fmtEur.format(tot.cout), 'brut + charges + frais');
+  t.innerHTML = '<thead><tr><th>Salarié</th><th class="n">Heures payées</th><th class="n">dont nuit</th><th class="n">HS 125 %</th><th class="n">HS 150 %</th><th class="n">Brut</th><th class="n">Cotis. sal.</th><th class="n">Net social</th><th class="n">Frais</th><th class="n">PAS</th><th class="n">Net à payer</th><th class="n">Coût employeur</th><th>Net garanti</th></tr></thead><tbody>' +
+    res.map(function (x) {
+      if (x.err) return '<tr><td><b>' + txt(x.l.nom) + '</b></td><td colspan="12" class="nd">' + txt(x.err) + '</td></tr>';
+      var r = x.r;
+      return '<tr class="cliquable' + (PAIE.choisi === x.l.nom ? ' choisi' : '') + '" data-nom="' + txt(x.l.nom) + '"><td><b>' + txt(x.l.nom) + '</b> <span class="note">' + txt(x.l.prenom || '') + '</span></td><td class="n">' + hhmm(r.heures.service) + (x.garantieH ? '<span class="note">garanti (' + hhmm(x.l.service) + ' faites)</span>' : '') + '</td><td class="n">' + hhmm(r.heures.nuit) +
+        '</td><td class="n">' + fmtNb.format(r.heures.equivalence + r.heures.hs125) + '</td><td class="n">' + fmtNb.format(r.heures.hs150) + '</td><td class="n">' + fmtEur2.format(r.brut) + '</td><td class="n">' + fmtEur2.format(r.cotSal) +
+        '</td><td class="n">' + fmtEur2.format(r.netSocial) + '</td><td class="n">' + fmtEur2.format(r.frais.total) + '</td><td class="n">' + fmtEur2.format(r.pas) + '</td><td class="n"><b>' + fmtEur2.format(r.netAPayer) + '</b></td><td class="n">' + fmtEur2.format(r.coutTotal) +
+        '</td><td>' + (x.abs ? badge('a_prevoir', 'absences : à proratiser') : x.garanti === null ? '<span class="nd">' + txt(x.l.netGarantir || '—') + '</span>' : x.manque ? badge('urgent', 'manque ' + fmtEur2.format(x.manque)) : badge('ok', fmtEur.format(x.garanti) + ' atteint')) + '</td></tr>';
+    }).join('') + '</tbody>';
+  t.querySelectorAll('tr[data-nom]').forEach(function (tr) { tr.onclick = function () { PAIE.choisi = PAIE.choisi === tr.dataset.nom ? '' : tr.dataset.nom; simulerPaieMois(); }; });
+  var x = res.filter(function (y) { return y.r && y.l.nom === PAIE.choisi; })[0], z = document.getElementById('detailSimPaie');
+  if (!x) { z.innerHTML = ''; return; }
+  var r = x.r, e2 = function (v) { return v === null || v === undefined ? '' : fmtEur2.format(v); };
+  var retard = x.S.cumulMois && PAIE.mois && x.S.cumulMois < moisAvant(PAIE.mois);
+  z.innerHTML = '<div class="grille"><div class="carte"><h2>' + txt(x.l.nom) + ' — brut</h2><div class="tableau"><table class="serre"><thead><tr><th>Désignation</th><th class="n">Nombre</th><th class="n">Taux</th><th class="n">Gain</th></tr></thead><tbody>' +
+    r.gains.map(function (g) { return '<tr><td>' + g[0] + '</td><td class="n">' + fmtNb.format(g[1]) + '</td><td class="n">' + (g[2] < 1 ? fmtNb.format(g[2] * 100) + ' %' : fmtNb.format(g[2])) + '</td><td class="n">' + e2(g[3]) + '</td></tr>'; }).join('') +
+    '<tr class="total"><td>TOTAL BRUT</td><td></td><td></td><td class="n">' + e2(r.brut) + '</td></tr></tbody></table></div>' +
+    '<p class="note">HS brutes ' + e2(r.hsBrutes) + ', dont exonérées d\'impôt ' + e2(r.hsExo) + '. Cumul HS nettes exonérées : ' + e2(x.S.cumulHS) + (x.S.cumulMois ? ' (fin ' + nomMois(x.S.cumulMois) + ')' : '') + ' → ' + e2(r.cumulHSApres) + ' après ce mois.' +
+      (retard ? ' <b class="neg">Le cumul n\'a pas été reporté depuis ' + nomMois(x.S.cumulMois) + '.</b>' : '') + '</p>' +
+    '<button class="petit" id="reporterCumul">Reporter le cumul (' + e2(r.cumulHSApres) + ' fin ' + nomMois(PAIE.mois || '') + ')</button> <span class="msg" id="msgCumul"></span></div>' +
+    '<div class="carte"><h2>Cotisations et net</h2><div class="tableau"><table class="serre"><thead><tr><th>Désignation</th><th class="n">Base</th><th class="n">Salarié</th><th class="n">Employeur</th></tr></thead><tbody>' +
+    r.cotisations.map(function (c) { return '<tr><td>' + c[0] + '</td><td class="n">' + (c[1] === null ? '' : fmtNb.format(c[1])) + '</td><td class="n">' + e2(c[2]) + '</td><td class="n">' + e2(c[3]) + '</td></tr>'; }).join('') +
+    '<tr class="total"><td>TOTAL COTISATIONS</td><td></td><td class="n">' + e2(r.cotSal) + '</td><td class="n">' + e2(r.cotPat) + '</td></tr>' +
+    '<tr><td>Net social</td><td></td><td class="n">' + e2(r.netSocial) + '</td><td></td></tr><tr><td>Net imposable</td><td></td><td class="n">' + e2(r.netImposable) + '</td><td></td></tr>' +
+    '<tr><td>Frais : casse-croûte, repas, repas unique, découchés</td><td></td><td class="n">' + e2(r.frais.total) + '</td><td></td></tr><tr><td>Prélèvement à la source</td><td></td><td class="n">' + e2(r.pas) + '</td><td></td></tr>' +
+    '<tr class="total"><td>NET À PAYER</td><td></td><td class="n">' + e2(r.netAPayer) + '</td><td></td></tr><tr><td>Coût employeur (brut + charges)</td><td></td><td></td><td class="n">' + e2(r.coutEmployeur) + '</td></tr></tbody></table></div></div></div>';
+  document.getElementById('reporterCumul').onclick = function () {
+    var m = document.getElementById('msgCumul'); m.className = 'msg'; m.textContent = 'Enregistrement…';
+    appelServeur('reporterCumulPaie', PAIE.soc, x.l.nom, r.cumulHSApres, PAIE.mois).then(function (d) { PAIE.data = d; simulerPaieMois(); afficherParamsPaie(); })
+      .catch(function (e) { m.className = 'msg err'; m.textContent = e.message; });
+  };
+}
+function afficherParamsPaie() {
+  var d = PAIE.data || {}, sal = d.salaries || [], t = document.getElementById('tabParamsPaie');
+  document.getElementById('resumeParamsPaie').textContent = d.params ? '· ' + sal.length + ' salarié(s) paramétré(s)' : '· à importer';
+  t.innerHTML = !sal.length ? '' : '<thead><tr><th>Salarié</th><th>Emploi</th><th class="n">Taux horaire</th><th class="n">Taux base nuit</th><th class="n">Ancienneté</th><th class="n">Coef. assiette</th><th class="n">Cumul HS exo.</th><th>à fin de</th><th class="n">PAS</th></tr></thead><tbody>' +
+    sal.map(function (s) { return '<tr><td>' + txt(s.nom + ' ' + (s.prenom || '')) + '</td><td>' + txt(s.emploi || '') + '</td><td class="n">' + fmtNb.format(s.tauxHoraire || 0) + '</td><td class="n">' + fmtNb.format(s.tauxNuit || 0) +
+      '</td><td class="n">' + fmtNb.format((s.anciennete || 0) * 100) + ' %</td><td class="n">' + (s.coefAssiette || '') + '</td><td class="n">' + fmtEur2.format(s.cumulHS || 0) + '</td><td>' + (s.cumulMois ? nomMois(s.cumulMois) : '') + '</td><td class="n">' + fmtNb.format((s.pas || 0) * 100) + ' %</td></tr>'; }).join('') + '</tbody>';
+}
+// Import du fichier SIMULATION PAIE (.xlsx) : onglet PARAMÈTRES + un onglet par salarié
+var CLES_PARAMS_PAIE = [['indCC', /CASSE/], ['indRepasUnique', /REPAS UNIQUE/], ['indRepas', /^INDEMNITE REPAS/], ['indGD', /GRAND DEPLACEMENT/], ['seuilNuit', /SEUIL HEURES DE NUIT/],
+  ['majNuitPlus', /MAJORATION NUIT\s*>/], ['majNuit', /MAJORATION NUIT/], ['pmss', /^PMSS/], ['smic', /^SMIC/], ['coefRG', /REDUCTION GENERALE|COEF\. MAX/], ['deductionHS', /DEDUCTION FORFAITAIRE/],
+  ['mutuelle', /^MUTUELLE/], ['plafondHS', /PLAFOND ANNUEL/], ['ratioHS', /RATIO NET/], ['prevoyance', /PREVOYANCE/]];
+var CLES_TAUX_PAIE = [['maladie', /^MALADIE/], ['atmp', /^AT\/MP/], ['vieillessePlaf', /^VIEILLESSE PLAFONNEE/], ['vieillesseDeplaf', /^VIEILLESSE DEPLAFONNEE/], ['complementaireT1', /^COMPLEMENTAIRE T1/],
+  ['famille', /^FAMILLE/], ['chomage', /^ASSURANCE CHOMAGE/], ['autres', /^AUTRES CONTRIBUTIONS/], ['conventionnelles', /^COTISATIONS CONVENTIONNELLES/], ['csgDed', /^CSG DEDUCTIBLE/],
+  ['csgNonDed', /^CSG\/CRDS NON DEDUCTIBLE/], ['csgHS', /^CSG\/CRDS SUR HS/], ['reducHS', /^REDUCTION SALARIALE HS/]];
+var MOIS_FR = ['JANVIER', 'FEVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN', 'JUILLET', 'AOUT', 'SEPTEMBRE', 'OCTOBRE', 'NOVEMBRE', 'DECEMBRE'];
+function cleTexte(x) { return String(x === undefined || x === null ? '' : x).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/≤/g, '<=').trim(); }
+function lireSimulationPaie(wb) {
+  var cel = function (ws, a) { var c = ws[a]; return c ? c.v : undefined; };
+  var feuilleP = wb.SheetNames.filter(function (n) { return /^PARAMETRES/.test(cleTexte(n)); })[0];
+  if (!feuilleP) throw new Error('Onglet PARAMÈTRES introuvable : est-ce bien le fichier SIMULATION PAIE ?');
+  var wsP = wb.Sheets[feuilleP], params = {}, enTaux = false;
+  for (var r = 1; r <= 80; r++) {
+    var lib = cleTexte(cel(wsP, 'A' + r)), b = cel(wsP, 'B' + r), c = cel(wsP, 'C' + r);
+    if (!lib) continue;
+    if (/^TAUX DE COTISATIONS/.test(lib)) { enTaux = true; continue; }
+    if (enTaux) { var kt = CLES_TAUX_PAIE.filter(function (x) { return x[1].test(lib); })[0]; if (kt && typeof b === 'number') { params['taux.' + kt[0] + '.sal'] = b; params['taux.' + kt[0] + '.emp'] = typeof c === 'number' ? c : 0; } continue; }
+    var k = CLES_PARAMS_PAIE.filter(function (x) { return x[1].test(lib) && params[x[0]] === undefined; })[0];
+    if (k && typeof b === 'number') params[k[0]] = b;
+  }
+  var manque = CLES_PARAMS_PAIE.map(function (x) { return x[0]; }).filter(function (k) { return params[k] === undefined; });
+  if (manque.length) throw new Error('Taux introuvables dans PARAMÈTRES : ' + manque.join(', '));
+  var salaries = [];
+  wb.SheetNames.forEach(function (n) {
+    var ws = wb.Sheets[n], titre = String(cel(ws, 'A1') || '');
+    if (!/^SIMULATION DE PAIE/i.test(titre)) return;
+    var qui = (titre.indexOf('—') >= 0 ? titre.split('—').slice(1).join(' ') : titre.replace(/^SIMULATION DE PAIE\s*-?\s*/i, '')).trim().split(/\s+/), mois = cleTexte(cel(ws, 'B6')), mm = MOIS_FR.filter(function (x) { return mois.indexOf(x) >= 0; })[0], an = (mois.match(/20\d\d/) || [])[0];
+    var cumulMois = mm && an ? moisAvant(an + '-' + ('0' + (MOIS_FR.indexOf(mm) + 1)).slice(-2)) : '';
+    var num = function (a) { var v = cel(ws, a); return typeof v === 'number' ? v : null; };
+    salaries.push({ nom: qui[0].toUpperCase(), prenom: qui.slice(1).join(' '), emploi: String(cel(ws, 'A2') || ''), tauxHoraire: num('D15'), tauxNuit: num('D16'), anciennete: num('D17'),
+      coefAssiette: num('D18'), cumulHS: num('D19'), cumulMois: cumulMois, pas: num('D20'), calibrage: num('D21') });
+  });
+  return { params: params, salaries: salaries };
+}
+(function () {
+  var brancher = function (zoneId, choixId, traiter) {
+    var zone = document.getElementById(zoneId), choix = document.getElementById(choixId);
+    zone.addEventListener('click', function (e) { if (e.target !== choix) choix.click(); });
+    choix.addEventListener('change', function () { if (choix.files[0]) traiter(choix.files[0]); choix.value = ''; });
+    ['dragenter', 'dragover'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.add('survol'); }); });
+    ['dragleave', 'drop'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.remove('survol'); }); });
+    zone.addEventListener('drop', function (e) { if (e.dataTransfer.files[0]) traiter(e.dataTransfer.files[0]); });
+  };
+  brancher('zonePaie', 'choixPaie', function (f) {
+    var etat = document.getElementById('etatPaie'); etat.className = 'note'; etat.textContent = 'Lecture des relevés par Google Drive (environ 30 secondes)…';
+    f.arrayBuffer().then(function (b) { return appelServeur('lireScanFacture', base64Depuis(b), f.name, f.type); }).then(function (texte) {
+      var connus = PAIE.lignes.concat((PAIE.data || {}).salaries || []).filter(function (x) { return x.nom; });
+      (PAIE.data && PAIE.data.onglets || []).forEach(function (o) { o.lignes.forEach(function (l) { connus.push(l); }); });
+      var rel = lireRelevesSolid(texte, connus);
+      if (!rel.length) { etat.className = 'msg err'; etat.textContent = 'Aucun relevé SOLID reconnu dans ce fichier (il faut la page « Relevé mensuel d\'activité » avec le temps de service).'; return; }
+      var mois = rel.map(function (r) { return r.mois; }).filter(String)[0];
+      if (mois && mois !== PAIE.mois) {   // relevés d'un autre mois : on ouvre l'onglet de ce mois (ou un nouveau)
+        var o = (PAIE.data.onglets || []).filter(function (x) { return x.mois === mois; }).pop();
+        document.getElementById('moisPaie').value = o ? o.nom : '';
+        if (o) ouvrirOngletPaie(o.nom); else { PAIE.onglet = ''; PAIE.mois = mois; ouvrirOngletPaie('+' + mois); PAIE.mois = mois; }
+      }
+      var notes = [];
+      rel.forEach(function (r) {
+        var i = PAIE.lignes.findIndex(function (l) { return r.nom && nomSansDoubles(l.nom) === nomSansDoubles(r.nom); });
+        if (i < 0) { PAIE.lignes.push({ nom: (r.nom || (r.nomLu.split(' ').pop() || '?')).toUpperCase(), prenom: r.prenom }); i = PAIE.lignes.length - 1; }
+        var l = PAIE.lignes[i], lus = PAIE.lus[i] = {};
+        ['service', 'nuit', 'repasMidi', 'repasSoir', 'cc', 'repasUnique', 'decouche'].forEach(function (k) { if (r[k] !== null && r[k] !== undefined) { l[k] = r[k]; lus[k] = 1; } });
+        if (r.rcAcquis) { l.rcAcquis = r.rcAcquis; lus.rcAcquis = 1; }
+        if (r.soldeRC) { l.soldeRC = r.soldeRC; lus.soldeRC = 1; }
+        notes.push((r.nom || r.nomLu) + ' : ' + hhmm(r.service) + (r.avertissements.length ? ' ⚠ ' + r.avertissements.join(', ') : ''));
+      });
+      afficherPaie();
+      etat.className = 'msg ok'; etat.textContent = '✓ ' + rel.length + ' relevé(s) lu(s) — ' + notes.join(' · ') + '. Cases vertes = lues sur le relevé : vérifiez-les avant d\'enregistrer.';
+    }).catch(function (e) { etat.className = 'msg err'; etat.textContent = e.message; });
+  });
+  brancher('zoneSimPaie', 'choixSimPaie', function (f) {
+    var m = document.getElementById('resumeParamsPaie'); m.textContent = '· lecture…';
+    chargerXlsx().then(function () { return f.arrayBuffer(); }).then(function (b) {
+      var x = lireSimulationPaie(XLSX.read(b, { type: 'array' }));
+      return appelServeur('enregistrerParamsPaie', PAIE.soc, x.params, x.salaries);
+    }).then(function (d) { PAIE.data = d; simulerPaieMois(); afficherParamsPaie(); })
+      .catch(function (e) { m.textContent = '· ⚠ ' + e.message; });
+  });
+})();
+
 // ---------- Facture TD (THEVENIN DUCROT) : deux factures par mois, 1-15 et 16-fin ----------
 function estClientTD(l) { return sourceIndexCarbu(l) === 'TD'; }
 function rendreFactureTD() {

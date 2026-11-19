@@ -80,6 +80,8 @@ var PARAMETRES_DEFAUT = [
   ['ID_PLANNING_INTER_2027', '', 'Lien du Google Sheet « Planning Inter (ITM) 2027 » (lu en plus de ID_PLANNING_INTER)'],
   ['ID_PLANNING_CARBURANT_2027', '', 'Lien du Google Sheet « Planning Carburant 2027 » (lu en plus de ID_PLANNING_CARBURANT)'],
   ['ID_LITRAGES', '', 'Lien du Google Sheet « Litrages véhicules » : consommation par semaine lue directement'],
+  ['ID_PAIE_GLEYZES', '', 'Lien du Google Sheet « PAIE GLEYZES » (un onglet par mois : NOVEMBRE 2026…)'],
+  ['ID_PAIE_LPB', '', 'Lien du Google Sheet « PAIE LPB » (un onglet par mois)'],
   ['ID_LITRAGES_2027', '', 'Lien du Google Sheet « Litrages véhicules 2027 » (lu en plus de ID_LITRAGES)'],
   ['SEUIL_HAUSSE_CONSO_PCT', 15, 'Alerte si la consommation récente dépasse de ce % la moyenne habituelle du camion'],
   ['JOUR_CONTROLE_FACTURES', 7, 'À partir de ce jour du mois, une livraison du mois précédent sans facture déposée est signalée'],
@@ -3864,4 +3866,190 @@ function enregistrerIndexation(liste) {
 function diagnosticChargement() {
   var d = getDonnees();
   console.log('Terminé. Détail : ' + d.chronos.join(' · '));
+}
+
+
+// ---------------------------------------------------------------------------------------------------------------
+// PAIE (onglet Paie du site) : fichier « PAIE <SOCIÉTÉ> » (ID_PAIE_GLEYZES / ID_PAIE_LPB), un onglet par mois
+// (titres en ligne 4-5 : NOM, PRENOM… Frais > Repas Midi…, données dessous), plus deux onglets créés par le site :
+// « PARAMETRES PAIE » (taux communs) et « SALARIES PAIE » (taux de chaque salarié) pour la simulation brut / net.
+// ---------------------------------------------------------------------------------------------------------------
+var CHAMPS_PAIE = [   // [champ, test sur le titre de colonne (sans accents, majuscules), durée ?]
+  ['nom', /^NOM$/], ['prenom', /^PRENOM/], ['dfs', /^DFS/], ['mutuelle', /^MUTUELLE/], ['caisseCP', /^CAISSE CP/],
+  ['horaire', /^HORAIRE CONTRAT/, true], ['netGarantir', /^NET A GARANTIR/], ['service', /^TEMPS DE SERVICE TOTAL/, true],
+  ['nuit', /^HEURES DE NUIT/, true], ['repasMidi', /^REPAS MIDI/], ['repasSoir', /^REPAS SOIR/], ['cc', /^CASSE/],
+  ['repasUnique', /^REPAS UNIQUE/], ['decouche', /DECOUCHE/], ['avance', /^AVANCE/], ['acompte', /^ACOMPTE/],
+  ['absCP', /^CP$/], ['absRC', /^RC$/], ['maladie', /^MALADIE/], ['at', /^AT$/], ['absNR', /^ABS/], ['absAutres', /^AUTRES/],
+  ['rcAcquis', /^RC ACQUIS/], ['soldeRC', /^SOLDE RC/], ['commentaires', /^COMMENTAIRE/]
+];
+var PAIE_PARAMS_ = 'PARAMETRES PAIE', PAIE_SALARIES_ = 'SALARIES PAIE';
+var COLS_SALARIES_PAIE = [['nom', 'NOM'], ['prenom', 'PRENOM'], ['emploi', 'EMPLOI'], ['tauxHoraire', 'TAUX HORAIRE'], ['tauxNuit', 'TAUX BASE NUIT'],
+  ['anciennete', 'TAUX ANCIENNETE'], ['coefAssiette', 'COEF ASSIETTE / BRUT'], ['cumulHS', 'CUMUL HS NETTES EXONEREES'], ['cumulMois', 'CUMUL A FIN DE (AAAA-MM)'],
+  ['pas', 'TAUX PAS'], ['calibrage', 'CALIBRAGE REDUCTION GENERALE']];
+
+function classeurPaie_(ss, soc) {
+  var nom = soc === 'LPB' ? 'ID_PAIE_LPB' : 'ID_PAIE_GLEYZES';
+  if (lireParametres_(ss)[nom] === undefined) { try { majParametre_(nom, '', 'Lien du Google Sheet « PAIE ' + (soc === 'LPB' ? 'LPB' : 'GLEYZES') + ' » (un onglet par mois)'); } catch (e) {} }
+  var c = classeurParam_(ss, nom);
+  if (!c) throw new Error('Collez le lien du Google Sheet de paie ' + (soc === 'LPB' ? 'LPB' : 'GLEYZES') + ' dans PARAMETRES (ligne ' + nom + ')');
+  return c;
+}
+
+/** Mois d'un onglet de paie (« OCTOBRE 2026 », « mai 2026 », « du 01 au 24 septembre ») : 'AAAA-MM' ou ''. */
+function moisOngletPaie_(nom, anDefaut) {
+  var n = cle_(nom), m = MOIS_MAJ.filter(function (x) { return n.indexOf(x) >= 0; })[0];
+  if (!m) return '';
+  var a = (n.match(/(20\d\d)/) || [])[1] || anDefaut;
+  return a ? a + '-' + ('0' + (MOIS_MAJ.indexOf(m) + 1)).slice(-2) : '';
+}
+
+/** Structure d'un onglet mensuel : ligne des titres, première ligne de données, colonne de chaque champ. */
+function structurePaie_(sh) {
+  var lr = Math.max(1, Math.min(sh.getLastRow(), 12)), lc = Math.max(1, sh.getLastColumn());
+  var v = sh.getRange(1, 1, lr, lc).getValues(), rT = -1;
+  for (var r = 0; r < v.length && rT < 0; r++) if (cle_(v[r][0]) === 'NOM') rT = r;
+  if (rT < 0) return null;
+  var col = {}, sous = v[rT + 1] || [];
+  for (var c = 0; c < lc; c++) {
+    var top = cle_(v[rT][c]);
+    var lib = cle_(sous[c]) || top;
+    if (!lib) continue;
+    CHAMPS_PAIE.forEach(function (ch) { if (col[ch[0]] === undefined && ch[1].test(lib)) col[ch[0]] = c; });
+  }
+  return { rTitre: rT + 1, rDebut: rT + 3, col: col, nbCol: lc };
+}
+
+function dureeEnHeures_(affiche, brut) {
+  if (typeof brut === 'number') return brut * 24;
+  var m = String(affiche || brut || '').trim().match(/^(\d{1,4}):(\d{2})/);
+  return m ? +m[1] + (+m[2]) / 60 : null;
+}
+
+/** Depuis le site : tout le fichier de paie d'une société. */
+function lirePaie(soc) {
+  var ss = classeur_(), fic = classeurPaie_(ss, soc), onglets = [];
+  var annees = fic.getSheets().map(function (sh) { return (cle_(sh.getName()).match(/(20\d\d)/) || [])[1]; }).filter(String);
+  var anDefaut = annees.sort()[annees.length - 1] || String(new Date().getFullYear());
+  fic.getSheets().forEach(function (sh) {
+    var mois = moisOngletPaie_(sh.getName(), anDefaut);
+    if (!mois) return;
+    var st = structurePaie_(sh); if (!st) return;
+    var n = sh.getLastRow() - st.rDebut + 1, lignes = [];
+    if (n > 0) {
+      var rg = sh.getRange(st.rDebut, 1, n, st.nbCol), v = rg.getValues(), d = rg.getDisplayValues();
+      v.forEach(function (l, i) {
+        var c0 = st.col.nom; if (c0 === undefined || !String(l[c0]).trim()) return;
+        var o = { ligne: st.rDebut + i };
+        CHAMPS_PAIE.forEach(function (ch) {
+          var c = st.col[ch[0]]; if (c === undefined) return;
+          o[ch[0]] = ch[2] ? dureeEnHeures_(d[i][c], l[c]) : (l[c] instanceof Date ? d[i][c] : l[c]);
+        });
+        lignes.push(o);
+      });
+    }
+    onglets.push({ nom: sh.getName(), mois: mois, lignes: lignes, colonnes: Object.keys(st.col) });
+  });
+  onglets.sort(function (a, b) { return a.mois < b.mois ? -1 : a.mois > b.mois ? 1 : 0; });
+  return { societe: soc, url: fic.getUrl(), onglets: onglets, params: lireParamsPaie_(fic), salaries: lireSalariesPaie_(fic) };
+}
+
+function lireParamsPaie_(fic) {
+  var sh = fic.getSheetByName(PAIE_PARAMS_); if (!sh || sh.getLastRow() < 2) return null;
+  var p = {};
+  sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (l) { var k = String(l[0]).trim(); if (k) p[k] = nombre_(l[1], null); });
+  return p;
+}
+function lireSalariesPaie_(fic) {
+  var sh = fic.getSheetByName(PAIE_SALARIES_); if (!sh || sh.getLastRow() < 2) return [];
+  return sh.getRange(2, 1, sh.getLastRow() - 1, COLS_SALARIES_PAIE.length).getValues().filter(function (l) { return String(l[0]).trim(); }).map(function (l) {
+    var o = {}; COLS_SALARIES_PAIE.forEach(function (c, i) { o[c[0]] = /^(nom|prenom|emploi|cumulMois)$/.test(c[0]) ? (l[i] instanceof Date ? Utilities.formatDate(l[i], FUSEAU, 'yyyy-MM') : String(l[i]).trim()) : nombre_(l[i], null); });
+    return o;
+  });
+}
+
+/** Depuis le site (import du fichier SIMULATION PAIE) : taux communs et taux de chaque salarié. */
+function enregistrerParamsPaie(soc, params, salaries) {
+  var fic = classeurPaie_(classeur_(), soc);
+  if (params && typeof params === 'object') {
+    var sh = fic.getSheetByName(PAIE_PARAMS_) || fic.insertSheet(PAIE_PARAMS_);
+    sh.clear();
+    var lignes = [['CLE', 'VALEUR', 'LIBELLE']].concat(Object.keys(params).map(function (k) { return [k, params[k] === null ? '' : params[k], '']; }));
+    sh.getRange(1, 1, lignes.length, 3).setValues(lignes); sh.getRange(1, 1, 1, 3).setFontWeight('bold'); sh.setFrozenRows(1);
+  }
+  if (Array.isArray(salaries)) {
+    var s2 = fic.getSheetByName(PAIE_SALARIES_) || fic.insertSheet(PAIE_SALARIES_);
+    var anciens = lireSalariesPaie_(fic), parNom = {};
+    anciens.concat(salaries).forEach(function (x) { if (x && x.nom) parNom[nomSansDoubles_(x.nom)] = x; });
+    var l2 = [COLS_SALARIES_PAIE.map(function (c) { return c[1]; })].concat(Object.keys(parNom).map(function (k) {
+      return COLS_SALARIES_PAIE.map(function (c) { var v = parNom[k][c[0]]; return v === undefined || v === null ? '' : (c[0] === 'cumulMois' ? "'" + v : v); });
+    }));
+    s2.clear(); s2.getRange(1, 1, l2.length, COLS_SALARIES_PAIE.length).setValues(l2);
+    s2.getRange(1, 1, 1, COLS_SALARIES_PAIE.length).setFontWeight('bold'); s2.setFrozenRows(1);
+  }
+  return lirePaie(soc);
+}
+function nomSansDoubles_(s) { return cle_(s).replace(/[^A-Z]/g, '').replace(/(.)\1+/g, '$1'); }
+
+/** Depuis le site : enregistre le récap du mois (une ligne par salarié) dans l'onglet du mois, créé au besoin. */
+function enregistrerPaie(soc, onglet, mois, lignes) {
+  if (!Array.isArray(lignes) || !lignes.length) throw new Error('Rien à enregistrer');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var fic = classeurPaie_(classeur_(), soc), sh = onglet ? fic.getSheetByName(onglet) : null;
+    if (!sh) {
+      if (!/^\d{4}-\d{2}$/.test(String(mois || ''))) throw new Error('Mois invalide');
+      var nomOnglet = MOIS_MAJ[+mois.slice(5, 7) - 1] + ' ' + mois.slice(0, 4);
+      sh = fic.getSheetByName(nomOnglet);
+      if (!sh) {   // copie du dernier mois : mêmes salariés et mêmes colonnes fixes, saisies du mois effacées
+        var modeles = fic.getSheets().filter(function (x) { return moisOngletPaie_(x.getName(), mois.slice(0, 4)) && structurePaie_(x); })
+          .sort(function (a, b) { return moisOngletPaie_(a.getName(), mois.slice(0, 4)) < moisOngletPaie_(b.getName(), mois.slice(0, 4)) ? -1 : 1; });
+        var mod = modeles[modeles.length - 1];
+        if (!mod) throw new Error('Aucun onglet mensuel dans le fichier de paie pour servir de modèle');
+        sh = mod.copyTo(fic).setName(nomOnglet);
+        fic.setActiveSheet(sh); fic.moveActiveSheet(fic.getSheets().indexOf(mod) + 2);
+        var stM = structurePaie_(sh), nM = sh.getLastRow() - stM.rDebut + 1;
+        if (nM > 0) CHAMPS_PAIE.forEach(function (ch) {
+          if (/^(nom|prenom|dfs|mutuelle|caisseCP|horaire|netGarantir)$/.test(ch[0]) || stM.col[ch[0]] === undefined) return;
+          sh.getRange(stM.rDebut, stM.col[ch[0]] + 1, nM, 1).clearContent();
+        });
+      }
+    }
+    var st = structurePaie_(sh);
+    if (!st || st.col.nom === undefined) throw new Error('Onglet « ' + sh.getName() + ' » : titres (NOM, PRENOM…) introuvables');
+    var nbL = Math.max(0, sh.getLastRow() - st.rDebut + 1);
+    var noms = nbL ? sh.getRange(st.rDebut, st.col.nom + 1, nbL, 1).getValues().map(function (l) { return nomSansDoubles_(l[0]); }) : [];
+    var derniere = st.rDebut - 1; noms.forEach(function (n, i) { if (n) derniere = st.rDebut + i; });
+    var fI = st.col.service !== undefined && st.col.nuit !== undefined ? (sh.getRange(st.rDebut, 1, 1, st.nbCol).getFormulas()[0] || []) : [];
+    lignes.forEach(function (l) {
+      if (!l || !String(l.nom || '').trim()) return;
+      var i = noms.indexOf(nomSansDoubles_(l.nom)), r;
+      if (i >= 0) r = st.rDebut + i;
+      else {   // nouveau salarié : ligne ajoutée sous le dernier, même mise en forme
+        r = derniere + 1; sh.insertRowAfter(derniere);
+        if (derniere >= st.rDebut) sh.getRange(derniere, 1, 1, st.nbCol).copyTo(sh.getRange(r, 1, 1, st.nbCol), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+        fI.forEach(function (f, c) { if (f) sh.getRange(r, c + 1).setFormulaR1C1(sh.getRange(st.rDebut, c + 1).getFormulaR1C1()); });
+        derniere = r; noms.splice(r - st.rDebut, 0, nomSansDoubles_(l.nom));
+      }
+      CHAMPS_PAIE.forEach(function (ch) {
+        var c = st.col[ch[0]]; if (c === undefined || !(ch[0] in l)) return;
+        var v = l[ch[0]], cel = sh.getRange(r, c + 1);
+        if (ch[2]) {
+          var h = v === '' || v === null || v === undefined ? null : Number(v);
+          if (h === null || isNaN(h)) cel.clearContent(); else cel.setNumberFormat('[h]:mm').setValue(h / 24);
+        } else if (v === null || v === undefined || v === '' || v === 0 && /^(repas|cc|decouche|avance|acompte)/.test(ch[0])) cel.clearContent();
+        else cel.setValue(typeof v === 'string' ? v.replace(/^[=+\-@]/, "'$&") : v);
+      });
+    });
+    SpreadsheetApp.flush();
+    return lirePaie(soc);
+  } finally { lock.releaseLock(); }
+}
+
+/** Depuis le site : après validation d'un mois, reporte le cumul des HS nettes exonérées d'un salarié. */
+function reporterCumulPaie(soc, nom, cumul, mois) {
+  var fic = classeurPaie_(classeur_(), soc), sal = lireSalariesPaie_(fic);
+  var x = sal.filter(function (s) { return nomSansDoubles_(s.nom) === nomSansDoubles_(nom); })[0];
+  if (!x) throw new Error(nom + ' : absent de l\'onglet ' + PAIE_SALARIES_);
+  x.cumulHS = Number(cumul); x.cumulMois = mois;
+  return enregistrerParamsPaie(soc, null, [x]);
 }

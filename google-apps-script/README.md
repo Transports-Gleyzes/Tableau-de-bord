@@ -133,3 +133,15 @@ puis **Préparer la facture**. Un onglet « TD 1-15 NOVEMBRE 2026 » est créé 
 avec la même mise en page que la facture SCAPED : bloc client remplacé par celui de TD (`CLIENT_TD`, `REF_CLIENT_TD` dans PARAMETRES,
 saisis une fois en bas de l'onglet), une ligne par livraison au prix du planning, la ligne « INDEXATION CARBURANT : + x % »
 (% TD du mois saisi dans Activité) et les totaux. Un lien télécharge directement le PDF.
+
+## Paie (onglet Paie)
+
+Un fichier Google Sheets de paie par société (`ID_PAIE_GLEYZES`, `ID_PAIE_LPB` dans PARAMETRES), un onglet par mois
+(« NOVEMBRE 2026 » : NOM, PRENOM, … Temps de service total, Heures de nuit, Frais, Avance, Acompte, Absences, RC, Commentaires).
+
+1. Déposer le PDF scanné des relevés d'activité SOLID : lu par Google Drive (reconnaissance de caractères), il remplit
+   temps de service, nuit, repas midi / soir, casse-croûte, repas unique, RC acquis et solde RC (cases vertes, à vérifier).
+2. Compléter avances, acomptes, absences et commentaires, puis **Enregistrer** : l'onglet du mois est rempli (créé à partir du mois précédent s'il n'existe pas).
+3. **Simulation brut / net** : mêmes formules que le fichier SIMULATION PAIE (déposé une fois dans « Taux de calcul » : taux rangés dans
+   les onglets `PARAMETRES PAIE` et `SALARIES PAIE` du fichier de paie). L'horaire du contrat « à garantir » est payé au minimum
+   (sauf mois avec absences) ; le net garanti est contrôlé (net avant frais).
