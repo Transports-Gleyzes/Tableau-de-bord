@@ -270,7 +270,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/11-paie5</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/11-rapide1</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -641,13 +641,14 @@ function societeCamion(id) {
 function garderSociete(s) { return !societe() || String(s || '').split('(')[0].trim().toUpperCase() === societe().toUpperCase(); }
 
 // ---------- chargement ----------
-function charger() {
-  document.getElementById('maj').textContent = 'Chargement…';
+function charger(force) {   // force (par défaut) : données recalculées ; false : celles gardées en mémoire (ouverture rapide)
+  force = force !== false;
+  document.getElementById('maj').textContent = force ? 'Actualisation…' : 'Chargement…';
   if (window.google && google.script && google.script.run) {
     google.script.run.withSuccessHandler(recevoir).withFailureHandler(function (e) {
       document.getElementById('chargement').hidden = false;
       document.getElementById('chargement').textContent = 'Erreur de chargement : ' + e.message;
-    }).getDonnees();
+    }).getDonnees(force);
   } else if (window.donneesDemo) {
     recevoir(window.donneesDemo());
   }
@@ -655,7 +656,7 @@ function charger() {
 function recevoir(d) {
   D = d;
   document.getElementById('chargement').hidden = true;
-  document.getElementById('maj').textContent = 'Mis à jour le ' + d.genereLe + (d.derniereImport ? ' · finances importées le ' + d.derniereImport : '') +
+  document.getElementById('maj').textContent = 'Mis à jour le ' + d.genereLe + (d.depuisCache ? ' (↻ Actualiser pour les toutes dernières saisies)' : '') + (d.derniereImport ? ' · finances importées le ' + d.derniereImport : '') +
     (d.erreurEcheances ? ' · ⚠ ' + d.erreurEcheances : '');
   remplirSelectMois();
   afficherOnglet(ongletActif());
@@ -3355,8 +3356,8 @@ try {
   var o = localStorage.getItem('ongletTDB'); if (o && document.getElementById(o)) afficherOnglet(o);
   var s = localStorage.getItem('societeTDB'); if (s !== null) document.getElementById('filtreSociete').value = s;
 } catch (e) {}
-setInterval(charger, 5 * 60 * 1000);   // actualisation automatique toutes les 5 minutes
-charger();
+setInterval(function () { charger(false); }, 5 * 60 * 1000);   // actualisation automatique (données recalculées chaque heure côté serveur)
+charger(false);
 </script>
 </body>
 </html>

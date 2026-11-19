@@ -246,8 +246,61 @@ function doGet() {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
 }
 
-/** Toutes les données du site en un seul appel (dates converties en texte AAAA-MM-JJ). */
-function getDonnees() {
+/**
+ * Toutes les données du site en un seul appel. Pour que le site s'ouvre vite, le résultat est gardé en mémoire
+ * (CacheService) et recalculé toutes les heures de 6 h à 20 h par un déclencheur (quota Google des déclencheurs) ; force = true (bouton Actualiser, après
+ * un enregistrement) recalcule tout de suite.
+ */
+function getDonnees(force) {
+  if (!force) {
+    var dc = lireCacheDonnees_();
+    if (dc) { dc.depuisCache = true; verifierDeclencheurCache_(); return dc; }
+  }
+  var d = calculerDonnees_();
+  ecrireCacheDonnees_(d);
+  verifierDeclencheurCache_();
+  return d;
+}
+
+/** Déclencheur toutes les heures : données recalculées d'avance (de 6 h à 20 h seulement). */
+function rafraichirCacheDonnees() {
+  var h = +Utilities.formatDate(new Date(), FUSEAU, 'H');
+  if (h < 6 || h > 20) return;
+  ecrireCacheDonnees_(calculerDonnees_());
+}
+
+function ecrireCacheDonnees_(d) {
+  try {
+    var b64 = Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(JSON.stringify(d), 'application/json')).getBytes());
+    var morceaux = {}, n = 0, T = 90000;
+    for (var i = 0; i < b64.length; i += T) morceaux['DONNEES_' + (n++)] = b64.slice(i, i + T);
+    morceaux.DONNEES_NB = String(n);
+    CacheService.getScriptCache().putAll(morceaux, 21600);
+  } catch (e) { console.warn('Cache des données : ' + e.message); }
+}
+function lireCacheDonnees_() {
+  try {
+    var c = CacheService.getScriptCache(), n = +(c.get('DONNEES_NB') || 0);
+    if (!n) return null;
+    var cles = []; for (var i = 0; i < n; i++) cles.push('DONNEES_' + i);
+    var v = c.getAll(cles), b64 = '';
+    for (i = 0; i < n; i++) { if (!v['DONNEES_' + i]) return null; b64 += v['DONNEES_' + i]; }
+    var blob = Utilities.ungzip(Utilities.newBlob(Utilities.base64Decode(b64), 'application/x-gzip'));
+    return JSON.parse(blob.getDataAsString());
+  } catch (e) { console.warn('Lecture du cache : ' + e.message); return null; }
+}
+function verifierDeclencheurCache_() {
+  var p = PropertiesService.getScriptProperties();
+  if (p.getProperty('DECLENCHEUR_CACHE') === 'OK') return;
+  try {
+    var existe = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'rafraichirCacheDonnees'; });
+    if (!existe) ScriptApp.newTrigger('rafraichirCacheDonnees').timeBased().everyHours(1).create();
+    p.setProperty('DECLENCHEUR_CACHE', 'OK');
+  } catch (e) { console.warn('Déclencheur du cache : ' + e.message); }
+}
+
+/** Calcul complet des données du site (dates converties en texte AAAA-MM-JJ). */
+function calculerDonnees_() {
   var ss = classeur_();
   var d = {}, t0 = Date.now(), dernierT = t0, chronos = [];
   var etape = function (nom) { var t = Date.now(); chronos.push(nom + ' ' + ((t - dernierT) / 1000).toFixed(1) + ' s'); console.log('Chargement : ' + nom + ' ' + ((t - dernierT) / 1000).toFixed(1) + ' s (total ' + ((t - t0) / 1000).toFixed(0) + ' s)'); dernierT = t; };
@@ -3864,7 +3917,7 @@ function enregistrerIndexation(liste) {
 
 /** À lancer depuis l'éditeur Apps Script si le site est lent : le journal affiche le temps de chaque étape du chargement. */
 function diagnosticChargement() {
-  var d = getDonnees();
+  var d = calculerDonnees_();
   console.log('Terminé. Détail : ' + d.chronos.join(' · '));
 }
 
