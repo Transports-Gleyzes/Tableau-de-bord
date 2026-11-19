@@ -4033,6 +4033,8 @@ function enregistrerPaie(soc, onglet, mois, lignes) {
       CHAMPS_PAIE.forEach(function (ch) {
         var c = st.col[ch[0]]; if (c === undefined || !(ch[0] in l)) return;
         var v = l[ch[0]], cel = sh.getRange(r, c + 1);
+        // une case laissée vide sur le site ne vide pas le fichier (on corrige dans le Google Sheet pour effacer)
+        if (v === '' || v === null || v === undefined || (typeof v === 'number' && isNaN(v))) return;
         if (ch[2]) {
           var h = v === '' || v === null || v === undefined ? null : Number(v);
           if (h === null || isNaN(h)) cel.clearContent(); else cel.setNumberFormat('[h]:mm').setValue(h / 24);

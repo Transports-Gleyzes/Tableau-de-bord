@@ -270,7 +270,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/11-paie1</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/11-paie2</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -517,8 +517,8 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
         <label for="moisPaie">Mois</label><select id="moisPaie"></select>
         <button id="rechargerPaie">↻ Relire le fichier</button><a id="lienPaie" target="_blank" rel="noopener" class="note"></a><span class="msg" id="msgPaie"></span></div>
       <div class="depot" id="zonePaie">📄 Glissez ici le PDF des relevés d'activité SOLID (scan de tous les chauffeurs), ou cliquez pour le choisir
-        <input type="file" id="choixPaie" accept="application/pdf,image/*" hidden></div>
-      <div id="etatPaie" class="note" style="margin:6px 0"></div>
+        <input type="file" id="choixPaie" accept="application/pdf,image/*" multiple hidden></div>
+      <div id="ongletPaieInfo" class="note" style="margin:6px 0"></div><div id="etatPaie" class="note" style="margin:6px 0"></div>
       <p class="note">Les chiffres lus sur les relevés (temps de service, nuit, repas, casse-croûte, repos compensateur) remplissent le tableau ;
         complétez avances, acomptes, absences et commentaires, puis enregistrez : l'onglet du mois du fichier PAIE est rempli (créé s'il n'existe pas).</p>
       <div class="tableau"><table id="tabPaie" class="serre saisie-paie"></table></div>
@@ -2453,8 +2453,9 @@ function hDec(h, m) { return +h + (+m) / 60; }
 function lireRelevesSolid(texte, connus) {
   // connus : [{ nom, prenom }] ; renvoie [{ nom, prenom, nomLu, mois, service, nuit, repasMidi, repasSoir, cc, repasUnique, decouche, rcAcquis, soldeRC, soldeCP, avertissements }]
   var t = String(texte || '').replace(/\r/g, ''), res = [];
-  var re = /RELEV[ÉE]\s+MENSUEL/gi, pos = [], m;
+  var re = /RELEV\S{0,3}\s*MENSUEL/gi, pos = [], m;
   while ((m = re.exec(t))) pos.push(m.index);
+  if (!pos.length) { re = /P[ée]riode\s+du\s+\d/gi; while ((m = re.exec(t))) pos.push(m.index); }
   pos.forEach(function (p, k) {
     var bloc = t.slice(p, k + 1 < pos.length ? pos[k + 1] : t.length);
     var avant = t.slice(k ? pos[k - 1] : 0, p);
@@ -2591,7 +2592,7 @@ function afficherPaie() {
   t.querySelectorAll('button[data-suppr]').forEach(function (b) { b.onclick = function () { PAIE.lignes.splice(+b.dataset.suppr, 1); afficherPaie(); }; });
   document.getElementById('ajoutPaie').onclick = function () { PAIE.lignes.push({ nom: '' }); afficherPaie(); };
   document.getElementById('enregPaie').onclick = enregistrerPaieMois;
-  document.getElementById('etatPaie').textContent = PAIE.onglet ? 'Onglet « ' + PAIE.onglet + ' » du fichier PAIE ' + PAIE.soc.toUpperCase() : (PAIE.mois ? 'Nouvel onglet « ' + nomMois(PAIE.mois).toUpperCase() + ' » : créé à l\'enregistrement' : '');
+  document.getElementById('ongletPaieInfo').textContent = PAIE.onglet ? 'Onglet « ' + PAIE.onglet + ' » du fichier PAIE ' + PAIE.soc.toUpperCase() : (PAIE.mois ? 'Nouvel onglet « ' + nomMois(PAIE.mois).toUpperCase() + ' » : créé à l\'enregistrement' : '');
   simulerPaieMois();
   afficherParamsPaie();
 }
@@ -2599,6 +2600,7 @@ function enregistrerPaieMois() {
   var m = document.getElementById('msgEnregPaie'), b = document.getElementById('enregPaie');
   var lignes = PAIE.lignes.filter(function (l) { return String(l.nom || '').trim(); });
   if (!lignes.length) { m.className = 'msg err'; m.textContent = 'Aucun salarié à enregistrer'; return; }
+  if (!lignes.some(function (l) { return +l.service > 0; }) && !confirm('Aucun temps de service n\'est rempli : enregistrer quand même ?')) return;
   b.disabled = true; m.className = 'msg'; m.textContent = 'Enregistrement…';
   var envoi = lignes.map(function (l) { var o = { nom: l.nom }; ['prenom', 'dfs', 'mutuelle', 'caisseCP', 'horaire', 'netGarantir'].forEach(function (k) { if (l[k] !== undefined) o[k] = l[k]; });
     CHAMPS_SAISIE_PAIE.forEach(function (c) { o[c[0]] = l[c[0]] === undefined ? '' : l[c[0]]; }); return o; });
@@ -2709,18 +2711,30 @@ function lireSimulationPaie(wb) {
   var brancher = function (zoneId, choixId, traiter) {
     var zone = document.getElementById(zoneId), choix = document.getElementById(choixId);
     zone.addEventListener('click', function (e) { if (e.target !== choix) choix.click(); });
-    choix.addEventListener('change', function () { if (choix.files[0]) traiter(choix.files[0]); choix.value = ''; });
+    choix.addEventListener('change', function () { var fs = Array.prototype.slice.call(choix.files); choix.value = ''; if (fs.length) traiter(fs); });
     ['dragenter', 'dragover'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.add('survol'); }); });
     ['dragleave', 'drop'].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.remove('survol'); }); });
-    zone.addEventListener('drop', function (e) { if (e.dataTransfer.files[0]) traiter(e.dataTransfer.files[0]); });
+    zone.addEventListener('drop', function (e) { var fs = Array.prototype.slice.call(e.dataTransfer.files); if (fs.length) traiter(fs); });
   };
-  brancher('zonePaie', 'choixPaie', function (f) {
-    var etat = document.getElementById('etatPaie'); etat.className = 'note'; etat.textContent = 'Lecture des relevés par Google Drive (environ 30 secondes)…';
-    f.arrayBuffer().then(function (b) { return appelServeur('lireScanFacture', base64Depuis(b), f.name, f.type); }).then(function (texte) {
+  brancher('zonePaie', 'choixPaie', function (fichiers) {
+    var etat = document.getElementById('etatPaie'), textes = [];
+    var suite = Promise.resolve();
+    fichiers.forEach(function (f, k) {
+      suite = suite.then(function () {
+        etat.className = 'note'; etat.textContent = 'Lecture des relevés par Google Drive (environ 30 secondes par fichier) : ' + (k + 1) + ' / ' + fichiers.length + ' — ' + f.name + '…';
+        return f.arrayBuffer().then(function (b) { return appelServeur('lireScanFacture', base64Depuis(b), f.name, f.type || 'application/pdf'); }).then(function (t) { textes.push(t); });
+      });
+    });
+    suite.then(function () { return textes.join('\n'); }).then(function (texte) {
       var connus = PAIE.lignes.concat((PAIE.data || {}).salaries || []).filter(function (x) { return x.nom; });
       (PAIE.data && PAIE.data.onglets || []).forEach(function (o) { o.lignes.forEach(function (l) { connus.push(l); }); });
       var rel = lireRelevesSolid(texte, connus);
-      if (!rel.length) { etat.className = 'msg err'; etat.textContent = 'Aucun relevé SOLID reconnu dans ce fichier (il faut la page « Relevé mensuel d\'activité » avec le temps de service).'; return; }
+      if (!rel.length) {
+        etat.className = 'msg err';
+        etat.innerHTML = 'Aucun relevé SOLID reconnu (il faut la page « Relevé mensuel d\'activité » avec le « Total temps de service »). ' +
+          '<details><summary>Texte lu par Google Drive (à envoyer à Claude)</summary><pre style="white-space:pre-wrap;font-size:11px;max-height:240px;overflow:auto">' + txt(String(texte).slice(0, 3000) || '(rien : le scan est-il lisible ?)') + '</pre></details>';
+        return;
+      }
       var mois = rel.map(function (r) { return r.mois; }).filter(String)[0];
       if (mois && mois !== PAIE.mois) {   // relevés d'un autre mois : on ouvre l'onglet de ce mois (ou un nouveau)
         var o = (PAIE.data.onglets || []).filter(function (x) { return x.mois === mois; }).pop();
