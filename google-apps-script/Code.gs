@@ -1118,7 +1118,17 @@ function compacterFactureTD_(sh, totalHT, unePage) {
       if (rT < 0 && v[r].some(function (x) { return cle_(x) === 'TOTAL HT'; })) rT = r;
       else if (rT >= 0 && cl(r, 0).indexOf('MODE DE REGLEMENT') === 0) { rM = r; break; }
     }
-    if (rT >= 0 && rM > rT) sh.deleteRows(rT + 1, rM - rT);
+    if (rT >= 0 && rM > rT) {
+      sh.deleteRows(rT + 1, rM - rT);
+      // le tableau se ferme sous la dernière ligne (trait sur toute la largeur, de « Désignation » à « Total H.T »)
+      var rH = -1;
+      for (r = 0; r < rT && rH < 0; r++) if (v[r].some(function (x) { return cle_(x) === 'DESIGNATION'; })) rH = r;
+      if (rH >= 0) {
+        var c1 = 0, c2 = v[rH].length - 1;
+        while (c2 > 0 && String(v[rH][c2]).trim() === '') c2--;
+        sh.getRange(rT, c1 + 1, 1, c2 - c1 + 1).setBorder(null, null, true, null, null, null, '#000000', SpreadsheetApp.BorderStyle.SOLID);
+      }
+    }
   }
   // 3. totaux en valeurs (le récapitulatif du modèle SCAPED renvoie aux sous-totaux de plusieurs pages)
   v = sh.getDataRange().getValues();
