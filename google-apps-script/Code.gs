@@ -1092,7 +1092,7 @@ function genererFactureTD(periode, numero) {
  * Facture TD sur une seule feuille : retire les lignes vides du tableau (une seule gardée avant TOTAL HT) et les
  * « Sous total page », écrit H.T / TVA 20 % / TOTAL TTC en valeurs et met le n° de page à 1/1.
  */
-function compacterFactureTD_(sh, totalHT) {
+function compacterFactureTD_(sh, totalHT, unePage) {
   var v = sh.getDataRange().getValues(), cl = function (r, c) { return cle_(v[r][c]); };
   // 1. lignes « Sous total page »
   for (var r = v.length - 1; r >= 0; r--) if (cl(r, 0).indexOf('SOUS TOTAL PAGE') === 0) sh.deleteRow(r + 1);
@@ -1108,6 +1108,17 @@ function compacterFactureTD_(sh, totalHT) {
     for (r = rDes + 1; r < rTot; r++) if (v[r].some(function (x) { return String(x).trim() !== ''; })) dernier = r;
     var aSupprimer = rTot - dernier - 2;   // une ligne vide gardée
     if (aSupprimer > 0) sh.deleteRows(dernier + 3, aSupprimer);
+  }
+  // 2 bis. une seule page de livraisons : on enchaîne directement sur « Mode de règlement » et les totaux
+  // (on retire la ligne TOTAL HT, le pied de la page 1, l'en-tête et le tableau vide de la page récapitulative)
+  if (unePage) {
+    v = sh.getDataRange().getValues();
+    var rT = -1, rM = -1;
+    for (r = 0; r < v.length; r++) {
+      if (rT < 0 && v[r].some(function (x) { return cle_(x) === 'TOTAL HT'; })) rT = r;
+      else if (rT >= 0 && cl(r, 0).indexOf('MODE DE REGLEMENT') === 0) { rM = r; break; }
+    }
+    if (rT >= 0 && rM > rT) sh.deleteRows(rT + 1, rM - rT);
   }
   // 3. totaux en valeurs (le récapitulatif du modèle SCAPED renvoie aux sous-totaux de plusieurs pages)
   v = sh.getDataRange().getValues();
@@ -1369,7 +1380,7 @@ function genererFactureCarbu_(cfg) {
   var pnR = pageNoDe(recapDebut, hRecap); if (pnR) sh.getRange(baseR + pnR[0], pnR[1] + 1).setNumberFormat('@').setValue(nbPages + '/' + nbPages);
   var finUtile = baseR + hRecap - 1;
   if (sh.getMaxRows() > finUtile) sh.deleteRows(finUtile + 1, sh.getMaxRows() - finUtile);
-  if (td) { remplacerClientFacture_(sh, cfg.client || []); compacterFactureTD_(sh, totalHT); }
+  if (td) { remplacerClientFacture_(sh, cfg.client || []); compacterFactureTD_(sh, totalHT, pages.length === 1); }
   SpreadsheetApp.flush();
   // Enregistrement pour le contrôle des factures (FACTURES_CLIENTS)
   var refClient = td ? (cfg.refClient || '') : rRef >= 0 ? String(mv[rRef][1] || '') : '';
