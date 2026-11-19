@@ -270,7 +270,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/11-rapide1</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/11-paie6</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -532,8 +532,8 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
       <div class="tableau"><table id="tabSimPaie" class="serre"></table></div>
       <div id="detailSimPaie"></div>
       <details style="margin-top:12px"><summary><b>Taux de calcul</b> <span class="note" id="resumeParamsPaie"></span></summary>
-        <p class="note">Les taux (cotisations, indemnités, taux horaire, ancienneté, prélèvement à la source…) viennent de votre fichier SIMULATION PAIE :
-          déposez-le ici pour les mettre à jour. Ils sont rangés dans les onglets « PARAMETRES PAIE » et « SALARIES PAIE » du fichier de paie, où on peut aussi les corriger.</p>
+        <p class="note">La simulation se calcule toute seule avec les relevés. Corrigez ici le taux horaire, l'ancienneté, le prélèvement à la source… de chaque salarié, puis « Enregistrer les taux »
+          (rangés dans l'onglet « SALARIES PAIE » du fichier de paie). Facultatif : déposer un fichier SIMULATION PAIE met tous les taux à jour d'un coup.</p>
         <div class="depot" id="zoneSimPaie">📊 Glissez ici le fichier SIMULATION PAIE (.xlsx), ou cliquez pour le choisir
           <input type="file" id="choixSimPaie" accept=".xlsx,.xls" hidden></div>
         <div class="tableau"><table id="tabParamsPaie" class="serre"></table></div>
@@ -2557,13 +2557,21 @@ var CHAMPS_SAISIE_PAIE = [['service', 'Temps de service total', 'h'], ['nuit', '
   ['rcAcquis', 'RC acquis trim.', 't'], ['soldeRC', 'Solde RC', 't'], ['commentaires', 'Commentaires', 't']];
 function hhmm(h) { if (h === null || h === undefined || h === '' || isNaN(h)) return ''; var m = Math.round(h * 60); return Math.floor(m / 60) + ':' + ('0' + m % 60).slice(-2); }
 function depuisHhmm(t) { t = String(t || '').trim(); if (!t) return null; var m = t.match(/^(\d{1,4})\s*[:h]\s*(\d{1,2})?$/); if (m) return +m[1] + (+(m[2] || 0)) / 60; var n = Number(t.replace(',', '.')); return isNaN(n) ? NaN : n; }
-function paramsPaie() {   // taux à plat (onglet PARAMETRES PAIE) → objet du calcul
-  var f = (PAIE.data || {}).params; if (!f) return null;
+// Taux communs 2026 (indemnités conventionnelles, PMSS, SMIC, cotisations) : utilisés tant qu'aucun fichier SIMULATION n'a été déposé
+var PARAMS_DEFAUT_PAIE = {"indCC": 8.87, "indRepas": 16.36, "indRepasUnique": 10.07, "indGD": 52.31, "seuilNuit": 50, "majNuit": 0.2, "majNuitPlus": 0.25, "pmss": 4005, "smic": 12.02, "coefRG": 0.3821, "deductionHS": 1.5, "mutuelle": 28.26, "plafondHS": 7500, "ratioHS": 0.93319, "prevoyance": 0.0081, "taux.maladie.sal": 0, "taux.maladie.emp": 0.13, "taux.atmp.sal": 0, "taux.atmp.emp": 0.054, "taux.vieillessePlaf.sal": 0.069, "taux.vieillessePlaf.emp": 0.0855, "taux.vieillesseDeplaf.sal": 0.004, "taux.vieillesseDeplaf.emp": 0.0211, "taux.complementaireT1.sal": 0.0479, "taux.complementaireT1.emp": 0.0523, "taux.famille.sal": 0, "taux.famille.emp": 0.0525, "taux.chomage.sal": 0, "taux.chomage.emp": 0.0425, "taux.autres.sal": 0, "taux.autres.emp": 0.021456, "taux.conventionnelles.sal": 0.01865, "taux.conventionnelles.emp": 0.024849, "taux.csgDed.sal": 0.068, "taux.csgDed.emp": 0, "taux.csgNonDed.sal": 0.029, "taux.csgNonDed.emp": 0, "taux.csgHS.sal": 0.097, "taux.csgHS.emp": 0, "taux.reducHS.sal": -0.1131, "taux.reducHS.emp": 0};
+function paramsPaie() {   // taux à plat (onglet PARAMETRES PAIE, sinon taux 2026 intégrés) → objet du calcul
+  var f = (PAIE.data || {}).params || PARAMS_DEFAUT_PAIE;
   var P = {}; Object.keys(f).forEach(function (k) { if (k.indexOf('taux.') !== 0) P[k] = f[k]; });
   P.taux = {}; Object.keys(f).forEach(function (k) { var x = k.split('.'); if (x[0] === 'taux') { P.taux[x[1]] = P.taux[x[1]] || [0, 0]; P.taux[x[1]][x[2] === 'emp' ? 1 : 0] = f[k] || 0; } });
   return P;
 }
-function salariePaie(nom) { return ((PAIE.data || {}).salaries || []).filter(function (s) { return nomSansDoubles(s.nom) === nomSansDoubles(nom); })[0]; }
+var TAUX_DEFAUT_PAIE = { tauxHoraire: 12.43, tauxNuit: 12.43, anciennete: 0, coefAssiette: 0.85, cumulHS: 0, pas: 0, calibrage: 1 };   // chauffeur PL coef. 150M
+function salariePaie(nom, avecDefaut) {
+  var s = ((PAIE.data || {}).salaries || []).filter(function (x) { return nomSansDoubles(x.nom) === nomSansDoubles(nom); })[0];
+  if (s || !avecDefaut) return s;
+  var d = { nom: nom, prenom: '', emploi: '', cumulMois: '', defaut: true }; Object.keys(TAUX_DEFAUT_PAIE).forEach(function (k) { d[k] = TAUX_DEFAUT_PAIE[k]; });
+  return d;
+}
 function moisSuivant(m) { var a = +m.slice(0, 4), n = +m.slice(5, 7) + 1; if (n > 12) { a++; n = 1; } return a + '-' + ('0' + n).slice(-2); }
 
 function rendrePaie() {
@@ -2673,13 +2681,14 @@ function enregistrerPaieMois() {
 function nombreGaranti(t) { var m = String(t || '').match(/(\d{3,5})/); return m && !/prorata/i.test(t) ? +m[1] : null; }
 function simulerPaieMois() {
   var P = paramsPaie(), t = document.getElementById('tabSimPaie'), note = document.getElementById('noteSimPaie');
-  if (!P) { note.textContent = 'Déposez d\'abord le fichier SIMULATION PAIE dans « Taux de calcul » (en bas) pour calculer le brut et le net.'; t.innerHTML = ''; document.getElementById('tuilesPaie').innerHTML = ''; return; }
-  note.textContent = 'Estimation d\'après les formules de votre fichier SIMULATION PAIE (le bulletin Sage fait foi). Cliquez sur un salarié pour le détail.';
+  if (!P) { note.textContent = 'Taux de cotisations introuvables : déposez une fois le fichier SIMULATION PAIE dans « Taux de calcul » (en bas).'; t.innerHTML = ''; document.getElementById('tuilesPaie').innerHTML = ''; return; }
+  var dDe = (PAIE.data || {}).params ? (PAIE.data || {}).paramsDe : 'taux 2026 intégrés au site';
+  note.textContent = 'Estimation d\'après les formules de votre fichier SIMULATION PAIE (le bulletin Sage fait foi)' + (dDe && dDe !== PAIE.soc ? ', taux de cotisations : ' + (/ /.test(dDe) ? dDe : 'repris de ' + dDe.toUpperCase()) : '') +
+    '. « taux par défaut » : taux horaire 12,43 €, sans ancienneté, à corriger dans « Taux de calcul ». Cliquez sur un salarié pour le détail.';
   var tot = { brut: 0, net: 0, frais: 0, cout: 0 }, res = [];
   PAIE.lignes.forEach(function (l) {
     if (!String(l.nom || '').trim()) return;
-    var S = salariePaie(l.nom), M = { service: +l.service || 0, nuit: +l.nuit || 0, cc: +l.cc || 0, repas: (+l.repasMidi || 0) + (+l.repasSoir || 0), repasUnique: +l.repasUnique || 0, decouche: +l.decouche || 0 };
-    if (!S) { res.push({ l: l, err: 'taux du salarié absents (onglet SALARIES PAIE)' }); return; }
+    var S = salariePaie(l.nom, true), M = { service: +l.service || 0, nuit: +l.nuit || 0, cc: +l.cc || 0, repas: (+l.repasMidi || 0) + (+l.repasSoir || 0), repasUnique: +l.repasUnique || 0, decouche: +l.decouche || 0 };
     if (!M.service) { res.push({ l: l, err: 'temps de service à saisir' }); return; }
     // horaire du contrat « à garantir » : payé au minimum, sauf mois avec absences (à proratiser à la main)
     var abs = ['absCP', 'absRC', 'maladie', 'at', 'absNR', 'absAutres'].some(function (k) { return String(l[k] === undefined || l[k] === null ? '' : l[k]).trim(); });
@@ -2695,7 +2704,7 @@ function simulerPaieMois() {
     res.map(function (x) {
       if (x.err) return '<tr><td><b>' + txt(x.l.nom) + '</b></td><td colspan="12" class="nd">' + txt(x.err) + '</td></tr>';
       var r = x.r;
-      return '<tr class="cliquable' + (PAIE.choisi === x.l.nom ? ' choisi' : '') + '" data-nom="' + txt(x.l.nom) + '"><td><b>' + txt(x.l.nom) + '</b> <span class="note">' + txt(x.l.prenom || '') + '</span></td><td class="n">' + hhmm(r.heures.service) + (x.garantieH ? '<span class="note">garanti (' + hhmm(x.l.service) + ' faites)</span>' : '') + '</td><td class="n">' + hhmm(r.heures.nuit) +
+      return '<tr class="cliquable' + (PAIE.choisi === x.l.nom ? ' choisi' : '') + '" data-nom="' + txt(x.l.nom) + '"><td><b>' + txt(x.l.nom) + '</b> <span class="note">' + txt(x.l.prenom || '') + (x.S.defaut ? ' ' + badge('a_prevoir', 'taux par défaut') : '') + '</span></td><td class="n">' + hhmm(r.heures.service) + (x.garantieH ? '<span class="note">garanti (' + hhmm(x.l.service) + ' faites)</span>' : '') + '</td><td class="n">' + hhmm(r.heures.nuit) +
         '</td><td class="n">' + fmtNb.format(r.heures.equivalence + r.heures.hs125) + '</td><td class="n">' + fmtNb.format(r.heures.hs150) + '</td><td class="n">' + fmtEur2.format(r.brut) + '</td><td class="n">' + fmtEur2.format(r.cotSal) +
         '</td><td class="n">' + fmtEur2.format(r.netSocial) + '</td><td class="n">' + fmtEur2.format(r.frais.total) + '</td><td class="n">' + fmtEur2.format(r.pas) + '</td><td class="n"><b>' + fmtEur2.format(r.netAPayer) + '</b></td><td class="n">' + fmtEur2.format(r.coutTotal) +
         '</td><td>' + (x.abs ? badge('a_prevoir', 'absences : à proratiser') : x.garanti === null ? '<span class="nd">' + txt(x.l.netGarantir || '—') + '</span>' : x.manque ? badge('urgent', 'manque ' + fmtEur2.format(x.manque)) : badge('ok', fmtEur.format(x.garanti) + ' atteint')) + '</td></tr>';
@@ -2723,12 +2732,32 @@ function simulerPaieMois() {
       .catch(function (e) { m.className = 'msg err'; m.textContent = e.message; });
   };
 }
+var COLS_TAUX_PAIE = [['tauxHoraire', 'Taux horaire €', 1], ['tauxNuit', 'Taux base nuit €', 1], ['anciennete', 'Ancienneté %', 100], ['coefAssiette', 'Coef. assiette', 1],
+  ['cumulHS', 'Cumul HS exo. €', 1], ['cumulMois', 'à fin de (AAAA-MM)', 0], ['pas', 'PAS %', 100], ['calibrage', 'Calibrage RG', 1]];
 function afficherParamsPaie() {
-  var d = PAIE.data || {}, sal = d.salaries || [], t = document.getElementById('tabParamsPaie');
-  document.getElementById('resumeParamsPaie').textContent = d.params ? '· ' + sal.length + ' salarié(s) paramétré(s)' : '· à importer';
-  t.innerHTML = !sal.length ? '' : '<thead><tr><th>Salarié</th><th>Emploi</th><th class="n">Taux horaire</th><th class="n">Taux base nuit</th><th class="n">Ancienneté</th><th class="n">Coef. assiette</th><th class="n">Cumul HS exo.</th><th>à fin de</th><th class="n">PAS</th></tr></thead><tbody>' +
-    sal.map(function (s) { return '<tr><td>' + txt(s.nom + ' ' + (s.prenom || '')) + '</td><td>' + txt(s.emploi || '') + '</td><td class="n">' + fmtNb.format(s.tauxHoraire || 0) + '</td><td class="n">' + fmtNb.format(s.tauxNuit || 0) +
-      '</td><td class="n">' + fmtNb.format((s.anciennete || 0) * 100) + ' %</td><td class="n">' + (s.coefAssiette || '') + '</td><td class="n">' + fmtEur2.format(s.cumulHS || 0) + '</td><td>' + (s.cumulMois ? nomMois(s.cumulMois) : '') + '</td><td class="n">' + fmtNb.format((s.pas || 0) * 100) + ' %</td></tr>'; }).join('') + '</tbody>';
+  var d = PAIE.data || {}, t = document.getElementById('tabParamsPaie'), noms = {}, liste = [];
+  PAIE.lignes.concat(d.salaries || []).forEach(function (l) { var k = nomSansDoubles(l.nom); if (l.nom && l.nom !== '?' && !noms[k]) { noms[k] = 1; liste.push(salariePaie(l.nom, true)); } });
+  var nbDef = liste.filter(function (s) { return s.defaut; }).length;
+  document.getElementById('resumeParamsPaie').textContent = '· ' + (liste.length - nbDef) + ' salarié(s) paramétré(s)' + (d.params ? '' : ', cotisations : taux 2026 intégrés') + (nbDef ? ', ' + nbDef + ' avec taux par défaut' : '');
+  t.innerHTML = !liste.length ? '' : '<thead><tr><th>Salarié</th>' + COLS_TAUX_PAIE.map(function (c) { return '<th class="n">' + c[1] + '</th>'; }).join('') + '</tr></thead><tbody>' +
+    liste.map(function (s, i) { return '<tr><td><b>' + txt(s.nom) + '</b> ' + txt(s.prenom || '') + (s.defaut ? ' ' + badge('a_prevoir', 'par défaut') : '') + '</td>' + COLS_TAUX_PAIE.map(function (c) {
+      var v = s[c[0]], aff = c[2] === 0 ? (v || '') : v === null || v === undefined ? '' : String(Math.round(v * c[2] * 100000) / 100000).replace('.', ',');
+      return '<td><input data-t="' + i + '" data-c="' + c[0] + '" value="' + txt(aff) + '" style="width:' + (c[2] === 0 ? 80 : 70) + 'px;text-align:right"></td>'; }).join('') + '</tr>'; }).join('') +
+    '</tbody>';
+  if (liste.length && !document.getElementById('enregTauxPaie')) t.insertAdjacentHTML('afterend', '<div class="barre" style="margin-top:6px"><button id="enregTauxPaie" class="primaire">Enregistrer les taux</button><span class="msg" id="msgTauxPaie"></span></div>');
+  var b = document.getElementById('enregTauxPaie'); if (!b) return;
+  b.onclick = function () {
+    var m = document.getElementById('msgTauxPaie'), envoi = liste.map(function (s, i) {
+      var o = { nom: s.nom, prenom: s.prenom || '', emploi: s.emploi || '' };
+      COLS_TAUX_PAIE.forEach(function (c) { var v = t.querySelector('input[data-t="' + i + '"][data-c="' + c[0] + '"]').value.trim();
+        o[c[0]] = c[2] === 0 ? v : v === '' ? null : Number(v.replace(',', '.')) / c[2]; });
+      return o;
+    });
+    if (envoi.some(function (o) { return COLS_TAUX_PAIE.some(function (c) { return c[2] && o[c[0]] !== null && isNaN(o[c[0]]); }); })) { m.className = 'msg err'; m.textContent = 'Un taux n\'est pas un nombre'; return; }
+    m.className = 'msg'; m.textContent = 'Enregistrement…';
+    appelServeur('enregistrerParamsPaie', PAIE.soc, null, envoi).then(function (r) { PAIE.data = r; m.className = 'msg ok'; m.textContent = '✓ Taux enregistrés'; simulerPaieMois(); afficherParamsPaie(); })
+      .catch(function (e) { m.className = 'msg err'; m.textContent = e.message; });
+  };
 }
 // Import du fichier SIMULATION PAIE (.xlsx) : onglet PARAMÈTRES + un onglet par salarié
 var CLES_PARAMS_PAIE = [['indCC', /CASSE/], ['indRepasUnique', /REPAS UNIQUE/], ['indRepas', /^INDEMNITE REPAS/], ['indGD', /GRAND DEPLACEMENT/], ['seuilNuit', /SEUIL HEURES DE NUIT/],

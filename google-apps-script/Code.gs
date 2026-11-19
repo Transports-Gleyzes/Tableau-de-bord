@@ -4003,7 +4003,10 @@ function lirePaie(soc) {
     onglets.push({ nom: sh.getName(), mois: mois, lignes: lignes, colonnes: Object.keys(st.col) });
   });
   onglets.sort(function (a, b) { return a.mois < b.mois ? -1 : a.mois > b.mois ? 1 : 0; });
-  return { societe: soc, url: fic.getUrl(), onglets: onglets, params: lireParamsPaie_(fic), salaries: lireSalariesPaie_(fic) };
+  // taux communs : ceux de la société, sinon ceux de l'autre société (mêmes taux légaux et conventionnels)
+  var params = lireParamsPaie_(fic), paramsDe = soc;
+  if (!params) { try { params = lireParamsPaie_(classeurPaie_(ss, soc === 'LPB' ? 'Gleyzes' : 'LPB')); paramsDe = soc === 'LPB' ? 'Gleyzes' : 'LPB'; } catch (e) { params = null; } }
+  return { societe: soc, url: fic.getUrl(), onglets: onglets, params: params, paramsDe: params ? paramsDe : '', salaries: lireSalariesPaie_(fic) };
 }
 
 function lireParamsPaie_(fic) {
