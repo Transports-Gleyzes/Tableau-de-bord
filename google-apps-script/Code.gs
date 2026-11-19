@@ -2587,6 +2587,13 @@ function classeurParam_(ss, nomParam) {
       var f = it.next();
       if (!f.isTrashed() && f.getMimeType() === MimeType.GOOGLE_SHEETS && (!trouve || f.getLastUpdated() > trouve.getLastUpdated())) trouve = f;
     }
+    if (!trouve) {
+      // Fichier renommé (ex. « FACTURE SCAPED » devenu « FACTURE SCAPED / TD ») : un Google Sheet dont le nom CONTIENT ce texte
+      var it2 = DriveApp.searchFiles('title contains "' + v.replace(/["\\]/g, ' ') + '" and mimeType = "' + MimeType.GOOGLE_SHEETS + '" and trashed = false');
+      while (it2.hasNext()) { var f2 = it2.next(); if (!trouve || f2.getLastUpdated() > trouve.getLastUpdated()) trouve = f2; }
+      // on note le lien complet dans PARAMETRES : le fichier sera retrouvé même s'il est encore renommé
+      if (trouve) { try { majParametre_(nomParam, trouve.getUrl()); } catch (e) { /* lecture seule : tant pis */ } }
+    }
     if (!trouve) throw new Error('fichier « ' + v + ' » introuvable dans Google Drive (PARAMETRES > ' + nomParam +
       ') : collez plutôt le lien complet du fichier (https://docs.google.com/spreadsheets/d/…), ou vérifiez qu\'il est bien au format Google Sheets.');
     id = trouve.getId();
