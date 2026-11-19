@@ -270,7 +270,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/11-paie3</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/11-paie4</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -2468,7 +2468,7 @@ function lireRelevesSolid(texte, connus) {
       return meilleur;
     };
     // la page du relevé : du pied de page précédent (« SOLID v… / Edité le ») au suivant ; le nom peut être lu avant ou après le titre
-    var debPage = Math.max(t.lastIndexOf('SOLID', p), t.lastIndexOf('dit le', p));
+    var debPage = Math.max(t.lastIndexOf('SOLID', p), t.lastIndexOf('dit le', p), k ? pos[k - 1] + 5 : -1);
     var apres = t.slice(p), fp = apres.search(/SOLID\s*v|Edit[ée]\s+le/i);
     var page = t.slice(debPage >= 0 ? debPage + 5 : Math.max(0, p - 600), fp >= 0 ? p + fp : t.length);
     qui = chercher(entete) || chercher(page);
@@ -2587,7 +2587,13 @@ function afficherPaie() {
   var t = document.getElementById('tabPaie');
   t.innerHTML = '<thead><tr><th>Salarié</th>' + CHAMPS_SAISIE_PAIE.map(function (c) { return '<th>' + c[1] + '</th>'; }).join('') + '<th></th></tr></thead><tbody>' +
     (PAIE.lignes.length ? PAIE.lignes.map(function (l, i) {
-      return '<tr><td><input class="nom" data-i="' + i + '" data-k="nom" value="' + txt(l.nom || '') + '" title="' + txt(l.prenom || '') + '"></td>' + CHAMPS_SAISIE_PAIE.map(function (c) {
+      // relevé dont le nom n'a pas été lu : on choisit le salarié dans la liste, ses chiffres vont sur sa ligne
+      var inconnu = !!PAIE.lus[i] && (l.nom === '?' || !String(l.nom || '').trim());
+      var vides = PAIE.lignes.filter(function (x, j) { return j !== i && !PAIE.lus[j] && x.nom && x.nom !== '?'; });
+      var cNom = inconnu ? '<select class="choixNom" data-i="' + i + '" style="max-width:140px;border-color:#c0392b"><option value="">? choisir…</option>' +
+          vides.map(function (x) { return '<option>' + txt(x.nom) + '</option>'; }).join('') + '</select>' + (l.nomLu ? '<div class="note">' + txt(l.nomLu) + '</div>' : '')
+        : '<input class="nom" data-i="' + i + '" data-k="nom" value="' + txt(l.nom || '') + '" title="' + txt(l.prenom || '') + '">';
+      return '<tr><td>' + cNom + '</td>' + CHAMPS_SAISIE_PAIE.map(function (c) {
         var v = l[c[0]], aff = c[2] === 'h' ? hhmm(v) : (v === null || v === undefined ? '' : String(v));
         return '<td><input data-i="' + i + '" data-k="' + c[0] + '" class="' + (c[2] === 't' ? 'txt' : '') + ((PAIE.lus[i] || {})[c[0]] ? ' lu' : '') + '" value="' + txt(aff) + '"' + (c[2] === 'h' ? ' placeholder="hh:mm"' : '') + '></td>';
       }).join('') + '<td><button class="petit" data-suppr="' + i + '" title="Retirer de ce tableau (pas du fichier)">✕</button></td></tr>';
@@ -2602,6 +2608,18 @@ function afficherPaie() {
       simulerPaieMois();
     };
   });
+  t.querySelectorAll('select.choixNom').forEach(function (sel) {
+    sel.onchange = function () {
+      var i = +sel.dataset.i, src = PAIE.lignes[i], j = PAIE.lignes.findIndex(function (x) { return x.nom === sel.value; });
+      if (j < 0) return;
+      Object.keys(PAIE.lus[i] || {}).forEach(function (k) { PAIE.lignes[j][k] = src[k]; });
+      PAIE.lus[j] = PAIE.lus[i];
+      PAIE.lignes.splice(i, 1);
+      var lus = {}; Object.keys(PAIE.lus).forEach(function (k) { var n = +k; if (n !== i) lus[n > i ? n - 1 : n] = PAIE.lus[k]; });
+      PAIE.lus = lus;
+      afficherPaie();
+    };
+  });
   t.querySelectorAll('button[data-suppr]').forEach(function (b) { b.onclick = function () { PAIE.lignes.splice(+b.dataset.suppr, 1); afficherPaie(); }; });
   document.getElementById('ajoutPaie').onclick = function () { PAIE.lignes.push({ nom: '' }); afficherPaie(); };
   document.getElementById('enregPaie').onclick = enregistrerPaieMois;
@@ -2611,6 +2629,7 @@ function afficherPaie() {
 }
 function enregistrerPaieMois() {
   var m = document.getElementById('msgEnregPaie'), b = document.getElementById('enregPaie');
+  if (PAIE.lignes.some(function (l) { return l.nom === '?'; })) { m.className = 'msg err'; m.textContent = 'Choisissez d\'abord le salarié des lignes « ? » (liste en rouge), ou retirez-les avec ✕.'; return; }
   var lignes = PAIE.lignes.filter(function (l) { return String(l.nom || '').trim(); });
   if (!lignes.length) { m.className = 'msg err'; m.textContent = 'Aucun salarié à enregistrer'; return; }
   if (!lignes.some(function (l) { return +l.service > 0; }) && !confirm('Aucun temps de service n\'est rempli : enregistrer quand même ?')) return;
@@ -2738,7 +2757,7 @@ function lireSimulationPaie(wb) {
         return f.arrayBuffer().then(function (b) { return appelServeur('lireScanFacture', base64Depuis(b), f.name, f.type || 'application/pdf'); }).then(function (t) { textes.push(t); });
       });
     });
-    suite.then(function () { return textes.join('\n'); }).then(function (texte) {
+    suite.then(function () { return textes.join('\nSOLID v (fin du fichier)\n'); }).then(function (texte) {
       var connus = PAIE.lignes.concat((PAIE.data || {}).salaries || []).filter(function (x) { return x.nom; });
       (PAIE.data && PAIE.data.onglets || []).forEach(function (o) { o.lignes.forEach(function (l) { connus.push(l); }); });
       var rel = lireRelevesSolid(texte, connus);
@@ -2757,7 +2776,7 @@ function lireSimulationPaie(wb) {
       var notes = [];
       rel.forEach(function (r) {
         var i = PAIE.lignes.findIndex(function (l) { return r.nom && nomSansDoubles(l.nom) === nomSansDoubles(r.nom); });
-        if (i < 0) { PAIE.lignes.push({ nom: (r.nom || (r.nomLu.split(' ').pop() || '?')).toUpperCase(), prenom: r.prenom }); i = PAIE.lignes.length - 1; }
+        if (i < 0) { PAIE.lignes.push({ nom: r.nom ? r.nom.toUpperCase() : '?', prenom: r.prenom, nomLu: r.nomLu }); i = PAIE.lignes.length - 1; }
         var l = PAIE.lignes[i], lus = PAIE.lus[i] = {};
         ['service', 'nuit', 'repasMidi', 'repasSoir', 'cc', 'repasUnique', 'decouche'].forEach(function (k) { if (r[k] !== null && r[k] !== undefined) { l[k] = r[k]; lus[k] = 1; } });
         if (r.rcAcquis) { l.rcAcquis = r.rcAcquis; lus.rcAcquis = 1; }
