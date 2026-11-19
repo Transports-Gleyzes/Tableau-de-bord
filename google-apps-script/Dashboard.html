@@ -270,7 +270,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/11-paie4</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/11-paie5</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -2523,6 +2523,32 @@ function lireRelevesSolid(texte, connus) {
   return res;
 }
 
+// Salarié connu dont le nom figure dans un texte (le plus long trouvé, CICULLO = CICCULLO)
+function trouverSalarie(texte, connus) {
+  var h = nomSansDoubles(texte), meilleur = null;
+  (connus || []).forEach(function (c) { var n = nomSansDoubles(c.nom); if (n.length >= 3 && h.indexOf(n) >= 0 && (!meilleur || n.length > nomSansDoubles(meilleur.nom).length)) meilleur = c; });
+  return meilleur;
+}
+// Pages d'un PDF en images (page entière + bandeau du nom en haut à droite), pour les lire une par une
+function pagesEnImages(buffer) {
+  return chargerPdfjs().then(function () { return pdfjsLib.getDocument({ data: new Uint8Array(buffer), isEvalSupported: false }).promise; }).then(function (pdf) {
+    var pages = [], suite = Promise.resolve();
+    for (var n = 1; n <= pdf.numPages; n++) (function (n) {
+      suite = suite.then(function () { return pdf.getPage(n); }).then(function (pg) {
+        var vp = pg.getViewport({ scale: 2 }), cv = document.createElement('canvas');
+        cv.width = vp.width; cv.height = vp.height;
+        var ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+        return pg.render({ canvasContext: ctx, viewport: vp }).promise.then(function () {
+          var c2 = document.createElement('canvas'), x0 = Math.round(cv.width * 0.4), y0 = Math.round(cv.height * 0.03), w = cv.width - x0, h = Math.round(cv.height * 0.12);
+          c2.width = w * 2; c2.height = h * 2;   // bandeau agrandi : le nom est écrit petit
+          var c2x = c2.getContext('2d'); c2x.fillStyle = '#fff'; c2x.fillRect(0, 0, c2.width, c2.height); c2x.drawImage(cv, x0, y0, w, h, 0, 0, c2.width, c2.height);
+          pages.push({ n: n, page: cv.toDataURL('image/jpeg', 0.9).split(',')[1], entete: c2.toDataURL('image/png').split(',')[1] });
+        });
+      });
+    })(n);
+    return suite.then(function () { return pages; });
+  });
+}
 var PAIE = { soc: '', data: null, onglet: '', mois: '', lignes: [], lus: {}, choisi: '' };
 var CHAMPS_SAISIE_PAIE = [['service', 'Temps de service total', 'h'], ['nuit', 'dont nuit', 'h'], ['repasMidi', 'Repas midi', 'n'], ['repasSoir', 'Repas soir', 'n'],
   ['cc', 'Casse-croûte', 'n'], ['repasUnique', 'Repas unique', 'n'], ['decouche', 'Petit découché', 'n'], ['avance', 'Avance €', 'n'], ['acompte', 'Acompte €', 'n'],
@@ -2749,18 +2775,40 @@ function lireSimulationPaie(wb) {
     zone.addEventListener('drop', function (e) { var fs = Array.prototype.slice.call(e.dataTransfer.files); if (fs.length) traiter(fs); });
   };
   brancher('zonePaie', 'choixPaie', function (fichiers) {
-    var etat = document.getElementById('etatPaie'), textes = [];
+    var etat = document.getElementById('etatPaie'), textes = [], rel = [];
+    var connus = PAIE.lignes.concat((PAIE.data || {}).salaries || []).filter(function (x) { return x.nom && x.nom !== '?'; });
+    (PAIE.data && PAIE.data.onglets || []).forEach(function (o) { o.lignes.forEach(function (l) { connus.push(l); }); });
+    var ocr = function (b64, nom, mime) { return appelServeur('lireScanFacture', b64, nom, mime); };
     var suite = Promise.resolve();
     fichiers.forEach(function (f, k) {
-      suite = suite.then(function () {
-        etat.className = 'note'; etat.textContent = 'Lecture des relevés par Google Drive (environ 30 secondes par fichier) : ' + (k + 1) + ' / ' + fichiers.length + ' — ' + f.name + '…';
-        return f.arrayBuffer().then(function (b) { return appelServeur('lireScanFacture', base64Depuis(b), f.name, f.type || 'application/pdf'); }).then(function (t) { textes.push(t); });
+      suite = suite.then(function () { return f.arrayBuffer(); }).then(function (b) {
+        var info = function (t) { etat.className = 'note'; etat.textContent = 'Lecture par Google Drive — fichier ' + (k + 1) + ' / ' + fichiers.length + ' (' + f.name + ') : ' + t; };
+        var entier = function () { info('fichier entier…'); return ocr(base64Depuis(b), f.name, f.type || 'application/pdf').then(function (t) { textes.push(t); rel = rel.concat(lireRelevesSolid(t, connus)); }); };
+        if (!/pdf/i.test(f.type || f.name)) return entier();
+        // PDF : chaque page lue à part (un relevé par page), et le nom en haut à droite relu seul s'il n'a pas été trouvé
+        return pagesEnImages(b).then(function (pages) {
+          var s2 = Promise.resolve();
+          pages.forEach(function (pg) {
+            s2 = s2.then(function () { info('page ' + pg.n + ' / ' + pages.length + '…'); return ocr(pg.page, f.name + ' p' + pg.n + '.jpg', 'image/jpeg'); }).then(function (t) {
+              textes.push('--- page ' + pg.n + ' ---\n' + t);
+              var r = lireRelevesSolid(t, connus);
+              if (!r.length) return;
+              if (r[0].nom) { rel.push(r[0]); return; }
+              info('page ' + pg.n + ' : lecture du nom…');
+              return ocr(pg.entete, f.name + ' nom p' + pg.n + '.png', 'image/png').then(function (tn) {
+                textes.push('(nom lu : ' + String(tn).trim() + ')');
+                var qui = trouverSalarie(tn, connus);
+                if (qui) { r[0].nom = qui.nom; r[0].prenom = qui.prenom; r[0].avertissements = r[0].avertissements.filter(function (a) { return !/non reconnu/.test(a); }); }
+                r[0].nomLu = r[0].nomLu || String(tn).replace(/\s+/g, ' ').trim().slice(0, 60);
+                rel.push(r[0]);
+              });
+            });
+          });
+          return s2;
+        }).catch(function (e) { console.warn('Pages en images : ' + e.message); return entier(); });
       });
     });
-    suite.then(function () { return textes.join('\nSOLID v (fin du fichier)\n'); }).then(function (texte) {
-      var connus = PAIE.lignes.concat((PAIE.data || {}).salaries || []).filter(function (x) { return x.nom; });
-      (PAIE.data && PAIE.data.onglets || []).forEach(function (o) { o.lignes.forEach(function (l) { connus.push(l); }); });
-      var rel = lireRelevesSolid(texte, connus);
+    suite.then(function () { return textes.join('\n'); }).then(function (texte) {
       if (!rel.length) {
         etat.className = 'msg err';
         etat.innerHTML = 'Aucun relevé SOLID reconnu (il faut la page « Relevé mensuel d\'activité » avec le « Total temps de service »). ' +
