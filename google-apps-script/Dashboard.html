@@ -102,6 +102,7 @@ section[hidden] { display: none; }
 .ix-histo table { width: auto; min-width: 260px; }
 .ix-histo td, .ix-histo td.n { padding: 4px 12px 4px 0; border-top: 1px solid var(--border); font-size: 13px; font-weight: 600; }
 .saisie-paie input { width: 64px; padding: 3px 4px; text-align: right; }
+.fiche-paie { margin-top: 12px; } .fiche-paie > summary { cursor: pointer; padding: 8px 4px; font-size: 14px; }
 .saisie-paie input.txt { width: 110px; text-align: left; }
 .saisie-paie input.nom { width: 120px; text-align: left; font-weight: 600; }
 .saisie-paie input.lu { background: #eaf6ee; border-color: #7cc49a; }
@@ -270,7 +271,7 @@ details.badge-peage .docs { display: flex; flex-wrap: wrap; gap: 6px 14px; margi
 </head>
 <body>
 <header>
-  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/11-paie6</span></div></div></div>
+  <div class="marque"><span class="logo" aria-hidden="true">🚛</span><div><h1>Tableau de bord</h1><div class="sous-marque">Transports Gleyzes · LP Transports · <span title="Version du site">v19/11-paie7</span></div></div></div>
   <label class="maj" for="filtreSociete">Société</label>
   <select id="filtreSociete">
     <option value="">Toutes</option><option>Gleyzes</option><option>LPB</option>
@@ -2684,7 +2685,7 @@ function simulerPaieMois() {
   if (!P) { note.textContent = 'Taux de cotisations introuvables : déposez une fois le fichier SIMULATION PAIE dans « Taux de calcul » (en bas).'; t.innerHTML = ''; document.getElementById('tuilesPaie').innerHTML = ''; return; }
   var dDe = (PAIE.data || {}).params ? (PAIE.data || {}).paramsDe : 'taux 2026 intégrés au site';
   note.textContent = 'Estimation d\'après les formules de votre fichier SIMULATION PAIE (le bulletin Sage fait foi)' + (dDe && dDe !== PAIE.soc ? ', taux de cotisations : ' + (/ /.test(dDe) ? dDe : 'repris de ' + dDe.toUpperCase()) : '') +
-    '. « taux par défaut » : taux horaire 12,43 €, sans ancienneté, à corriger dans « Taux de calcul ». Cliquez sur un salarié pour le détail.';
+    '. « taux par défaut » : taux horaire 12,43 €, sans ancienneté, à corriger dans « Taux de calcul ». Le détail de chaque salarié est sous le tableau (clic sur une ligne pour y aller).';
   var tot = { brut: 0, net: 0, frais: 0, cout: 0 }, res = [];
   PAIE.lignes.forEach(function (l) {
     if (!String(l.nom || '').trim()) return;
@@ -2709,28 +2710,36 @@ function simulerPaieMois() {
         '</td><td class="n">' + fmtEur2.format(r.netSocial) + '</td><td class="n">' + fmtEur2.format(r.frais.total) + '</td><td class="n">' + fmtEur2.format(r.pas) + '</td><td class="n"><b>' + fmtEur2.format(r.netAPayer) + '</b></td><td class="n">' + fmtEur2.format(r.coutTotal) +
         '</td><td>' + (x.abs ? badge('a_prevoir', 'absences : à proratiser') : x.garanti === null ? '<span class="nd">' + txt(x.l.netGarantir || '—') + '</span>' : x.manque ? badge('urgent', 'manque ' + fmtEur2.format(x.manque)) : badge('ok', fmtEur.format(x.garanti) + ' atteint')) + '</td></tr>';
     }).join('') + '</tbody>';
-  t.querySelectorAll('tr[data-nom]').forEach(function (tr) { tr.onclick = function () { PAIE.choisi = PAIE.choisi === tr.dataset.nom ? '' : tr.dataset.nom; simulerPaieMois(); }; });
-  var x = res.filter(function (y) { return y.r && y.l.nom === PAIE.choisi; })[0], z = document.getElementById('detailSimPaie');
-  if (!x) { z.innerHTML = ''; return; }
-  var r = x.r, e2 = function (v) { return v === null || v === undefined ? '' : fmtEur2.format(v); };
-  var retard = x.S.cumulMois && PAIE.mois && x.S.cumulMois < moisAvant(PAIE.mois);
-  z.innerHTML = '<div class="grille"><div class="carte"><h2>' + txt(x.l.nom) + ' — brut</h2><div class="tableau"><table class="serre"><thead><tr><th>Désignation</th><th class="n">Nombre</th><th class="n">Taux</th><th class="n">Gain</th></tr></thead><tbody>' +
-    r.gains.map(function (g) { return '<tr><td>' + g[0] + '</td><td class="n">' + fmtNb.format(g[1]) + '</td><td class="n">' + (g[2] < 1 ? fmtNb.format(g[2] * 100) + ' %' : fmtNb.format(g[2])) + '</td><td class="n">' + e2(g[3]) + '</td></tr>'; }).join('') +
-    '<tr class="total"><td>TOTAL BRUT</td><td></td><td></td><td class="n">' + e2(r.brut) + '</td></tr></tbody></table></div>' +
-    '<p class="note">HS brutes ' + e2(r.hsBrutes) + ', dont exonérées d\'impôt ' + e2(r.hsExo) + '. Cumul HS nettes exonérées : ' + e2(x.S.cumulHS) + (x.S.cumulMois ? ' (fin ' + nomMois(x.S.cumulMois) + ')' : '') + ' → ' + e2(r.cumulHSApres) + ' après ce mois.' +
-      (retard ? ' <b class="neg">Le cumul n\'a pas été reporté depuis ' + nomMois(x.S.cumulMois) + '.</b>' : '') + '</p>' +
-    '<button class="petit" id="reporterCumul">Reporter le cumul (' + e2(r.cumulHSApres) + ' fin ' + nomMois(PAIE.mois || '') + ')</button> <span class="msg" id="msgCumul"></span></div>' +
-    '<div class="carte"><h2>Cotisations et net</h2><div class="tableau"><table class="serre"><thead><tr><th>Désignation</th><th class="n">Base</th><th class="n">Salarié</th><th class="n">Employeur</th></tr></thead><tbody>' +
-    r.cotisations.map(function (c) { return '<tr><td>' + c[0] + '</td><td class="n">' + (c[1] === null ? '' : fmtNb.format(c[1])) + '</td><td class="n">' + e2(c[2]) + '</td><td class="n">' + e2(c[3]) + '</td></tr>'; }).join('') +
-    '<tr class="total"><td>TOTAL COTISATIONS</td><td></td><td class="n">' + e2(r.cotSal) + '</td><td class="n">' + e2(r.cotPat) + '</td></tr>' +
-    '<tr><td>Net social</td><td></td><td class="n">' + e2(r.netSocial) + '</td><td></td></tr><tr><td>Net imposable</td><td></td><td class="n">' + e2(r.netImposable) + '</td><td></td></tr>' +
-    '<tr><td>Frais : casse-croûte, repas, repas unique, découchés</td><td></td><td class="n">' + e2(r.frais.total) + '</td><td></td></tr><tr><td>Prélèvement à la source</td><td></td><td class="n">' + e2(r.pas) + '</td><td></td></tr>' +
-    '<tr class="total"><td>NET À PAYER</td><td></td><td class="n">' + e2(r.netAPayer) + '</td><td></td></tr><tr><td>Coût employeur (brut + charges)</td><td></td><td></td><td class="n">' + e2(r.coutEmployeur) + '</td></tr></tbody></table></div></div></div>';
-  document.getElementById('reporterCumul').onclick = function () {
-    var m = document.getElementById('msgCumul'); m.className = 'msg'; m.textContent = 'Enregistrement…';
-    appelServeur('reporterCumulPaie', PAIE.soc, x.l.nom, r.cumulHSApres, PAIE.mois).then(function (d) { PAIE.data = d; simulerPaieMois(); afficherParamsPaie(); })
-      .catch(function (e) { m.className = 'msg err'; m.textContent = e.message; });
-  };
+  t.querySelectorAll('tr[data-nom]').forEach(function (tr, k) { tr.onclick = function () {
+    var f = [].slice.call(document.querySelectorAll('#detailSimPaie details.fiche-paie')).filter(function (d) { return d.querySelector('summary b').textContent === tr.dataset.nom; })[0];
+    if (f) { f.open = true; f.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  }; });
+  // détail de chaque salarié (brut, cotisations, net), affiché pour tous ; un clic sur une ligne du tableau y descend
+  var z = document.getElementById('detailSimPaie'), html = '', avec = res.filter(function (y) { return y.r; });
+  avec.forEach(function (x, i) {
+    var r = x.r, e2 = function (v) { return v === null || v === undefined ? '' : fmtEur2.format(v); };
+    var retard = x.S.cumulMois && PAIE.mois && x.S.cumulMois < moisAvant(PAIE.mois);
+    html += '<details class="fiche-paie" id="fiche-' + i + '" open><summary><b>' + txt(x.l.nom) + '</b> ' + txt(x.l.prenom || '') + ' — brut ' + e2(r.brut) + ' · net à payer ' + e2(r.netAPayer) + ' · coût ' + e2(r.coutTotal) + '</summary><div class="grille"><div class="carte"><h2>' + txt(x.l.nom) + ' — brut</h2><div class="tableau"><table class="serre"><thead><tr><th>Désignation</th><th class="n">Nombre</th><th class="n">Taux</th><th class="n">Gain</th></tr></thead><tbody>' +
+      r.gains.map(function (g) { return '<tr><td>' + g[0] + '</td><td class="n">' + fmtNb.format(g[1]) + '</td><td class="n">' + (g[2] < 1 ? fmtNb.format(g[2] * 100) + ' %' : fmtNb.format(g[2])) + '</td><td class="n">' + e2(g[3]) + '</td></tr>'; }).join('') +
+      '<tr class="total"><td>TOTAL BRUT</td><td></td><td></td><td class="n">' + e2(r.brut) + '</td></tr></tbody></table></div>' +
+      '<p class="note">HS brutes ' + e2(r.hsBrutes) + ', dont exonérées d\'impôt ' + e2(r.hsExo) + '. Cumul HS nettes exonérées : ' + e2(x.S.cumulHS) + (x.S.cumulMois ? ' (fin ' + nomMois(x.S.cumulMois) + ')' : '') + ' → ' + e2(r.cumulHSApres) + ' après ce mois.' +
+        (retard ? ' <b class="neg">Le cumul n\'a pas été reporté depuis ' + nomMois(x.S.cumulMois) + '.</b>' : '') + '</p>' +
+      '<button class="petit" class="reporterCumul" data-i="' + i + '">Reporter le cumul (' + e2(r.cumulHSApres) + ' fin ' + nomMois(PAIE.mois || '') + ')</button> <span class="msg" id="msgCumul' + i + '"></span></div>' +
+      '<div class="carte"><h2>Cotisations et net</h2><div class="tableau"><table class="serre"><thead><tr><th>Désignation</th><th class="n">Base</th><th class="n">Salarié</th><th class="n">Employeur</th></tr></thead><tbody>' +
+      r.cotisations.map(function (c) { return '<tr><td>' + c[0] + '</td><td class="n">' + (c[1] === null ? '' : fmtNb.format(c[1])) + '</td><td class="n">' + e2(c[2]) + '</td><td class="n">' + e2(c[3]) + '</td></tr>'; }).join('') +
+      '<tr class="total"><td>TOTAL COTISATIONS</td><td></td><td class="n">' + e2(r.cotSal) + '</td><td class="n">' + e2(r.cotPat) + '</td></tr>' +
+      '<tr><td>Net social</td><td></td><td class="n">' + e2(r.netSocial) + '</td><td></td></tr><tr><td>Net imposable</td><td></td><td class="n">' + e2(r.netImposable) + '</td><td></td></tr>' +
+      '<tr><td>Frais : casse-croûte, repas, repas unique, découchés</td><td></td><td class="n">' + e2(r.frais.total) + '</td><td></td></tr><tr><td>Prélèvement à la source</td><td></td><td class="n">' + e2(r.pas) + '</td><td></td></tr>' +
+      '<tr class="total"><td>NET À PAYER</td><td></td><td class="n">' + e2(r.netAPayer) + '</td><td></td></tr><tr><td>Coût employeur (brut + charges)</td><td></td><td></td><td class="n">' + e2(r.coutEmployeur) + '</td></tr></tbody></table></div></div></div>' + '</details>';
+  });
+  z.innerHTML = html;
+  z.querySelectorAll('button.reporterCumul').forEach(function (bt) {
+    bt.onclick = function () {
+      var x = avec[+bt.dataset.i], m = document.getElementById('msgCumul' + bt.dataset.i); m.className = 'msg'; m.textContent = 'Enregistrement…';
+      appelServeur('reporterCumulPaie', PAIE.soc, x.l.nom, x.r.cumulHSApres, PAIE.mois).then(function (d) { PAIE.data = d; simulerPaieMois(); afficherParamsPaie(); })
+        .catch(function (e) { m.className = 'msg err'; m.textContent = e.message; });
+    };
+  });
 }
 var COLS_TAUX_PAIE = [['tauxHoraire', 'Taux horaire €', 1], ['tauxNuit', 'Taux base nuit €', 1], ['anciennete', 'Ancienneté %', 100], ['coefAssiette', 'Coef. assiette', 1],
   ['cumulHS', 'Cumul HS exo. €', 1], ['cumulMois', 'à fin de (AAAA-MM)', 0], ['pas', 'PAS %', 100], ['calibrage', 'Calibrage RG', 1]];
